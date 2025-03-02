@@ -615,4 +615,529 @@ private:
         // Tính vector vuông góc thứ hai (vuông góc với cả beam_direction và perp_x)
         perp_y[0] = beam_direction[1] * perp_x[2] - beam_direction[2] * perp_x[1];
         perp_y[1] = beam_direction[2] * perp_x[0] - beam_direction[0] * perp_x[2];
-        perp_y[2] = beam_direction[0] * perp_x[1] - beam_direction[1] * perp_
+        perp_y[2] = beam_direction[0] * perp_x[1] - beam_direction[1] * perp_x[0];
+        // Chuẩn hóa vector
+        double magnitude_y = sqrt(perp_y[0] * perp_y[0] + perp_y[1] * perp_y[1] + perp_y[2] * perp_y[2]);
+        
+        if (magnitude_y > 0) {
+            perp_y[0] /= magnitude_y;
+            perp_y[1] /= magnitude_y;
+            perp_y[2] /= magnitude_y;
+        }
+        // Chiếu vector từ isocenter đến voxel lên các hướng vuông góc
+        double proj_x = dx * perp_x[0] + dy * perp_x[1] + dz * perp_x[2];
+        double proj_y = dx * perp_y[0] + dy * perp_y[1] + dz * perp_y[2];
+        
+        // Đơn giản hóa: kiểm tra voxel có nằm trong hình chữ nhật giới hạn bởi MLC không
+        // Giả sử mlc_positions chứa: [x1_left, x1_right, x2_left, x2_right, ...] cho các cặp lá MLC
+        
+        // Đơn giản hóa: kiểm tra với kích thước trường cố định
+        double field_width = 100.0;  // mm
+        double field_height = 100.0; // mm
+
+        // Nếu có thông tin MLC, kiểm tra chi tiết hơn
+        if (!mlc_positions.empty()) {
+            // Giả định: số phần tử chẵn với cặp [left, right] cho mỗi lá MLC
+            size_t num_leaves = mlc_positions.size() / 2;
+            
+            // Xác định voxel nằm ở lá thứ mấy
+            double leaf_width = field_height / num_leaves;
+            int leaf_index = static_cast<int>((proj_y + field_height / 2) / leaf_width);
+            
+            // Kiểm tra giới hạn
+            if (leaf_index >= 0 && leaf_index < num_leaves) {
+                double left = mlc_positions[2 * leaf_index];
+                double right = mlc_positions[2 * leaf_index + 1];
+                
+                return (proj_x >= left && proj_x <= right);
+            }
+            
+            return false;
+        }
+        // Nếu không có thông tin MLC, sử dụng kích thước trường mặc định
+        return (std::abs(proj_x) <= field_width / 2 && std::abs(proj_y) <= field_height / 2);
+    }
+    
+    // Tính khoảng cách từ voxel đến isocenter dọc theo hướng chùm tia
+    double calculate_distance(
+        size_t x, size_t y, size_t z,
+        const std::array<double, 3>& isocenter,
+        const std::array<double, 3>& beam_direction,
+        const std::array<double, 3>& voxel_size
+    ) {
+        // Tính tọa độ voxel trong không gian thực (mm)
+        double voxel_x = x * voxel_size[0];
+        double voxel_y = y * voxel_size[1];
+        double voxel_z = z * voxel_size[2];
+        
+        // Tính vector từ isocenter đến voxel
+        double dx = voxel_x - isocenter[0];
+        double dy = voxel_y - isocenter[1];
+        double dz = voxel_z - isocenter[2];
+        
+        // Chiếu vector này lên hướng chùm tia
+        return std::abs(dx * beam_direction[0] + dy * beam_direction[1] + dz * beam_direction[2]);
+    }
+    
+    // Chuẩn hóa liều theo liều kê toa
+    void normalize_dose(
+        std::vector<std::vector<std::vector<double>>>& dose,
+        const std::vector<std::vector<std::vector<int>>>& structure_masks,
+        double prescribed_dose
+    ) {
+        // Tìm cấu trúc PTV (Planning Target Volume)
+        // Giả sử structure_masks[0] là mặt nạ cho PTV
+        if (structure_masks.empty()) {
+            return;
+        }
+        
+        const auto& ptv_mask = structure_masks[0];
+        
+        // Tính liều trung bình trong PTV
+        double total_dose = 0.0;
+        int num_voxels = 0;
+        
+        for (size_t z = 0; z < dose.size(); ++z) {
+            for (size_t y = 0; y < dose[0].size(); ++y) {
+                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+                    if (ptv_mask[z][y][x] > 0) {
+                        total_dose += dose[z][y][x];
+                        ++num_voxels;
+                    }
+                }
+            }
+        }
+        
+        if (num_voxels == 0) {
+            return;
+        }
+        
+        double mean_dose = total_dose / num_voxels;
+        double scale_factor = prescribed_dose / mean_dose;
+        
+        // Chuẩn hóa tất cả các voxel
+        for (size_t z = 0; z < dose.size(); ++z) {
+            for (size_t y = 0; y < dose[0].size(); ++y) {
+                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+                    dose[z][y][x] *= scale_factor;
+                }
+            }
+        }
+    }
+};
+
+// Thuật toán Pencil Beam
+class PencilBeam : public DoseAlgorithm {
+private:
+    double dose_grid_resolution;
+    HUtoEDConverter hu_to_ed;
+    
+public:
+    PencilBeam(double resolution = 2.5) : dose_grid_resolution(resolution) {}
+    
+    void set_hu_to_ed_conversion_file(const std::string& filename) {
+        hu_to_ed.load_from_file(filename);
+    }
+    
+    std::vector<std::vector<std::vector<double>>> calculateDose(
+        const std::vector<std::vector<std::vector<int>>>& ct_data,
+        const std::array<double, 3>& voxel_size,
+        const std::vector<std::vector<std::vector<int>>>& structure_masks,
+        const Plan& plan) override {
+        
+        // Kích thước dữ liệu CT
+        size_t depth = ct_data.size();
+        size_t height = ct_data[0].size();
+        size_t width = ct_data[0][0].size();
+        
+        // Khởi tạo ma trận liều
+        std::vector<std::vector<std::vector<double>>> dose(
+            depth, std::vector<std::vector<double>>(
+                height, std::vector<double>(width, 0.0)
+            )
+        );
+        
+        // Chuyển đổi CT thành mật độ điện tử
+        std::vector<std::vector<std::vector<double>>> electron_density(
+            depth, std::vector<std::vector<double>>(
+                height, std::vector<double>(width, 0.0)
+            )
+        );
+        
+        for (size_t z = 0; z < depth; ++z) {
+            for (size_t y = 0; y < height; ++y) {
+                for (size_t x = 0; x < width; ++x) {
+                    electron_density[z][y][x] = hu_to_ed.convert(ct_data[z][y][x]);
+                }
+            }
+        }
+        
+        // Tính toán liều cho từng beam
+        for (const auto& beam : plan.beams) {
+            // Tính hướng chùm tia
+            auto beam_direction = calculate_beam_direction(beam->gantry_angle, beam->couch_angle);
+            
+            // Tính ma trận ray trace
+            auto ray_trace = calculate_ray_trace(electron_density, beam_direction, beam->isocenter, voxel_size);
+            
+            // Tính liều từ beam hiện tại
+            std::vector<std::vector<std::vector<double>>> beam_dose = 
+                calculate_pencil_beam_dose(ray_trace, electron_density, beam, voxel_size);
+            
+            // Cộng liều từ beam vào tổng liều
+            for (size_t z = 0; z < depth; ++z) {
+                for (size_t y = 0; y < height; ++y) {
+                    for (size_t x = 0; x < width; ++x) {
+                        dose[z][y][x] += beam_dose[z][y][x];
+                    }
+                }
+            }
+        }
+        
+        // Chuẩn hóa liều theo liều kê toa
+        normalize_dose(dose, structure_masks, plan.prescribed_dose);
+        
+        return dose;
+    }
+    
+    std::string getName() const override {
+        return "Pencil Beam";
+    }
+    
+private:
+    // Tính hướng chùm tia dựa trên góc gantry và couch
+    std::array<double, 3> calculate_beam_direction(double gantry_angle, double couch_angle) {
+        double gantry_rad = gantry_angle * M_PI / 180.0;
+        double couch_rad = couch_angle * M_PI / 180.0;
+        
+        std::array<double, 3> direction;
+        direction[0] = sin(gantry_rad) * cos(couch_rad);
+        direction[1] = cos(gantry_rad);
+        direction[2] = sin(gantry_rad) * sin(couch_rad);
+        
+        // Chuẩn hóa vector hướng
+        double magnitude = sqrt(direction[0] * direction[0] + 
+                               direction[1] * direction[1] + 
+                               direction[2] * direction[2]);
+        
+        if (magnitude > 0) {
+            direction[0] /= magnitude;
+            direction[1] /= magnitude;
+            direction[2] /= magnitude;
+        }
+        
+        return direction;
+    }
+    
+    // Tính ma trận ray trace (radiological depth)
+    std::vector<std::vector<std::vector<double>>> calculate_ray_trace(
+        const std::vector<std::vector<std::vector<double>>>& electron_density,
+        const std::array<double, 3>& beam_direction,
+        const std::array<double, 3>& isocenter,
+        const std::array<double, 3>& voxel_size
+    ) {
+        size_t depth = electron_density.size();
+        size_t height = electron_density[0].size();
+        size_t width = electron_density[0][0].size();
+        
+        // Khởi tạo ma trận ray trace
+        std::vector<std::vector<std::vector<double>>> ray_trace(
+            depth, std::vector<std::vector<double>>(
+                height, std::vector<double>(width, 0.0)
+            )
+        );
+        
+        // Tính bước dịch chuyển dọc theo hướng chùm tia
+        double step_size = std::min(std::min(voxel_size[0], voxel_size[1]), voxel_size[2]) / 2.0;
+        
+        // Tính ray trace cho từng voxel
+        #pragma omp parallel for collapse(3)
+        for (size_t z = 0; z < depth; ++z) {
+            for (size_t y = 0; y < height; ++y) {
+                for (size_t x = 0; x < width; ++x) {
+                    // Tính tọa độ voxel trong không gian thực (mm)
+                    double voxel_x = x * voxel_size[0];
+                    double voxel_y = y * voxel_size[1];
+                    double voxel_z = z * voxel_size[2];
+                    
+                    // Điểm bắt đầu ray trace (từ bề mặt phantom theo hướng chùm tia)
+                    double start_x = voxel_x - 1000.0 * beam_direction[0];
+                    double start_y = voxel_y - 1000.0 * beam_direction[1];
+                    double start_z = voxel_z - 1000.0 * beam_direction[2];
+                    
+                    // Kiểm tra xem điểm bắt đầu có nằm ngoài phantom không
+                    if (start_x < 0 || start_x >= width * voxel_size[0] ||
+                        start_y < 0 || start_y >= height * voxel_size[1] ||
+                        start_z < 0 || start_z >= depth * voxel_size[2]) {
+                        
+                        // Dịch chuyển điểm bắt đầu đến biên phantom
+                        double t_min = std::numeric_limits<double>::max();
+                        
+                        // Kiểm tra giao với các mặt phẳng biên
+                        if (beam_direction[0] != 0) {
+                            double t1 = -start_x / beam_direction[0];
+                            double t2 = (width * voxel_size[0] - start_x) / beam_direction[0];
+                            if (t1 > 0 && t1 < t_min) t_min = t1;
+                            if (t2 > 0 && t2 < t_min) t_min = t2;
+                        }
+                        
+                        if (beam_direction[1] != 0) {
+                            double t1 = -start_y / beam_direction[1];
+                            double t2 = (height * voxel_size[1] - start_y) / beam_direction[1];
+                            if (t1 > 0 && t1 < t_min) t_min = t1;
+                            if (t2 > 0 && t2 < t_min) t_min = t2;
+                        }
+                        
+                        if (beam_direction[2] != 0) {
+                            double t1 = -start_z / beam_direction[2];
+                            double t2 = (depth * voxel_size[2] - start_z) / beam_direction[2];
+                            if (t1 > 0 && t1 < t_min) t_min = t1;
+                            if (t2 > 0 && t2 < t_min) t_min = t2;
+                        }
+                        
+                        if (t_min != std::numeric_limits<double>::max()) {
+                            start_x += t_min * beam_direction[0];
+                            start_y += t_min * beam_direction[1];
+                            start_z += t_min * beam_direction[2];
+                        }
+                    }
+                    
+                    // Tính ray trace bằng cách tích phân mật độ điện tử dọc theo đường đi
+                    double radiological_depth = 0.0;
+                    double current_x = start_x;
+                    double current_y = start_y;
+                    double current_z = start_z;
+                    
+                    while (current_x >= 0 && current_x < width * voxel_size[0] &&
+                           current_y >= 0 && current_y < height * voxel_size[1] &&
+                           current_z >= 0 && current_z < depth * voxel_size[2]) {
+                        
+                        // Tính chỉ số voxel hiện tại
+                        int vx = static_cast<int>(current_x / voxel_size[0]);
+                        int vy = static_cast<int>(current_y / voxel_size[1]);
+                        int vz = static_cast<int>(current_z / voxel_size[2]);
+                        
+                        // Đảm bảo chỉ số nằm trong phạm vi
+                        vx = std::max(0, std::min(vx, static_cast<int>(width) - 1));
+                        vy = std::max(0, std::min(vy, static_cast<int>(height) - 1));
+                        vz = std::max(0, std::min(vz, static_cast<int>(depth) - 1));
+                        
+                        // Cộng dồn radiological depth
+                        radiological_depth += electron_density[vz][vy][vx] * step_size;
+                        
+                        // Nếu đã đến voxel đích, dừng ray trace
+                        if (vx == x && vy == y && vz == z) {
+                            break;
+                        }
+                        
+                        // Di chuyển đến vị trí tiếp theo
+                        current_x += step_size * beam_direction[0];
+                        current_y += step_size * beam_direction[1];
+                        current_z += step_size * beam_direction[2];
+                    }
+                    
+                    ray_trace[z][y][x] = radiological_depth;
+                }
+            }
+        }
+        
+        return ray_trace;
+    }
+    
+    // Tính liều từ pencil beam
+    std::vector<std::vector<std::vector<double>>> calculate_pencil_beam_dose(
+        const std::vector<std::vector<std::vector<double>>>& ray_trace,
+        const std::vector<std::vector<std::vector<double>>>& electron_density,
+        const std::shared_ptr<Beam>& beam,
+        const std::array<double, 3>& voxel_size
+    ) {
+        size_t depth = ray_trace.size();
+        size_t height = ray_trace[0].size();
+        size_t width = ray_trace[0][0].size();
+        
+        // Khởi tạo ma trận liều
+        std::vector<std::vector<std::vector<double>>> beam_dose(
+            depth, std::vector<std::vector<double>>(
+                height, std::vector<double>(width, 0.0)
+            )
+        );
+        
+        // Tính hướng chùm tia
+        auto beam_direction = calculate_beam_direction(beam->gantry_angle, beam->couch_angle);
+        
+        // Tính hướng vuông góc với chùm tia
+        std::array<double, 3> perp_x = {0, 0, 0};
+        std::array<double, 3> perp_y = {0, 0, 0};
+        
+        // Tính vector vuông góc thứ nhất (nằm trên mặt phẳng ngang)
+        perp_x[0] = -beam_direction[2];
+        perp_x[2] = beam_direction[0];
+        double magnitude_x = sqrt(perp_x[0] * perp_x[0] + perp_x[2] * perp_x[2]);
+        
+        if (magnitude_x > 0) {
+            perp_x[0] /= magnitude_x;
+            perp_x[2] /= magnitude_x;
+        } else {
+            // Trường hợp chùm tia nằm dọc trục Y
+            perp_x[0] = 1.0;
+            perp_x[2] = 0.0;
+        }
+        
+        // Tính vector vuông góc thứ hai (vuông góc với cả beam_direction và perp_x)
+        perp_y[0] = beam_direction[1] * perp_x[2] - beam_direction[2] * perp_x[1];
+        perp_y[1] = beam_direction[2] * perp_x[0] - beam_direction[0] * perp_x[2];
+        perp_y[2] = beam_direction[0] * perp_x[1] - beam_direction[1] * perp_x[0];
+        
+        // Chuẩn hóa vector
+        double magnitude_y = sqrt(perp_y[0] * perp_y[0] + perp_y[1] * perp_y[1] + perp_y[2] * perp_y[2]);
+        
+        if (magnitude_y > 0) {
+            perp_y[0] /= magnitude_y;
+            perp_y[1] /= magnitude_y;
+            perp_y[2] /= magnitude_y;
+        }
+        
+        // Phân chia trường chùm tia thành các pencil beam
+        double field_width = 100.0;  // mm
+        double field_height = 100.0; // mm
+        int num_pencils_x = 20;      // Số lượng pencil theo chiều X
+        int num_pencils_y = 20;      // Số lượng pencil theo chiều Y
+        double pencil_width = field_width / num_pencils_x;
+        double pencil_height = field_height / num_pencils_y;
+        
+        // Tính liều từ mỗi pencil beam
+        for (int py = 0; py < num_pencils_y; ++py) {
+            for (int px = 0; px < num_pencils_x; ++px) {
+                // Tính tọa độ tâm của pencil beam trong hệ tọa độ trường chùm tia
+                double pencil_center_x = (px + 0.5) * pencil_width - field_width / 2;
+                double pencil_center_y = (py + 0.5) * pencil_height - field_height / 2;
+                
+                // Tính tọa độ tâm pencil beam trong hệ tọa độ thế giới
+                std::array<double, 3> pencil_center = {
+                    beam->isocenter[0] + pencil_center_x * perp_x[0] + pencil_center_y * perp_y[0],
+                    beam->isocenter[1] + pencil_center_x * perp_x[1] + pencil_center_y * perp_y[1],
+                    beam->isocenter[2] + pencil_center_x * perp_x[2] + pencil_center_y * perp_y[2]
+                };
+                
+                // Tính liều từ pencil beam hiện tại cho tất cả các voxel
+                calculate_single_pencil_beam_dose(
+                    beam_dose, ray_trace, electron_density,
+                    beam, pencil_center, beam_direction, perp_x, perp_y,
+                    pencil_width, pencil_height, voxel_size
+                );
+            }
+        }
+        
+        return beam_dose;
+    }
+    
+    // Tính liều từ một pencil beam
+    void calculate_single_pencil_beam_dose(
+        std::vector<std::vector<std::vector<double>>>& beam_dose,
+        const std::vector<std::vector<std::vector<double>>>& ray_trace,
+        const std::vector<std::vector<std::vector<double>>>& electron_density,
+        const std::shared_ptr<Beam>& beam,
+        const std::array<double, 3>& pencil_center,
+        const std::array<double, 3>& beam_direction,
+        const std::array<double, 3>& perp_x,
+        const std::array<double, 3>& perp_y,
+        double pencil_width,
+        double pencil_height,
+        const std::array<double, 3>& voxel_size
+    ) {
+        size_t depth = beam_dose.size();
+        size_t height = beam_dose[0].size();
+        size_t width = beam_dose[0][0].size();
+        
+        // Tính các tham số kernel dựa trên loại và năng lượng chùm tia
+        double sigma_r = 3.0;  // mm, sigma cho phần bán kính của kernel
+        if (beam->type == "photon") {
+            sigma_r = 3.0 + 0.5 * beam->energy;  // Đơn giản hóa cho ví dụ
+        } else if (beam->type == "electron") {
+            sigma_r = 5.0 + 0.3 * beam->energy;
+        } else if (beam->type == "proton") {
+            sigma_r = 2.0 + 0.2 * beam->energy;
+        }
+        
+        // Tính liều cho từng voxel
+        #pragma omp parallel for collapse(3)
+        for (size_t z = 0; z < depth; ++z) {
+            for (size_t y = 0; y < height; ++y) {
+                for (size_t x = 0; x < width; ++x) {
+                    // Tính tọa độ voxel trong không gian thực (mm)
+                    double voxel_x = x * voxel_size[0];
+                    double voxel_y = y * voxel_size[1];
+                    double voxel_z = z * voxel_size[2];
+                    
+                    // Tính vector từ tâm pencil beam đến voxel
+                    double dx = voxel_x - pencil_center[0];
+                    double dy = voxel_y - pencil_center[1];
+                    double dz = voxel_z - pencil_center[2];
+                    
+                    // Chiếu vector này lên hướng chùm tia và các hướng vuông góc
+                    double proj_beam = dx * beam_direction[0] + dy * beam_direction[1] + dz * beam_direction[2];
+                    double proj_x = dx * perp_x[0] + dy * perp_x[1] + dz * perp_x[2];
+                    double proj_y = dx * perp_y[0] + dy * perp_y[1] + dz * perp_y[2];
+                    
+                    // Tính khoảng cách vuông góc từ voxel đến đường tâm pencil beam
+                    double r2 = proj_x * proj_x + proj_y * proj_y;
+                    
+                    // Tính hệ số pencil beam sử dụng hàm Gaussian
+                    double pencil_factor = exp(-r2 / (2 * sigma_r * sigma_r));
+                    
+                    // Tính đóng góp liều từ pencil beam này
+                    double dose_contribution = 0.0;
+                    
+                    if (beam->type == "photon") {
+                        // Với photon, sử dụng PDD (Percentage Depth Dose) theo radiological depth
+                        double rad_depth = ray_trace[z][y][x];
+                        
+                        // Mô phỏng đường cong PDD đơn giản hóa
+                        double pdd_factor = exp(-0.005 * rad_depth);
+                        
+                        dose_contribution = pencil_factor * pdd_factor;
+                    } else if (beam->type == "electron") {
+                        // Với electron, mô phỏng đường cong PDD với độ sâu tối đa
+                        double rad_depth = ray_trace[z][y][x];
+                        double r_max = 0.5 * beam->energy;  // Đơn giản hóa: độ sâu tối đa (cm) = 0.5 * E(MeV)
+                        double r_max_mm = r_max * 10.0;     // Chuyển sang mm
+                        double r_p = 0.9 * r_max_mm;        // Phạm vi thực tế
+                        
+                        // Đường cong PDD đơn giản hóa
+                        double pdd_factor = 0.0;
+                        if (rad_depth < r_p) {
+                            pdd_factor = (1.0 - rad_depth / r_p) * exp(-4.0 * (rad_depth - r_p) * (rad_depth - r_p) / (r_p * r_p));
+                        }
+                        
+                        dose_contribution = pencil_factor * pdd_factor;
+                    } else if (beam->type == "proton") {
+                        // Với proton, mô phỏng đỉnh Bragg
+                        double rad_depth = ray_trace[z][y][x];
+                        double range = 0.3 * beam->energy;  // Đơn giản hóa: phạm vi (cm) = 0.3 * E(MeV)
+                        double range_mm = range * 10.0;     // Chuyển sang mm
+                        
+                        // Mô phỏng đường cong Bragg đơn giản
+                        double bragg_factor = 0.0;
+                        if (rad_depth <= range_mm) {
+                            bragg_factor = 0.8 + 5.0 * exp(-20.0 * pow(rad_depth - range_mm, 2) / (range_mm * range_mm));
+                        }
+                        
+                        dose_contribution = pencil_factor * bragg_factor;
+                    }
+                    
+                    // Áp dụng hiệu ứng giảm liều theo khoảng cách (inverse square law)
+                    double source_distance = 1000.0; // SSD mặc định (mm)
+                    double inverse_square = pow(source_distance / (source_distance + proj_beam), 2);
+                    
+                    dose_contribution *= inverse_square;
+                    
+                    // Thêm vào beam dose
+                    beam_dose[z][y][x] += dose_contribution;
+                }
+            }
+        }
+    }
+
+    // Chuẩn hóa liều theo liều kê toa
+    void normalize_dose(
+        std::vector<std::vector<std::vector   
