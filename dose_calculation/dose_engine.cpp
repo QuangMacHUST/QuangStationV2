@@ -427,4 +427,33 @@ private:
         double normalization_factor = prescribed_dose / max_dose_in_ptv;
         
         // Chuẩn hóa liều
-        for (size
+        for (size_t z = 0; z < dose.size(); ++z) {
+            for (size_t y = 0; y < dose[0].size(); ++y) {
+                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+                    dose[z][y][x] *= normalization_factor;
+                }
+            }
+        }
+    }
+    
+    // Tìm PTV mask từ danh sách structure masks
+    std::vector<std::vector<std::vector<int>>> find_ptv_mask(
+        const std::vector<std::vector<std::vector<int>>>& structure_masks) {
+        
+        for (const auto& mask : structure_masks) {
+            // Giả sử PTV mask có giá trị lớn nhất trong mask
+            if (*std::max_element(mask[0][0].begin(), mask[0][0].end()) > 0) {
+                return mask;
+            }
+        }
+        
+        // Trả về mask rỗng nếu không tìm thấy
+        return std::vector<std::vector<std::vector<int>>>(
+            structure_masks.size(), std::vector<std::vector<int>>(
+                structure_masks[0].size(), std::vector<int>(
+                    structure_masks[0][0].size(), 0
+                )
+            )
+        );
+    }
+};
