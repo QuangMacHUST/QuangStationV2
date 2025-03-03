@@ -565,4 +565,210 @@ class Display:
         
             # Tạo volume mapper
             dose_mapper = vtk.vtkGPUVolumeRayCastMapper()
-            dose_mapper.SetInputData
+            dose_mapper.SetInputData(dose_vtk_data)
+            # Tạo volume actor
+            self.dose_actor = vtk.vtkVolume()
+            self.dose_actor.SetMapper(dose_mapper)
+            self.dose_actor.SetProperty(dose_property)
+            
+            # Thêm vào renderer
+            self.ren.AddVolume(self.dose_actor)
+
+        # Hiển thị hoặc ẩn actor theo đối số
+        if hasattr(self, 'dose_actor'):
+            self.dose_actor.SetVisibility(1 if show_dose else 0)
+            
+            # Cập nhật opacity nếu đang hiển thị
+            if show_dose:
+                opacity_tf = vtk.vtkPiecewiseFunction()
+                opacity_tf.AddPoint(0.0, 0.0)
+                opacity_tf.AddPoint(1.0, opacity)
+                self.dose_actor.GetProperty().SetScalarOpacity(opacity_tf)
+            # Cập nhật renderer
+            self.ren_win.Render()
+            
+        return True
+    def display_dose_on_slice(self, show_dose=True):
+        """Hiển thị phủ liều trên các slice 2D"""
+        # Kiểm tra xem có dữ liệu liều không
+        dose_data = self.db.get_rt_dose(self.patient_id)
+        if dose_data is None:
+            print("Không có dữ liệu liều RT Dose")
+            return False
+        
+        # Lưu trạng thái hiển thị dose
+        self.show_dose_on_slice = show_dose
+        
+        # Hiển thị lại giao diện để cập nhật với hiển thị liều
+        self.display_interface()
+        
+        # Hiển thị cấu trúc RT nếu có
+        if self.rt_structures:
+            self.display_rt_structures()
+            
+        return True
+    
+    def display_interface_with_dose(self):
+        """Phiên bản mở rộng của display_interface có hiển thị liều"""
+        # Hiển thị thông thường
+        self.display_interface()
+        
+        # Nếu không cần hiển thị liều, thoát
+        if not hasattr(self, 'show_dose_on_slice') or not self.show_dose_on_slice:
+            return
+        
+        # Lấy dữ liệu liều
+        dose_data = self.db.get_rt_dose(self.patient_id)
+        if dose_data is None:
+            return
+        
+        dose_volume, dose_metadata = dose_data
+        
+        # Tạo colormap cho liều
+        cmap = plt.cm.jet
+        cmap.set_under('k', alpha=0)  # Liều 0 thành trong suốt
+        
+        # Hiển thị liều trên các slice
+        if self.fig_2d.axes and len(self.fig_2d.axes) >= 3:
+            axial_ax = self.fig_2d.axes[0]
+            coronal_ax = self.fig_2d.axes[1]
+            sagittal_ax = self.fig_2d.axes[2]
+            
+            # Cần nội suy dữ liệu liều vào không gian của CT
+            # Ở đây giả sử chúng ta có hàm nội suy liều từ dữ liệu RT Dose
+            interpolated_dose = self.interpolate_dose_to_ct(dose_volume, dose_metadata)
+            
+            if interpolated_dose is not None:
+                # Hiển thị liều trên các slice với alpha=0.5
+                if interpolated_dose.shape[0] > self.current_slice:
+                    axial_dose = interpolated_dose[self.current_slice, :, :]
+                    axial_ax.imshow(axial_dose, cmap=cmap, alpha=0.5, vmin=0.1)
+                
+                if interpolated_dose.shape[1] > 0:
+                    mid_coronal = interpolated_dose.shape[1] // 2
+                    coronal_dose = interpolated_dose[:, mid_coronal, :]
+                    coronal_ax.imshow(coronal_dose, cmap=cmap, alpha=0.5, vmin=0.1)
+                
+                if interpolated_dose.shape[2] > 0:
+                    mid_sagittal = interpolated_dose.shape[2] // 2
+                    sagittal_dose = interpolated_dose[:, :, mid_sagittal]
+                    sagittal_ax.imshow(sagittal_dose, cmap=cmap, alpha=0.5, vmin=0.1)
+            
+            # Cập nhật canvas
+            self.canvas_2d.draw()
+    
+    def interpolate_dose_to_ct(self, dose_volume, dose_metadata):
+        """Nội suy dữ liệu liều vào không gian CT"""
+        # Đây là phương thức giả định, cần cài đặt nội suy thực tế
+        # dựa trên thông tin không gian từ metadata
+        
+        # Kiểm tra xem có metadata đầy đủ không
+        if dose_metadata is None or 'position' not in dose_metadata:
+            print("Thiếu thông tin không gian cho dữ liệu liều")
+            return None
+        
+        # Phương pháp đơn giản là giả sử hai không gian phù hợp
+        # Tuy nhiên, trong thực tế cần áp dụng phép biến đổi không gian
+        
+        # Tạo mảng liều có cùng kích thước với CT
+        interpolated_dose = np.zeros_like(self.volume)
+        
+        # Xác định vị trí và kích thước của liều trong không gian CT
+        # Đây là đơn giản hóa, thực tế cần nội suy dựa trên metadata
+        
+        # Giả sử dose_origin và dose_spacing có thể lấy từ metadata
+        dose_origin = dose_metadata.get('position', [0, 0, 0])
+        dose_spacing = dose_metadata.get('pixel_spacing', [1, 1])
+        dose_thickness = dose_metadata.get('slice_thickness', 1)
+        
+        # Giả sử ct_origin và ct_spacing có thể lấy từ metadata
+        ct_origin = [0, 0, 0]
+        ct_spacing = [1, 1, 1]
+        
+        if self.metadata:
+            if 'slices' in self.metadata and len(self.metadata['slices']) > 0:
+                ct_origin = self.metadata['slices'][0].get('position', [0, 0, 0])
+            
+            ct_spacing = [1, 1, 1]
+            if 'pixel_spacing' in self.metadata and self.metadata['pixel_spacing']:
+                ct_spacing[0] = self.metadata['pixel_spacing'][0]
+                ct_spacing[1] = self.metadata['pixel_spacing'][1]
+            
+            if 'slice_thickness' in self.metadata and self.metadata['slice_thickness']:
+                ct_spacing[2] = self.metadata['slice_thickness']
+        
+        # Đây là phép nội suy đơn giản, cần cải thiện trong thực tế
+        # Phép nội suy thực tế cần xem xét sự khác biệt về vị trí và hướng
+        
+        # Trong trường hợp đơn giản, chỉ resize liều để phù hợp với CT
+        try:
+            # Sử dụng scipy.ndimage để resize
+            from scipy.ndimage import zoom
+            
+            # Tính tỷ lệ nội suy
+            scale_x = self.volume.shape[2] / dose_volume.shape[2]
+            scale_y = self.volume.shape[1] / dose_volume.shape[1]
+            scale_z = self.volume.shape[0] / dose_volume.shape[0]
+            
+            # Resize liều
+            interpolated_dose = zoom(dose_volume, (scale_z, scale_y, scale_x), order=1)
+            
+            # Đảm bảo kích thước giống với CT
+            if interpolated_dose.shape != self.volume.shape:
+                print(f"Kích thước sau nội suy không khớp: {interpolated_dose.shape} vs {self.volume.shape}")
+                return None
+            
+            return interpolated_dose
+            
+        except Exception as e:
+            print(f"Lỗi khi nội suy liều: {e}")
+            return None
+
+    def export_visualization(self, output_path, file_format='png', dpi=300):
+        """Xuất kết quả hiển thị ra file"""
+        try:
+            # Kiểm tra định dạng được hỗ trợ
+            supported_formats = ['png', 'jpg', 'jpeg', 'pdf', 'svg']
+            if file_format not in supported_formats:
+                print(f"Định dạng {file_format} không được hỗ trợ. Chọn một trong: {supported_formats}")
+                return False
+            
+            # Lưu hình ảnh 2D
+            self.fig_2d.savefig(output_path, format=file_format, dpi=dpi, bbox_inches='tight')
+            print(f"Đã lưu hình ảnh tại: {output_path}")
+            
+            # Nếu muốn lưu hình ảnh 3D VTK
+            vtk_path = output_path.replace(f".{file_format}", f"_3d.{file_format}")
+            
+            # Lưu hình ảnh từ VTK renderer
+            window_to_image = vtk.vtkWindowToImageFilter()
+            window_to_image.SetInput(self.ren_win)
+            window_to_image.Update()
+            
+            # Chọn writer phù hợp với định dạng
+            if file_format == 'png':
+                writer = vtk.vtkPNGWriter()
+            elif file_format in ['jpg', 'jpeg']:
+                writer = vtk.vtkJPEGWriter()
+            else:
+                print(f"Định dạng {file_format} không được hỗ trợ cho hình ảnh 3D")
+                return False
+            
+            writer.SetInputConnection(window_to_image.GetOutputPort())
+            writer.SetFileName(vtk_path)
+            writer.Write()
+            print(f"Đã lưu hình ảnh 3D tại: {vtk_path}")
+            
+            return True
+        except Exception as e:
+            print(f"Lỗi khi xuất hình ảnh: {e}")
+            return False
+
+    def load_with_image_loader(self, directory):
+        """Tải dữ liệu sử dụng ImageLoader"""
+        try:
+            # Khởi tạo ImageLoader
+            loader = ImageLoader()
+            
+            # Tải chuỗi DICOM
+            volume
