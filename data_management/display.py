@@ -772,7 +772,7 @@ class Display:
             
             # Tải chuỗi DICOM
             volume_data = loader.load_dicom_series(directory)
-
+            
             if volume_data is not None:
                 self.volume, self.metadata = volume_data
                 self.current_slice = self.volume.shape[0] // 2
@@ -790,7 +790,6 @@ class Display:
                 if rt_structure_path:
                     self.rt_structures = loader.load_rt_structure(rt_structure_path)
                     if self.rt_structures:
-                        print(f"Đã tải {len(self.rt_structures)} cấu trúc RT")
                         self.display_rt_structures()
                 
                 # Kiểm tra và tải RT Dose nếu có
@@ -798,20 +797,165 @@ class Display:
                 if rt_dose_path:
                     dose_data = loader.load_rt_dose(rt_dose_path)
                     if dose_data:
-                        # Lưu dữ liệu liều để sử dụng sau này
-                        self.db.save_rt_dose(self.patient_id, dose_data)
-                        print("Đã tải dữ liệu RT Dose")
+                        self.dose_volume, self.dose_metadata = dose_data
+                        self.display_dose_overlay()
+                
+                # Kiểm tra và tải RT Image nếu có
+                rt_image_path = loader.find_rt_image(directory)
+                if rt_image_path:
+                    self.load_rt_image(rt_image_path)
                 
                 return True
             else:
                 print(f"Không thể tải dữ liệu từ {directory}")
                 return False
-
         except Exception as e:
             print(f"Lỗi khi tải dữ liệu: {e}")
-            import traceback
-            traceback.print_exc()
             return False
+    
+    def load_rt_image(self, rt_image_path):
+        """Tải và hiển thị RT Image"""
+        try:
+            # Khởi tạo ImageLoader
+            loader = ImageLoader()
+            
+            # Tải RT Image
+            rt_image_data = loader.load_rt_image(rt_image_path)
+            
+            if rt_image_data is not None:
+                self.rt_image, self.rt_image_metadata = rt_image_data
+                
+                # Hiển thị RT Image
+                self.display_rt_image()
+                
+                print(f"Đã tải thành công RT Image từ {rt_image_path}")
+                return True
+            else:
+                print(f"Không thể tải RT Image từ {rt_image_path}")
+                return False
+        except Exception as e:
+            print(f"Lỗi khi tải RT Image: {e}")
+            return False
+    
+    def display_rt_image(self):
+        """Hiển thị RT Image"""
+        if not hasattr(self, 'rt_image') or self.rt_image is None:
+            print("Không có dữ liệu RT Image để hiển thị")
+            return
+        
+        # Tạo cửa sổ mới để hiển thị RT Image
+        rt_window = tk.Toplevel(self.root)
+        rt_window.title(f"RT Image - {self.patient_id}")
+        rt_window.geometry("800x600")
+        
+        # Tạo frame chứa hình ảnh
+        image_frame = tk.Frame(rt_window)
+        image_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Tạo figure và axes cho matplotlib
+        fig = plt.Figure(figsize=(8, 6), dpi=100)
+        ax = fig.add_subplot(111)
+        
+        # Hiển thị RT Image
+        img_display = ax.imshow(self.rt_image, cmap='gray')
+        
+        # Thêm thanh colorbar
+        fig.colorbar(img_display, ax=ax, label='Intensity')
+        
+        # Thêm thông tin từ metadata
+        title = "RT Image"
+        if hasattr(self, 'rt_image_metadata'):
+            metadata = self.rt_image_metadata
+            if 'rt_image_label' in metadata and metadata['rt_image_label']:
+                title += f" - {metadata['rt_image_label']}"
+            if 'gantry_angle' in metadata and metadata['gantry_angle'] is not None:
+                title += f" - Gantry: {metadata['gantry_angle']}°"
+        
+        ax.set_title(title)
+        
+        # Tạo canvas để hiển thị figure
+        canvas = FigureCanvasTkAgg(fig, master=image_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Thêm toolbar
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        toolbar = NavigationToolbar2Tk(canvas, image_frame)
+        toolbar.update()
+        
+        # Thêm frame thông tin
+        info_frame = tk.Frame(rt_window)
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Hiển thị thông tin từ metadata
+        if hasattr(self, 'rt_image_metadata'):
+            metadata = self.rt_image_metadata
+            info_text = ""
+            
+            if 'radiation_machine_name' in metadata and metadata['radiation_machine_name']:
+                info_text += f"Máy xạ trị: {metadata['radiation_machine_name']}\n"
+            
+            if 'gantry_angle' in metadata and metadata['gantry_angle'] is not None:
+                info_text += f"Góc gantry: {metadata['gantry_angle']}°\n"
+            
+            if 'beam_limiting_device_angle' in metadata and metadata['beam_limiting_device_angle'] is not None:
+                info_text += f"Góc collimator: {metadata['beam_limiting_device_angle']}°\n"
+            
+            if 'patient_support_angle' in metadata and metadata['patient_support_angle'] is not None:
+                info_text += f"Góc bàn: {metadata['patient_support_angle']}°\n"
+            
+            info_label = tk.Label(info_frame, text=info_text, justify=tk.LEFT)
+            info_label.pack(anchor=tk.W)
+        
+        # Thêm nút để lưu hình ảnh
+        button_frame = tk.Frame(rt_window)
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        save_button = tk.Button(button_frame, text="Lưu hình ảnh", 
+                               command=lambda: self.save_rt_image(fig))
+        save_button.pack(side=tk.LEFT, padx=5)
+        
+        close_button = tk.Button(button_frame, text="Đóng", 
+                                command=rt_window.destroy)
+        close_button.pack(side=tk.RIGHT, padx=5)
+    
+    def save_rt_image(self, figure, filename=None):
+        """Lưu RT Image ra file"""
+        if filename is None:
+            # Tạo tên file mặc định
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"rt_image_{self.patient_id}_{timestamp}.png"
+        
+        # Hiển thị hộp thoại để chọn nơi lưu file
+        from tkinter import filedialog
+        save_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("JPEG files", "*.jpg"), ("All files", "*.*")],
+            initialfile=filename
+        )
+        
+        if save_path:
+            try:
+                figure.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Đã lưu RT Image tại: {save_path}")
+                
+                # Hiển thị thông báo thành công
+                from tkinter import messagebox
+                messagebox.showinfo("Thành công", f"Đã lưu hình ảnh tại:\n{save_path}")
+                
+                return True
+            except Exception as e:
+                print(f"Lỗi khi lưu RT Image: {e}")
+                
+                # Hiển thị thông báo lỗi
+                from tkinter import messagebox
+                messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh:\n{str(e)}")
+                
+                return False
+        
+        return False
+
     def close(self):
         """Dọn dẹp tài nguyên khi đóng ứng dụng"""
         # Dừng VTK interactor nếu đang chạy
@@ -946,7 +1090,7 @@ class Display:
                 writer.SetInputConnection(normals.GetOutputPort())
                 writer.SetFileName(output_stl)
                 writer.Write()
-               print(f"Đã xuất mô hình 3D ra file STL: {output_stl}")
+                print(f"Đã xuất mô hình 3D ra file STL: {output_stl}")
         
             # Trả về dữ liệu polydata đã xử lý
             return normals.GetOutput()
@@ -1072,4 +1216,272 @@ class Display:
         norm_v2 = np.linalg.norm(v2)
     
         if norm_v1 == 0 or norm_v2 == 0:
-            print("Không thể tính góc: vector có độ
+            print("Không thể tính góc: vector có độ dài bằng 0")
+            return
+        
+        cos_angle = dot_product / (norm_v1 * norm_v2)
+        # Đảm bảo giá trị nằm trong khoảng [-1, 1] để tránh lỗi do làm tròn số
+        cos_angle = max(-1, min(1, cos_angle))
+        angle_rad = np.arccos(cos_angle)
+        angle_deg = np.degrees(angle_rad)
+        
+        # Hiển thị kết quả
+        print(f"Góc: {angle_deg:.2f} độ")
+        
+        # Vẽ góc lên hình
+        self.draw_angle_measurement(p1, p2, p3, angle_deg)
+        
+        return angle_deg
+    
+    def draw_angle_measurement(self, p1, p2, p3, angle):
+        """Vẽ góc đo lên hình"""
+        # Xóa các đối tượng đo góc cũ nếu có
+        for item in self.canvas.find_withtag("angle_measurement"):
+            self.canvas.delete(item)
+        
+        # Vẽ các đường thẳng
+        self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], fill="yellow", width=2, tags="angle_measurement")
+        self.canvas.create_line(p2[0], p2[1], p3[0], p3[1], fill="yellow", width=2, tags="angle_measurement")
+        
+        # Vẽ cung tròn biểu thị góc
+        radius = 30  # Bán kính cung tròn
+        
+        # Tính góc bắt đầu và góc quét dựa trên vị trí các điểm
+        v1 = np.array([p1[0] - p2[0], p1[1] - p2[1]])
+        v2 = np.array([p3[0] - p2[0], p3[1] - p2[1]])
+        
+        angle1 = np.degrees(np.arctan2(v1[1], v1[0]))
+        angle2 = np.degrees(np.arctan2(v2[1], v2[0]))
+        
+        # Đảm bảo góc bắt đầu nhỏ hơn góc kết thúc
+        if angle1 > angle2:
+            angle1, angle2 = angle2, angle1
+        
+        # Vẽ cung tròn
+        self.canvas.create_arc(p2[0] - radius, p2[1] - radius, 
+                              p2[0] + radius, p2[1] + radius,
+                              start=angle1, extent=angle2-angle1,
+                              outline="yellow", style="arc", width=2,
+                              tags="angle_measurement")
+        
+        # Hiển thị giá trị góc
+        text_x = p2[0] + radius * 0.7 * np.cos(np.radians((angle1 + angle2) / 2))
+        text_y = p2[1] + radius * 0.7 * np.sin(np.radians((angle1 + angle2) / 2))
+        self.canvas.create_text(text_x, text_y, text=f"{angle:.1f}°", 
+                               fill="yellow", font=("Arial", 10, "bold"),
+                               tags="angle_measurement")
+    
+    def calculate_hu_value(self, x, y, slice_index):
+        """Tính giá trị HU tại một điểm"""
+        if self.ct_volume is None:
+            return None
+        
+        # Chuyển đổi từ tọa độ pixel sang chỉ số mảng
+        i, j = int(y), int(x)
+        
+        # Kiểm tra giới hạn
+        if (0 <= slice_index < self.ct_volume.shape[0] and 
+            0 <= i < self.ct_volume.shape[1] and 
+            0 <= j < self.ct_volume.shape[2]):
+            return self.ct_volume[slice_index, i, j]
+        
+        return None
+    
+    def display_hu_value(self, x, y):
+        """Hiển thị giá trị HU tại vị trí chuột"""
+        if self.current_slice is None or self.ct_volume is None:
+            return
+        
+        hu_value = self.calculate_hu_value(x, y, self.current_slice)
+        if hu_value is not None:
+            # Xóa text cũ
+            for item in self.canvas.find_withtag("hu_display"):
+                self.canvas.delete(item)
+            
+            # Hiển thị giá trị HU
+            self.canvas.create_text(x + 20, y - 20, 
+                                   text=f"HU: {int(hu_value)}", 
+                                   fill="white", font=("Arial", 10),
+                                   tags="hu_display")
+            
+            # Hiển thị thêm thông tin về mật độ vật lý nếu có
+            if hasattr(self, 'image_loader'):
+                density = self.image_loader.hounsfield_to_density(hu_value)
+                self.canvas.create_text(x + 20, y - 5, 
+                                       text=f"Density: {density:.3f} g/cm³", 
+                                       fill="white", font=("Arial", 10),
+                                       tags="hu_display")
+    
+    def generate_dvh(self, structure_name, dose_data):
+        """Tạo biểu đồ DVH cho một cấu trúc"""
+        if self.rt_structs is None or structure_name not in self.rt_structs:
+            messagebox.showerror("Lỗi", f"Không tìm thấy cấu trúc {structure_name}")
+            return None
+        
+        # Lấy mask của cấu trúc
+        structure_mask = self.get_structure_mask(structure_name)
+        if structure_mask is None:
+            return None
+        
+        # Đảm bảo dose_data và structure_mask có cùng kích thước
+        if dose_data.shape != structure_mask.shape:
+            # Nội suy dose_data về cùng kích thước với structure_mask
+            dose_data = self.interpolate_dose_to_ct(dose_data, None)
+        
+        # Lấy các giá trị liều trong vùng cấu trúc
+        structure_dose = dose_data[structure_mask > 0]
+        
+        if len(structure_dose) == 0:
+            messagebox.showerror("Lỗi", f"Không có voxel nào trong cấu trúc {structure_name}")
+            return None
+        
+        # Tính toán DVH
+        hist, bin_edges = np.histogram(structure_dose, bins=100, range=(0, np.max(dose_data)))
+        dvh = np.cumsum(hist[::-1])[::-1]  # Tính tích lũy ngược
+        dvh = dvh / dvh[0] * 100 if dvh[0] > 0 else dvh  # Chuẩn hóa về phần trăm
+        
+        # Tính các thông số thống kê
+        d_min = np.min(structure_dose)
+        d_max = np.max(structure_dose)
+        d_mean = np.mean(structure_dose)
+        
+        # Tính D95, D50, V95, V100
+        dose_bins = bin_edges[:-1]  # Lấy giá trị giữa của các bin
+        
+        # Nội suy tuyến tính để tìm D95, D50
+        d95 = np.interp(95, dvh[::-1], dose_bins[::-1])
+        d50 = np.interp(50, dvh[::-1], dose_bins[::-1])
+        
+        # Tìm V95, V100
+        prescribed_dose = np.max(dose_data)  # Giả sử liều kê đơn là liều tối đa
+        v95_idx = np.argmin(np.abs(dose_bins - 0.95 * prescribed_dose))
+        v100_idx = np.argmin(np.abs(dose_bins - prescribed_dose))
+        
+        v95 = dvh[v95_idx]
+        v100 = dvh[v100_idx]
+        
+        # Tạo đối tượng DVH
+        dvh_obj = {
+            'structure_name': structure_name,
+            'dose_bins': dose_bins.tolist(),
+            'volume': dvh.tolist(),
+            'd_min': d_min,
+            'd_max': d_max,
+            'd_mean': d_mean,
+            'd95': d95,
+            'd50': d50,
+            'v95': v95,
+            'v100': v100
+        }
+        
+        return dvh_obj
+    
+    def plot_dvh(self, dvh_data_list):
+        """Vẽ biểu đồ DVH từ danh sách dữ liệu DVH"""
+        if not dvh_data_list:
+            return
+        
+        # Tạo cửa sổ mới cho biểu đồ DVH
+        dvh_window = tk.Toplevel(self.root)
+        dvh_window.title("Biểu đồ DVH")
+        dvh_window.geometry("800x600")
+        
+        # Tạo figure và axes
+        fig = plt.Figure(figsize=(10, 6), dpi=100)
+        ax = fig.add_subplot(111)
+        
+        # Vẽ DVH cho từng cấu trúc
+        for dvh_data in dvh_data_list:
+            structure_name = dvh_data['structure_name']
+            dose_bins = dvh_data['dose_bins']
+            volume = dvh_data['volume']
+            
+            # Lấy màu cho cấu trúc
+            color = self.get_structure_color(structure_name)
+            
+            # Vẽ đường DVH
+            ax.plot(dose_bins, volume, label=f"{structure_name}", color=color)
+            
+            # Đánh dấu các điểm quan trọng
+            ax.plot(dvh_data['d95'], 95, 'o', color=color)
+            ax.plot(dvh_data['d50'], 50, 'o', color=color)
+        
+        # Thiết lập trục và nhãn
+        ax.set_xlabel('Liều (Gy)')
+        ax.set_ylabel('Thể tích (%)')
+        ax.set_title('Biểu đồ DVH')
+        ax.grid(True)
+        ax.legend()
+        
+        # Thêm figure vào cửa sổ Tkinter
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        canvas = FigureCanvasTkAgg(fig, master=dvh_window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        
+        # Thêm toolbar
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        toolbar = NavigationToolbar2Tk(canvas, dvh_window)
+        toolbar.update()
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+    
+    def get_structure_color(self, structure_name):
+        """Lấy màu của cấu trúc"""
+        if self.rt_structs is None or structure_name not in self.rt_structs:
+            return 'blue'  # Màu mặc định
+        
+        # Lấy màu từ dữ liệu RT Structure
+        color = self.rt_structs[structure_name].get('color', [1, 0, 0])
+        
+        # Chuyển đổi từ dạng [r, g, b] sang chuỗi màu
+        return f'#{int(color[0]*255):02x}{int(color[1]*255):02x}{int(color[2]*255):02x}'
+    
+    def get_structure_mask(self, structure_name):
+        """Tạo mask cho một cấu trúc"""
+        if self.rt_structs is None or structure_name not in self.rt_structs:
+            return None
+        
+        # Tạo mask trống
+        mask = np.zeros_like(self.ct_volume)
+        
+        # Lấy dữ liệu contour
+        contour_data = self.rt_structs[structure_name].get('contour_data', [])
+        
+        # Duyệt qua từng contour
+        for contour in contour_data:
+            points = contour.get('points', [])
+            slice_z = contour.get('slice_z', 0)
+            
+            # Tìm slice index tương ứng với slice_z
+            slice_index = self.find_nearest_slice(slice_z)
+            
+            if slice_index is None:
+                continue
+            
+            # Chuyển đổi điểm từ tọa độ DICOM sang chỉ số pixel
+            pixel_points = []
+            for point in points:
+                pixel_x, pixel_y = self.convert_dicom_to_pixel(point[0], point[1])
+                pixel_points.append([pixel_x, pixel_y])
+            
+            # Tạo mask cho contour này
+            if pixel_points:
+                pixel_points = np.array(pixel_points, dtype=np.int32)
+                slice_mask = np.zeros((self.ct_volume.shape[1], self.ct_volume.shape[2]), dtype=np.uint8)
+                cv2.fillPoly(slice_mask, [pixel_points], 1)
+                
+                # Cập nhật mask tổng
+                mask[slice_index] = np.logical_or(mask[slice_index], slice_mask)
+        
+        return mask
+    
+    def find_nearest_slice(self, z_position):
+        """Tìm chỉ số slice gần nhất với vị trí z"""
+        if not hasattr(self, 'slice_positions') or not self.slice_positions:
+            return None
+        
+        # Tìm chỉ số của slice gần nhất
+        distances = np.abs(np.array(self.slice_positions) - z_position)
+        nearest_idx = np.argmin(distances)
+        
+        return nearest_idx

@@ -2,6 +2,7 @@ import os
 import json
 import pickle
 import datetime
+import shutil
 from data_management.patient_db import PatientDatabase
 
 class SessionManager:
@@ -86,7 +87,7 @@ class SessionManager:
         
         return True
     
-    def save_dose_calculation(self, dose_data):
+    def save_dose_calculation(self, dose_data, dose_metadata=None):
         """Lưu dữ liệu tính liều"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
@@ -98,6 +99,12 @@ class SessionManager:
         # Lưu dose data dưới dạng pickle
         with open(dose_file, 'wb') as f:
             pickle.dump(dose_data, f)
+        
+        # Lưu metadata nếu có
+        if dose_metadata:
+            dose_metadata_file = os.path.join(plan_dir, "dose_metadata.json")
+            with open(dose_metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(dose_metadata, f, ensure_ascii=False, indent=2)
         
         return True
     
@@ -115,6 +122,40 @@ class SessionManager:
             pickle.dump(dvh_data, f)
         
         return True
+    
+    def save_optimization_results(self, optimization_results):
+        """Lưu kết quả tối ưu hóa"""
+        if not self.current_patient_id or not self.current_plan_id:
+            raise ValueError("Chưa tạo phiên làm việc")
+        
+        # Tạo đường dẫn đến file kết quả tối ưu hóa
+        plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
+        opt_file = os.path.join(plan_dir, "optimization_results.pkl")
+        
+        # Lưu kết quả tối ưu hóa dưới dạng pickle
+        with open(opt_file, 'wb') as f:
+            pickle.dump(optimization_results, f)
+        
+        return True
+    
+    def save_screenshot(self, image_data, filename="screenshot.png"):
+        """Lưu ảnh chụp màn hình"""
+        if not self.current_patient_id or not self.current_plan_id:
+            raise ValueError("Chưa tạo phiên làm việc")
+        
+        # Tạo thư mục screenshots nếu chưa tồn tại
+        plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
+        screenshots_dir = os.path.join(plan_dir, "screenshots")
+        if not os.path.exists(screenshots_dir):
+            os.makedirs(screenshots_dir)
+        
+        # Tạo đường dẫn đến file ảnh
+        screenshot_file = os.path.join(screenshots_dir, filename)
+        
+        # Lưu ảnh
+        image_data.save(screenshot_file)
+        
+        return screenshot_file
     
     def load_session(self, patient_id, plan_id):
         """Tải phiên làm việc"""
@@ -154,6 +195,13 @@ class SessionManager:
             with open(dose_file, 'rb') as f:
                 dose_data = pickle.load(f)
         
+        # Tải dose metadata
+        dose_metadata_file = os.path.join(plan_dir, "dose_metadata.json")
+        dose_metadata = None
+        if os.path.exists(dose_metadata_file):
+            with open(dose_metadata_file, 'r', encoding='utf-8') as f:
+                dose_metadata = json.load(f)
+        
         # Tải DVH data
         dvh_file = os.path.join(plan_dir, "dvh.pkl")
         dvh_data = None
@@ -161,12 +209,21 @@ class SessionManager:
             with open(dvh_file, 'rb') as f:
                 dvh_data = pickle.load(f)
         
+        # Tải kết quả tối ưu hóa
+        opt_file = os.path.join(plan_dir, "optimization_results.pkl")
+        optimization_results = None
+        if os.path.exists(opt_file):
+            with open(opt_file, 'rb') as f:
+                optimization_results = pickle.load(f)
+        
         return {
             'metadata': metadata,
             'contours': contours_data,
             'beam_settings': beam_settings,
             'dose_data': dose_data,
-            'dvh_data': dvh_data
+            'dose_metadata': dose_metadata,
+            'dvh_data': dvh_data,
+            'optimization_results': optimization_results
         }
     
     def list_patients(self):
@@ -178,7 +235,12 @@ class SessionManager:
             for item in os.listdir(self.workspace_dir):
                 patient_dir = os.path.join(self.workspace_dir, item)
                 if os.path.isdir(patient_dir):
-                    patients.append(item)
+                    # Lấy thông tin bệnh nhân từ database nếu có
+                    patient_info = self.db.get_patient_info(item)
+                    if patient_info:
+                        patients.append(patient_info)
+                    else:
+                        patients.append({'patient_id': item, 'patient_name': 'Unknown'})
         
         return patients
     
@@ -199,10 +261,26 @@ class SessionManager:
                         with open(metadata_file, 'r', encoding='utf-8') as f:
                             metadata = json.load(f)
                     
-                    plans.append({
+                    # Lấy thời gian tạo từ tên kế hoạch nếu có định dạng plan_YYYYMMDD_HHMMSS
+                    created_at = None
+                    if item.startswith("plan_") and len(item) >= 20:
+                        try:
+                            date_str = item[5:13]
+                            time_str = item[14:20]
+                            created_at = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
+                        except:
+                            pass
+                    
+                    plan_info = {
                         'plan_id': item,
-                        'metadata': metadata
-                    })
+                        'metadata': metadata,
+                        'created_at': created_at or 'Unknown'
+                    }
+                    
+                    plans.append(plan_info)
+        
+        # Sắp xếp kế hoạch theo thời gian tạo (mới nhất lên đầu)
+        plans.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         
         return plans
     
@@ -213,22 +291,20 @@ class SessionManager:
         if not os.path.exists(plan_dir):
             return False
         
-        # Xóa các file trong thư mục kế hoạch
-        for item in os.listdir(plan_dir):
-            file_path = os.path.join(plan_dir, item)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        
-        # Xóa thư mục kế hoạch
-        os.rmdir(plan_dir)
-        
-        # Reset current plan nếu đang chọn kế hoạch bị xóa
-        if self.current_patient_id == patient_id and self.current_plan_id == plan_id:
-            self.current_plan_id = None
-        
-        return True
+        try:
+            # Xóa toàn bộ thư mục kế hoạch
+            shutil.rmtree(plan_dir)
+            
+            # Reset current plan nếu đang chọn kế hoạch bị xóa
+            if self.current_patient_id == patient_id and self.current_plan_id == plan_id:
+                self.current_plan_id = None
+            
+            return True
+        except Exception as e:
+            print(f"Lỗi khi xóa kế hoạch: {e}")
+            return False
     
-    def export_plan(self, output_dir):
+    def export_plan(self, output_dir, include_screenshots=True):
         """Xuất kế hoạch hiện tại ra thư mục khác"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
@@ -240,11 +316,170 @@ class SessionManager:
             os.makedirs(output_dir)
         
         # Sao chép các file từ plan_dir sang output_dir
-        import shutil
         for item in os.listdir(plan_dir):
             src_path = os.path.join(plan_dir, item)
             dst_path = os.path.join(output_dir, item)
+            
             if os.path.isfile(src_path):
                 shutil.copy2(src_path, dst_path)
+            elif os.path.isdir(src_path) and item == "screenshots" and include_screenshots:
+                # Sao chép thư mục screenshots nếu có và được yêu cầu
+                if not os.path.exists(dst_path):
+                    os.makedirs(dst_path)
+                
+                for screenshot in os.listdir(src_path):
+                    src_screenshot = os.path.join(src_path, screenshot)
+                    dst_screenshot = os.path.join(dst_path, screenshot)
+                    if os.path.isfile(src_screenshot):
+                        shutil.copy2(src_screenshot, dst_screenshot)
         
         return True
+    
+    def duplicate_plan(self, patient_id, plan_id, new_plan_name=None):
+        """Tạo bản sao của một kế hoạch"""
+        # Tạo phiên làm việc mới
+        self.create_new_session(patient_id)
+        new_plan_id = self.current_plan_id
+        
+        # Đường dẫn đến kế hoạch nguồn và đích
+        source_plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+        target_plan_dir = os.path.join(self.workspace_dir, patient_id, new_plan_id)
+        
+        if not os.path.exists(source_plan_dir):
+            raise FileNotFoundError(f"Không tìm thấy kế hoạch nguồn: {plan_id}")
+        
+        # Sao chép các file từ kế hoạch nguồn sang kế hoạch đích
+        for item in os.listdir(source_plan_dir):
+            src_path = os.path.join(source_plan_dir, item)
+            dst_path = os.path.join(target_plan_dir, item)
+            
+            if os.path.isfile(src_path):
+                shutil.copy2(src_path, dst_path)
+            elif os.path.isdir(src_path):
+                # Sao chép thư mục con (như screenshots)
+                if not os.path.exists(dst_path):
+                    os.makedirs(dst_path)
+                
+                for subitem in os.listdir(src_path):
+                    src_subitem = os.path.join(src_path, subitem)
+                    dst_subitem = os.path.join(dst_path, subitem)
+                    if os.path.isfile(src_subitem):
+                        shutil.copy2(src_subitem, dst_subitem)
+        
+        # Cập nhật metadata nếu có
+        metadata_file = os.path.join(target_plan_dir, "metadata.json")
+        if os.path.exists(metadata_file):
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            
+            # Cập nhật tên kế hoạch nếu được chỉ định
+            if new_plan_name:
+                metadata['plan_name'] = new_plan_name
+            else:
+                metadata['plan_name'] = f"Copy of {metadata.get('plan_name', 'Unknown Plan')}"
+            
+            # Cập nhật thời gian
+            metadata['created_at'] = datetime.datetime.now().isoformat()
+            metadata['modified_at'] = metadata['created_at']
+            
+            # Lưu metadata đã cập nhật
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        return {
+            'patient_id': patient_id,
+            'plan_id': new_plan_id,
+            'plan_name': new_plan_name or f"Copy of {plan_id}"
+        }
+    
+    def backup_workspace(self, backup_dir):
+        """Sao lưu toàn bộ workspace"""
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+        
+        # Tạo tên file backup dựa trên thời gian
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = os.path.join(backup_dir, f"workspace_backup_{timestamp}.zip")
+        
+        # Tạo file zip chứa toàn bộ workspace
+        shutil.make_archive(backup_file[:-4], 'zip', self.workspace_dir)
+        
+        return backup_file
+    
+    def restore_from_backup(self, backup_file):
+        """Khôi phục workspace từ file backup"""
+        if not os.path.exists(backup_file):
+            raise FileNotFoundError(f"Không tìm thấy file backup: {backup_file}")
+        
+        # Tạo thư mục tạm để giải nén
+        temp_dir = os.path.join(os.path.dirname(backup_file), "temp_restore")
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir)
+        
+        # Giải nén file backup
+        shutil.unpack_archive(backup_file, temp_dir)
+        
+        # Xóa workspace hiện tại
+        if os.path.exists(self.workspace_dir):
+            shutil.rmtree(self.workspace_dir)
+        
+        # Di chuyển dữ liệu từ thư mục tạm sang workspace
+        shutil.move(temp_dir, self.workspace_dir)
+        
+        # Reset trạng thái hiện tại
+        self.current_patient_id = None
+        self.current_plan_id = None
+        
+        return True
+    
+    def get_plan_summary(self, patient_id=None, plan_id=None):
+        """Lấy thông tin tóm tắt về kế hoạch"""
+        if patient_id is None:
+            patient_id = self.current_patient_id
+        if plan_id is None:
+            plan_id = self.current_plan_id
+        
+        if not patient_id or not plan_id:
+            raise ValueError("Chưa chọn kế hoạch")
+        
+        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+        if not os.path.exists(plan_dir):
+            raise FileNotFoundError(f"Không tìm thấy kế hoạch: {plan_id}")
+        
+        # Tải metadata
+        metadata_file = os.path.join(plan_dir, "metadata.json")
+        metadata = None
+        if os.path.exists(metadata_file):
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+        
+        # Tải beam settings
+        beam_file = os.path.join(plan_dir, "beam_settings.json")
+        beam_settings = None
+        if os.path.exists(beam_file):
+            with open(beam_file, 'r', encoding='utf-8') as f:
+                beam_settings = json.load(f)
+        
+        # Tải DVH data
+        dvh_file = os.path.join(plan_dir, "dvh.pkl")
+        dvh_data = None
+        if os.path.exists(dvh_file):
+            with open(dvh_file, 'rb') as f:
+                dvh_data = pickle.load(f)
+        
+        # Tạo summary
+        summary = {
+            'patient_id': patient_id,
+            'plan_id': plan_id,
+            'plan_name': metadata.get('plan_name', 'Unknown') if metadata else 'Unknown',
+            'created_at': metadata.get('created_at', 'Unknown') if metadata else 'Unknown',
+            'modified_at': metadata.get('modified_at', 'Unknown') if metadata else 'Unknown',
+            'technique': metadata.get('technique', 'Unknown') if metadata else 'Unknown',
+            'total_dose': metadata.get('total_dose', 0) if metadata else 0,
+            'fraction_count': metadata.get('fraction_count', 0) if metadata else 0,
+            'beam_count': len(beam_settings.get('beams', [])) if beam_settings else 0,
+            'structures': list(dvh_data.keys()) if dvh_data else []
+        }
+        
+        return summary

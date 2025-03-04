@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog , messagebox
 from data_management.dicom_parser import DICOMParser
 from data_management.patient_db import PatientDatabase
 

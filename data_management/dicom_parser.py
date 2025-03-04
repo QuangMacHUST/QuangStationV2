@@ -5,13 +5,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 class DICOMParser:
     def __init__(self, folder_path):
+        """Khởi tạo parser với đường dẫn đến thư mục chứa file DICOM"""
         self.folder_path = folder_path
-        self.files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.dcm')]
+        self.files = self._get_dicom_files(folder_path)
         self.ct_files = []
         self.mri_files = []
         self.rt_struct = None
         self.rt_dose = None
         self.rt_plan = None
+        self.rt_image = None  # Thêm biến để lưu RT Image
         self._classify_files()
 
     def _classify_files(self):
@@ -29,6 +31,8 @@ class DICOMParser:
                     self.rt_dose = file
                 elif ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.5':  # RT Plan
                     self.rt_plan = file
+                elif ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.1':  # RT Image
+                    self.rt_image = file
             except Exception as e:
                 print(f"Bỏ qua file lỗi: {file} - {e}")
 
@@ -205,63 +209,90 @@ class DICOMParser:
             return None
 
     def extract_rt_plan(self):
-        """Trích xuất dữ liệu kế hoạch RT Plan"""
+        """Trích xuất thông tin từ RT Plan"""
         if not self.rt_plan:
             return None
         
         try:
             ds = pydicom.dcmread(self.rt_plan)
             plan_data = {
-                'plan_label': getattr(ds, 'RTPlanLabel', 'Unknown Plan'),
-                'plan_name': getattr(ds, 'RTPlanName', 'Unknown'),
-                'plan_description': getattr(ds, 'RTPlanDescription', ''),
-                'fraction_groups': []
+                'plan_label': ds.RTPlanLabel if hasattr(ds, 'RTPlanLabel') else '',
+                'plan_name': ds.RTPlanName if hasattr(ds, 'RTPlanName') else '',
+                'plan_description': ds.RTPlanDescription if hasattr(ds, 'RTPlanDescription') else '',
+                'plan_date': ds.RTPlanDate if hasattr(ds, 'RTPlanDate') else '',
+                'plan_time': ds.RTPlanTime if hasattr(ds, 'RTPlanTime') else '',
+                'beams': []
             }
             
-            # Trích xuất thông tin về phân đoạn điều trị
-            if hasattr(ds, 'FractionGroupSequence'):
-                for fg in ds.FractionGroupSequence:
-                    fraction_group = {
-                        'number_of_fractions': fg.NumberOfFractionsPlanned,
-                        'number_of_beams': fg.NumberOfBeams if hasattr(fg, 'NumberOfBeams') else 0,
-                        'beams': []
-                    }
-                    
-                    # Trích xuất thông tin về các trường chiếu
-                    if hasattr(fg, 'ReferencedBeamSequence'):
-                        for rb in fg.ReferencedBeamSequence:
-                            fraction_group['beams'].append({
-                                'beam_number': rb.ReferencedBeamNumber,
-                                'dose': rb.BeamDose if hasattr(rb, 'BeamDose') else 0,
-                                'dose_units': rb.BeamDoseSpecificationPoint if hasattr(rb, 'BeamDoseSpecificationPoint') else None
-                            })
-                    
-                    plan_data['fraction_groups'].append(fraction_group)
-            
-            # Trích xuất thông tin về các trường chiếu
+            # Trích xuất thông tin về các beam
             if hasattr(ds, 'BeamSequence'):
-                plan_data['beams'] = []
                 for beam in ds.BeamSequence:
                     beam_data = {
-                        'beam_number': beam.BeamNumber,
-                        'beam_name': beam.BeamName,
-                        'beam_type': beam.BeamType,
-                        'radiation_type': beam.RadiationType,
-                        'source_axis_distance': beam.SourceAxisDistance,
-                        'gantry_angle': beam.ControlPointSequence[0].GantryAngle if hasattr(beam, 'ControlPointSequence') else 0,
-                        'collimator_angle': beam.ControlPointSequence[0].BeamLimitingDeviceAngle if hasattr(beam, 'ControlPointSequence') else 0,
-                        'patient_support_angle': beam.ControlPointSequence[0].PatientSupportAngle if hasattr(beam, 'ControlPointSequence') and hasattr(beam.ControlPointSequence[0], 'PatientSupportAngle') else 0
+                        'beam_number': beam.BeamNumber if hasattr(beam, 'BeamNumber') else '',
+                        'beam_name': beam.BeamName if hasattr(beam, 'BeamName') else '',
+                        'beam_type': beam.BeamType if hasattr(beam, 'BeamType') else '',
+                        'radiation_type': beam.RadiationType if hasattr(beam, 'RadiationType') else '',
+                        'treatment_machine': beam.TreatmentMachineName if hasattr(beam, 'TreatmentMachineName') else ''
                     }
-                    
-                    # Trích xuất thông tin về MLC nếu có
-                    if hasattr(beam, 'ControlPointSequence') and hasattr(beam.ControlPointSequence[0], 'BeamLimitingDevicePositionSequence'):
-                        for device in beam.ControlPointSequence[0].BeamLimitingDevicePositionSequence:
-                            if device.RTBeamLimitingDeviceType == 'MLCX' or device.RTBeamLimitingDeviceType == 'MLCY':
-                                beam_data['mlc_positions'] = device.LeafJawPositions
-                    
                     plan_data['beams'].append(beam_data)
             
             return plan_data
         except Exception as e:
-            print(f"Lỗi trích xuất RT Plan: {e}")
+            print(f"Lỗi khi đọc RT Plan: {e}")
+            return None
+
+    def extract_rt_image(self):
+        """Trích xuất thông tin từ RT Image"""
+        if not self.rt_image:
+            return None
+        
+        try:
+            ds = pydicom.dcmread(self.rt_image)
+            
+            # Trích xuất thông tin cơ bản
+            rt_image_data = {
+                'sop_instance_uid': ds.SOPInstanceUID,
+                'rt_image_label': ds.RTImageLabel if hasattr(ds, 'RTImageLabel') else '',
+                'rt_image_description': ds.RTImageDescription if hasattr(ds, 'RTImageDescription') else '',
+                'rt_image_name': ds.RTImageName if hasattr(ds, 'RTImageName') else '',
+                'image_type': ds.ImageType if hasattr(ds, 'ImageType') else [],
+                'referenced_beam_number': ds.ReferencedBeamNumber if hasattr(ds, 'ReferencedBeamNumber') else None,
+                'radiation_machine_name': ds.RadiationMachineName if hasattr(ds, 'RadiationMachineName') else '',
+                'radiation_machine_sad': ds.RadiationMachineSAD if hasattr(ds, 'RadiationMachineSAD') else None,
+                'rt_image_position': ds.RTImagePosition if hasattr(ds, 'RTImagePosition') else None,
+                'rt_image_orientation': ds.RTImageOrientation if hasattr(ds, 'RTImageOrientation') else None,
+                'gantry_angle': ds.GantryAngle if hasattr(ds, 'GantryAngle') else None,
+                'beam_limiting_device_angle': ds.BeamLimitingDeviceAngle if hasattr(ds, 'BeamLimitingDeviceAngle') else None,
+                'patient_support_angle': ds.PatientSupportAngle if hasattr(ds, 'PatientSupportAngle') else None,
+                'exposure_sequence': []
+            }
+            
+            # Trích xuất thông tin về các exposure
+            if hasattr(ds, 'ExposureSequence'):
+                for exposure in ds.ExposureSequence:
+                    exposure_data = {
+                        'exposure_time': exposure.ExposureTime if hasattr(exposure, 'ExposureTime') else None,
+                        'kvp': exposure.KVP if hasattr(exposure, 'KVP') else None,
+                        'x_ray_tube_current': exposure.XRayTubeCurrent if hasattr(exposure, 'XRayTubeCurrent') else None
+                    }
+                    rt_image_data['exposure_sequence'].append(exposure_data)
+            
+            # Trích xuất dữ liệu pixel
+            if hasattr(ds, 'pixel_array'):
+                rt_image_data['pixel_data'] = ds.pixel_array
+                rt_image_data['rows'] = ds.Rows
+                rt_image_data['columns'] = ds.Columns
+                rt_image_data['bits_allocated'] = ds.BitsAllocated
+                rt_image_data['bits_stored'] = ds.BitsStored
+                rt_image_data['high_bit'] = ds.HighBit
+                rt_image_data['pixel_representation'] = ds.PixelRepresentation
+                
+                # Xử lý window/level nếu có
+                if hasattr(ds, 'WindowCenter') and hasattr(ds, 'WindowWidth'):
+                    rt_image_data['window_center'] = ds.WindowCenter
+                    rt_image_data['window_width'] = ds.WindowWidth
+            
+            return rt_image_data
+        except Exception as e:
+            print(f"Lỗi khi đọc RT Image: {e}")
             return None

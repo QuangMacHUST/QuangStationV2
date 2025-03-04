@@ -1182,5 +1182,5 @@ void normalize_dose(
             }
         }
     }
-}
+    }
 };

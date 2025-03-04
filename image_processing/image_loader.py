@@ -32,10 +32,10 @@ class ImageLoader:
         self.image_type = first_dicom.Modality
         
         # Trích xuất thông tin cơ bản
-        parser = DICOMParser(dicom_names[0])
+        parser = DICOMParser(directory)
         self.metadata = parser.extract_patient_info()
         
-        return self.get_numpy_array()
+        return self.get_numpy_array(), self.metadata
     
     def load_single_dicom(self, file_path):
         """Tải một ảnh DICOM đơn lẻ"""
@@ -47,10 +47,85 @@ class ImageLoader:
         self.origin = self.image_series.GetOrigin()
         self.direction = self.image_series.GetDirection()
         
-        parser = DICOMParser(file_path)
-        self.metadata = parser.extract_patient_info()
+        # Trích xuất thông tin cơ bản
+        ds = pydicom.dcmread(file_path)
+        self.image_type = ds.Modality
         
-        return self.get_numpy_array()
+        # Tạo metadata cơ bản
+        self.metadata = {
+            'patient_id': ds.PatientID if hasattr(ds, 'PatientID') else 'Unknown',
+            'patient_name': str(ds.PatientName) if hasattr(ds, 'PatientName') else 'Unknown',
+            'modality': ds.Modality if hasattr(ds, 'Modality') else 'Unknown'
+        }
+        
+        return self.get_numpy_array(), self.metadata
+    
+    def load_rt_image(self, file_path):
+        """Tải ảnh RT Image từ file DICOM"""
+        try:
+            # Đọc file DICOM
+            ds = pydicom.dcmread(file_path)
+            
+            # Kiểm tra xem có phải là RT Image không
+            if ds.SOPClassUID != '1.2.840.10008.5.1.4.1.1.481.1':
+                raise ValueError("File không phải là RT Image")
+            
+            # Lấy dữ liệu pixel
+            pixel_data = ds.pixel_array
+            
+            # Xử lý rescale nếu có
+            if hasattr(ds, 'RescaleSlope') and hasattr(ds, 'RescaleIntercept'):
+                pixel_data = pixel_data * ds.RescaleSlope + ds.RescaleIntercept
+            
+            # Tạo SimpleITK image từ numpy array
+            sitk_image = sitk.GetImageFromArray(pixel_data)
+            
+            # Thiết lập thông tin không gian nếu có
+            if hasattr(ds, 'PixelSpacing'):
+                spacing = (ds.PixelSpacing[0], ds.PixelSpacing[1], 1.0)
+                sitk_image.SetSpacing(spacing)
+                self.spacing = spacing
+            
+            if hasattr(ds, 'ImagePositionPatient'):
+                origin = tuple(ds.ImagePositionPatient)
+                sitk_image.SetOrigin(origin)
+                self.origin = origin
+            
+            self.image_series = sitk_image
+            self.image_type = 'RTIMAGE'
+            
+            # Trích xuất metadata
+            parser = DICOMParser(os.path.dirname(file_path))
+            rt_image_data = parser.extract_rt_image()
+            
+            if rt_image_data:
+                self.metadata = {
+                    'patient_id': ds.PatientID if hasattr(ds, 'PatientID') else 'Unknown',
+                    'patient_name': str(ds.PatientName) if hasattr(ds, 'PatientName') else 'Unknown',
+                    'modality': 'RTIMAGE',
+                    'rt_image_label': rt_image_data.get('rt_image_label', ''),
+                    'gantry_angle': rt_image_data.get('gantry_angle', None),
+                    'beam_limiting_device_angle': rt_image_data.get('beam_limiting_device_angle', None),
+                    'patient_support_angle': rt_image_data.get('patient_support_angle', None),
+                    'radiation_machine_name': rt_image_data.get('radiation_machine_name', '')
+                }
+            else:
+                self.metadata = {
+                    'patient_id': ds.PatientID if hasattr(ds, 'PatientID') else 'Unknown',
+                    'patient_name': str(ds.PatientName) if hasattr(ds, 'PatientName') else 'Unknown',
+                    'modality': 'RTIMAGE'
+                }
+            
+            return pixel_data, self.metadata
+            
+        except Exception as e:
+            print(f"Lỗi khi tải RT Image: {e}")
+            return None, None
+    
+    def find_rt_image(self, directory):
+        """Tìm file RT Image trong thư mục"""
+        parser = DICOMParser(directory)
+        return parser.rt_image
     
     def get_numpy_array(self):
         """Chuyển đổi SimpleITK image thành mảng NumPy"""
