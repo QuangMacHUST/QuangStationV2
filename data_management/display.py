@@ -771,4 +771,305 @@ class Display:
             loader = ImageLoader()
             
             # Tải chuỗi DICOM
-            volume
+            volume_data = loader.load_dicom_series(directory)
+
+            if volume_data is not None:
+                self.volume, self.metadata = volume_data
+                self.current_slice = self.volume.shape[0] // 2
+
+                # Cập nhật hiển thị
+                self.display_interface()
+
+                # Cập nhật hiển thị 3D
+                self.update_vtk_data()
+
+                print(f"Đã tải thành công dữ liệu từ {directory}")
+                
+                # Kiểm tra và tải RT Structure nếu có
+                rt_structure_path = loader.find_rt_structure(directory)
+                if rt_structure_path:
+                    self.rt_structures = loader.load_rt_structure(rt_structure_path)
+                    if self.rt_structures:
+                        print(f"Đã tải {len(self.rt_structures)} cấu trúc RT")
+                        self.display_rt_structures()
+                
+                # Kiểm tra và tải RT Dose nếu có
+                rt_dose_path = loader.find_rt_dose(directory)
+                if rt_dose_path:
+                    dose_data = loader.load_rt_dose(rt_dose_path)
+                    if dose_data:
+                        # Lưu dữ liệu liều để sử dụng sau này
+                        self.db.save_rt_dose(self.patient_id, dose_data)
+                        print("Đã tải dữ liệu RT Dose")
+                
+                return True
+            else:
+                print(f"Không thể tải dữ liệu từ {directory}")
+                return False
+
+        except Exception as e:
+            print(f"Lỗi khi tải dữ liệu: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    def close(self):
+        """Dọn dẹp tài nguyên khi đóng ứng dụng"""
+        # Dừng VTK interactor nếu đang chạy
+        if hasattr(self, 'iren') and self.iren:
+            self.iren.TerminateApp()
+    
+        # Giải phóng tài nguyên VTK
+        if hasattr(self, 'ren_win') and self.ren_win:
+            self.ren_win.Finalize()
+    
+        # Xóa các tham chiếu đến VTK objects
+        if hasattr(self, 'volume_actor'):
+            del self.volume_actor
+        if hasattr(self, 'vtk_data'):
+            del self.vtk_data
+        if hasattr(self, 'ren'):
+            del self.ren
+        if hasattr(self, 'ren_win'):
+            del self.ren_win
+        if hasattr(self, 'iren'):
+            del self.iren
+    
+        # Dọn dẹp các biến khác
+        if hasattr(self, 'structure_actors'):
+            del self.structure_actors
+        if hasattr(self, 'dose_actor'):
+            del self.dose_actor
+    
+        print("Đã giải phóng tài nguyên hiển thị")
+
+    def create_screenshot(self, output_path):
+        """Tạo ảnh chụp màn hình của giao diện hiện tại"""
+        try:
+            # Lưu hình ảnh 2D
+            self.fig_2d.savefig(output_path, format='png', dpi=150)
+        
+            # Tạo ảnh chụp từ VTK renderer
+            vtk_path = output_path.replace('.png', '_3d.png')
+        
+            window_to_image = vtk.vtkWindowToImageFilter()
+            window_to_image.SetInput(self.ren_win)
+            window_to_image.Update()
+        
+            writer = vtk.vtkPNGWriter()
+            writer.SetInputConnection(window_to_image.GetOutputPort())
+            writer.SetFileName(vtk_path)
+            writer.Write()
+        
+            print(f"Đã lưu ảnh chụp màn hình tại: {output_path} và {vtk_path}")
+            return True
+        except Exception as e:
+            print(f"Lỗi khi tạo ảnh chụp màn hình: {e}")
+            return False
+
+    def generate_3d_model_from_struct(self, structure_name, output_stl=None):
+        """Tạo mô hình 3D từ cấu trúc RT và xuất ra file STL nếu cần"""
+        if not self.rt_structures:
+            print("Không có dữ liệu RT Structure")
+            return None
+    
+        # Tìm structure theo tên
+        structure = None
+        for roi_number, struct in self.rt_structures.items():
+            if struct.get('name', '') == structure_name:
+                structure = struct
+                break
+            
+        if structure is None:
+            print(f"Không tìm thấy cấu trúc RT có tên {structure_name}")
+            return None
+    
+        try:
+            # Tạo mô hình 3D từ cấu trúc RT
+            points = vtk.vtkPoints()
+            cells = vtk.vtkCellArray()
+        
+            # Thêm các điểm từ contour data
+            contour_data = structure.get('contour_data', [])
+            if not contour_data:
+                print(f"Cấu trúc {structure_name} không có dữ liệu contour")
+                return None
+        
+            # Tạo các polygon từ contour data
+            for contour in contour_data:
+                point_data = contour.get('points', [])
+                if len(point_data) < 3:  # Bỏ qua contour không đủ điểm
+                    continue
+                
+                # Thêm points và tạo polygon
+                polygon = vtk.vtkPolygon()
+                polygon.GetPointIds().SetNumberOfIds(len(point_data))
+            
+                for i, point in enumerate(point_data):
+                    point_id = points.InsertNextPoint(point)
+                    polygon.GetPointIds().SetId(i, point_id)
+                
+                cells.InsertNextCell(polygon)
+        
+            # Tạo polydata
+            polydata = vtk.vtkPolyData()
+            polydata.SetPoints(points)
+            polydata.SetPolys(cells)
+        
+            # Sử dụng Delaunay3D để tạo bề mặt
+            delaunay = vtk.vtkDelaunay3D()
+            delaunay.SetInputData(polydata)
+            delaunay.Update()
+        
+            # Chuyển đổi sang bề mặt
+            surface = vtk.vtkGeometryFilter()
+            surface.SetInputConnection(delaunay.GetOutputPort())
+            surface.Update()
+        
+            # Làm mịn bề mặt
+            smoother = vtk.vtkSmoothPolyDataFilter()
+            smoother.SetInputConnection(surface.GetOutputPort())
+            smoother.SetNumberOfIterations(15)
+            smoother.SetRelaxationFactor(0.1)
+            smoother.Update()
+        
+            # Tính toán normal vectors
+            normals = vtk.vtkPolyDataNormals()
+            normals.SetInputConnection(smoother.GetOutputPort())
+            normals.ComputePointNormalsOn()
+            normals.ComputeCellNormalsOn()
+            normals.SplittingOff()
+            normals.Update()
+        
+            # Xuất STL nếu cần
+            if output_stl:
+                writer = vtk.vtkSTLWriter()
+                writer.SetInputConnection(normals.GetOutputPort())
+                writer.SetFileName(output_stl)
+                writer.Write()
+               print(f"Đã xuất mô hình 3D ra file STL: {output_stl}")
+        
+            # Trả về dữ liệu polydata đã xử lý
+            return normals.GetOutput()
+        
+        except Exception as e:
+            print(f"Lỗi khi tạo mô hình 3D: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def add_measurement_tools(self):
+        """Thêm công cụ đo lường vào giao diện"""
+        # Tạo frame chứa các công cụ đo lường
+        self.measurement_frame = tk.Frame(self.root)
+        self.measurement_frame.pack(fill=tk.X)
+    
+        # Nút đo khoảng cách
+        self.measure_distance_btn = tk.Button(self.measurement_frame, text="Đo khoảng cách",command=self.activate_distance_measurement)
+        self.measure_distance_btn.pack(side=tk.LEFT, padx=5, pady=5)
+    
+        # Nút đo góc
+        self.measure_angle_btn = tk.Button(self.measurement_frame, text="Đo góc",command=self.activate_angle_measurement)
+        self.measure_angle_btn.pack(side=tk.LEFT, padx=5, pady=5)
+    
+        # Nút đo HU (Hounsfield Units)
+        self.measure_hu_btn = tk.Button(self.measurement_frame, text="Đo giá trị HU",command=self.activate_hu_measurement)
+        self.measure_hu_btn.pack(side=tk.LEFT, padx=5, pady=5)
+    
+        # Nút xóa các phép đo
+        self.clear_measurements_btn = tk.Button(self.measurement_frame, text="Xóa phép đo",command=self.clear_measurements)
+        self.clear_measurements_btn.pack(side=tk.LEFT, padx=5, pady=5)
+    
+        # Biến lưu trạng thái đo lường hiện tại
+        self.measurement_mode = None
+    
+        # Biến lưu các điểm đã chọn
+        self.measurement_points = []
+    
+        # Kết nối sự kiện click chuột vào canvas matplotlib
+        self.canvas_2d.mpl_connect('button_press_event', self.on_click)
+
+    def activate_distance_measurement(self):
+        """Kích hoạt chế độ đo khoảng cách"""
+        self.measurement_mode = 'distance'
+        self.measurement_points = []
+        print("Đã kích hoạt chế độ đo khoảng cách. Hãy chọn hai điểm.")
+
+    def activate_angle_measurement(self):
+        """Kích hoạt chế độ đo góc"""
+        self.measurement_mode = 'angle'
+        self.measurement_points = []
+        print("Đã kích hoạt chế độ đo góc. Hãy chọn ba điểm để tạo hai vector.")
+
+    def activate_hu_measurement(self):
+        """Kích hoạt chế độ đo giá trị HU"""
+        self.measurement_mode = 'hu'
+        self.measurement_points = []
+        print("Đã kích hoạt chế độ đo giá trị HU. Hãy chọn một điểm.")
+
+    def on_click(self, event):
+        """Xử lý sự kiện click chuột"""
+        if not self.measurement_mode or event.inaxes is None:
+            return
+    
+        # Lấy tọa độ pixel hiện tại
+        x, y = int(event.xdata), int(event.ydata)
+    
+        # Thêm điểm vào danh sách
+        self.measurement_points.append((x, y))
+    
+        # Xử lý theo chế độ đo lường
+        if self.measurement_mode == 'distance' and len(self.measurement_points) == 2:
+            self.calculate_distance()
+        elif self.measurement_mode == 'angle' and len(self.measurement_points) == 3:
+            self.calculate_angle()
+        elif self.measurement_mode == 'hu' and len(self.measurement_points) == 1:
+            self.measure_hu_value()
+
+    def calculate_distance(self):
+        """Tính toán khoảng cách giữa hai điểm"""
+        if len(self.measurement_points) != 2:
+            return
+    
+        p1, p2 = self.measurement_points
+    
+        # Lấy thông tin pixel spacing từ metadata
+        pixel_spacing = [1.0, 1.0]  # Mặc định nếu không có metadata
+        if self.metadata and 'pixel_spacing' in self.metadata and self.metadata['pixel_spacing']:
+            pixel_spacing = self.metadata['pixel_spacing']
+    
+        # Tính khoảng cách theo pixel
+        pixel_distance = np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+    
+        # Tính khoảng cách thực (mm)
+        real_distance = pixel_distance * pixel_spacing[0]  # Giả sử spacing đều
+    
+        # Hiển thị khoảng cách trên hình
+        ax = self.fig_2d.axes[0]  # Giả sử đang hiển thị trên axial view
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], 'r-', linewidth=2)
+        ax.text((p1[0] + p2[0])/2, (p1[1] + p2[1])/2, f'{real_distance:.2f} mm',color='red', fontsize=9, backgroundcolor='white')
+    
+        self.canvas_2d.draw()
+    
+        # Reset chế độ đo
+        self.measurement_mode = None
+        self.measurement_points = []
+        print(f"Khoảng cách: {real_distance:.2f} mm")
+
+    def calculate_angle(self):
+        """Tính toán góc giữa hai vector tạo bởi ba điểm"""
+        if len(self.measurement_points) != 3:
+            return
+    
+        p1, p2, p3 = self.measurement_points
+    
+        # Tạo hai vector
+        v1 = np.array([p1[0] - p2[0], p1[1] - p2[1]])
+        v2 = np.array([p3[0] - p2[0], p3[1] - p2[1]])
+    
+        # Tính góc (radian)
+        dot_product = np.dot(v1, v2)
+        norm_v1 = np.linalg.norm(v1)
+        norm_v2 = np.linalg.norm(v2)
+    
+        if norm_v1 == 0 or norm_v2 == 0:
+            print("Không thể tính góc: vector có độ
