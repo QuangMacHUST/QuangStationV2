@@ -1,0 +1,9 @@
+pydicom
+simpleitk
+vtk
+pyqt
+numpy
+scipy
+matplotlib
+tensorflow
+cyipopt

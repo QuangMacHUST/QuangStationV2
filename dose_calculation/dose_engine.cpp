@@ -1138,49 +1138,49 @@ private:
         }
     }
 
-// Chuẩn hóa liều theo liều kê toa
-void normalize_dose(
-    std::vector<std::vector<std::vector<double>>>& dose,
-    const std::vector<std::vector<std::vector<int>>>& structure_masks,
-    double prescribed_dose
-) {
-    // Tìm cấu trúc PTV (Planning Target Volume)
-    // Giả sử structure_masks[0] là mặt nạ cho PTV
-    if (structure_masks.empty()) {
-        return;
-    }
-    
-    const auto& ptv_mask = structure_masks[0];
-    
-    // Tính liều trung bình trong PTV
-    double total_dose = 0.0;
-    int num_voxels = 0;
-    
-    for (size_t z = 0; z < dose.size(); ++z) {
-        for (size_t y = 0; y < dose[0].size(); ++y) {
-            for (size_t x = 0; x < dose[0][0].size(); ++x) {
-                if (ptv_mask[z][y][x] > 0) {
-                    total_dose += dose[z][y][x];
-                    ++num_voxels;
+    // Chuẩn hóa liều theo liều kê toa
+    void normalize_dose(
+        std::vector<std::vector<std::vector<double>>>& dose,
+        const std::vector<std::vector<std::vector<int>>>& structure_masks,
+        double prescribed_dose
+    ) {
+        // Tìm cấu trúc PTV (Planning Target Volume)
+        // Giả sử structure_masks[0] là mặt nạ cho PTV
+        if (structure_masks.empty()) {
+            return;
+        }
+        
+        const auto& ptv_mask = structure_masks[0];
+        
+        // Tính liều trung bình trong PTV
+        double total_dose = 0.0;
+        int num_voxels = 0;
+        
+        for (size_t z = 0; z < dose.size(); ++z) {
+            for (size_t y = 0; y < dose[0].size(); ++y) {
+                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+                    if (ptv_mask[z][y][x] > 0) {
+                        total_dose += dose[z][y][x];
+                        ++num_voxels;
+                    }
                 }
             }
         }
-    }
-    
-    if (num_voxels == 0) {
-        return;
-    }
-    
-    double mean_dose = total_dose / num_voxels;
-    double scale_factor = prescribed_dose / mean_dose;
-    
-    // Chuẩn hóa tất cả các voxel
-    for (size_t z = 0; z < dose.size(); ++z) {
-        for (size_t y = 0; y < dose[0].size(); ++y) {
-            for (size_t x = 0; x < dose[0][0].size(); ++x) {
-                dose[z][y][x] *= scale_factor;
+        
+        if (num_voxels == 0) {
+            return;
+        }
+        
+        double mean_dose = total_dose / num_voxels;
+        double scale_factor = prescribed_dose / mean_dose;
+        
+        // Chuẩn hóa tất cả các voxel
+        for (size_t z = 0; z < dose.size(); ++z) {
+            for (size_t y = 0; y < dose[0].size(); ++y) {
+                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+                    dose[z][y][x] *= scale_factor;
+                }
             }
         }
-    }
     }
 };

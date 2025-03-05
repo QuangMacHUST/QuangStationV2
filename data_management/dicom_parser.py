@@ -1,7 +1,16 @@
-import pydicom
-import numpy as np
 import os
+import sys
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
+
+# Sửa lỗi import pydicom
+try:
+    import pydicom
+except ImportError:
+    print("Thư viện pydicom chưa được cài đặt. Đang cài đặt...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pydicom"])
+    import pydicom
 
 class DICOMParser:
     def __init__(self, folder_path):
@@ -15,6 +24,24 @@ class DICOMParser:
         self.rt_plan = None
         self.rt_image = None  # Thêm biến để lưu RT Image
         self._classify_files()
+
+    def _get_dicom_files(self, folder_path):
+        """Lấy danh sách tất cả các file DICOM trong thư mục"""
+        dicom_files = []
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    # Kiểm tra nhanh xem file có phải là DICOM không
+                    with open(file_path, 'rb') as f:
+                        # Kiểm tra DICOM magic number (DICM ở byte 128-132)
+                        f.seek(128)
+                        if f.read(4) == b'DICM':
+                            dicom_files.append(file_path)
+                except Exception as e:
+                    # Bỏ qua các file không phải DICOM
+                    continue
+        return dicom_files
 
     def _classify_files(self):
         """Phân loại các file DICOM theo loại"""

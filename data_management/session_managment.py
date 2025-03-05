@@ -1,12 +1,29 @@
 import os
 import json
-import pickle
 import datetime
 import shutil
+import sys
+import numpy as np
 from data_management.patient_db import PatientDatabase
 
+# Sửa lỗi import pydicom
+try:
+    import pydicom
+    from pydicom.dataset import Dataset, FileDataset
+    from pydicom.sequence import Sequence
+    from pydicom.uid import generate_uid
+except ImportError:
+    print("Thư viện pydicom chưa được cài đặt. Đang cài đặt...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pydicom"])
+    import pydicom
+    from pydicom.dataset import Dataset, FileDataset
+    from pydicom.sequence import Sequence
+    from pydicom.uid import generate_uid
+import tempfile
+
 class SessionManager:
-    """Quản lý phiên làm việc, lưu và tải kế hoạch xạ trị"""
+    """Quản lý phiên làm việc, lưu và tải kế hoạch xạ trị sử dụng định dạng DICOM"""
     
     def __init__(self, workspace_dir='workspace'):
         self.workspace_dir = workspace_dir
@@ -42,104 +59,182 @@ class SessionManager:
             'created_at': timestamp
         }
     
+    def _create_dicom_file(self, data, modality, directory, filename):
+        """Tạo file DICOM với metadata cơ bản"""
+        # Tạo file DICOM mới
+        file_meta = Dataset()
+        file_meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.3'  # RT Plan Storage
+        file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+        
+        # Tạo dataset
+        ds = FileDataset(filename, {}, file_meta=file_meta, preamble=b"\0" * 128)
+        
+        # Thêm các thẻ bắt buộc
+        ds.PatientID = self.current_patient_id
+        ds.PatientName = self.db.get_patient_info(self.current_patient_id).get('patient_name', 'Unknown')
+        ds.StudyInstanceUID = generate_uid()
+        ds.SeriesInstanceUID = generate_uid()
+        ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+        ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+        ds.Modality = modality
+        ds.InstanceCreationDate = datetime.datetime.now().strftime('%Y%m%d')
+        ds.InstanceCreationTime = datetime.datetime.now().strftime('%H%M%S')
+        
+        # Thêm dữ liệu vào thuộc tính riêng của chúng ta
+        ds.ContentDescription = f"{self.current_plan_id}_{filename}"
+        
+        # Lưu dữ liệu thực tế vào thuộc tính private tag
+        if isinstance(data, dict):
+            # Chuyển đổi dict thành chuỗi JSON
+            ds.add_new([0x0071, 0x0010], 'LO', 'JSON')
+            ds.add_new([0x0071, 0x1000], 'OB', str(data).encode('utf-8'))
+        elif isinstance(data, np.ndarray):
+            # Lưu mảng numpy
+            ds.add_new([0x0071, 0x0010], 'LO', 'NUMPY')
+            ds.add_new([0x0071, 0x1001], 'OB', data.tobytes())
+            ds.add_new([0x0071, 0x1002], 'LO', str(data.shape))
+            ds.add_new([0x0071, 0x1003], 'LO', str(data.dtype))
+        else:
+            # Lưu dữ liệu dưới dạng đã được chuyển thành chuỗi
+            ds.add_new([0x0071, 0x0010], 'LO', 'STRING')
+            ds.add_new([0x0071, 0x1004], 'OB', str(data).encode('utf-8'))
+        
+        # Lưu file
+        file_path = os.path.join(directory, f"{filename}.dcm")
+        ds.save_as(file_path)
+        
+        return file_path
+    
+    def _load_dicom_data(self, file_path):
+        """Đọc dữ liệu từ file DICOM"""
+        if not os.path.exists(file_path):
+            return None
+        
+        ds = pydicom.dcmread(file_path)
+        data_type = ds[0x0071, 0x0010].value
+        
+        if data_type == 'JSON':
+            # Chuyển đổi dữ liệu JSON thành dict
+            json_str = ds[0x0071, 0x1000].value.decode('utf-8')
+            try:
+                # Cố gắng chuyển chuỗi Python thành dict
+                import ast
+                return ast.literal_eval(json_str)
+            except:
+                # Trả về dạng chuỗi nếu không thể chuyển đổi
+                return json_str
+        
+        elif data_type == 'NUMPY':
+            # Chuyển đổi dữ liệu thành mảng numpy
+            shape_str = ds[0x0071, 0x1002].value
+            dtype_str = ds[0x0071, 0x1003].value
+            
+            # Phân tích chuỗi shape và dtype
+            shape = tuple(map(int, shape_str.strip('()').split(',')))
+            if shape[-1] == '':  # Xử lý trường hợp shape = (n,)
+                shape = (shape[0],)
+                
+            # Tạo lại mảng numpy
+            arr_bytes = ds[0x0071, 0x1001].value
+            arr = np.frombuffer(arr_bytes, dtype=np.dtype(dtype_str))
+            
+            if len(shape) > 1:
+                arr = arr.reshape(shape)
+            
+            return arr
+        
+        elif data_type == 'STRING':
+            # Chuyển đổi chuỗi thành dữ liệu gốc
+            data_str = ds[0x0071, 0x1004].value.decode('utf-8')
+            return data_str
+        
+        return None
+    
     def save_plan_metadata(self, metadata):
-        """Lưu metadata cho kế hoạch"""
+        """Lưu metadata cho kế hoạch dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
-        # Tạo đường dẫn đến file metadata
+        # Tạo đường dẫn đến thư mục kế hoạch
         plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        metadata_file = os.path.join(plan_dir, "metadata.json")
         
-        # Lưu metadata
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        # Lưu metadata dưới dạng DICOM
+        self._create_dicom_file(metadata, 'RTPLAN', plan_dir, "metadata")
         
         return True
     
     def save_contours(self, contours_data):
-        """Lưu dữ liệu contour"""
+        """Lưu dữ liệu contour dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
-        # Tạo đường dẫn đến file contours
+        # Tạo đường dẫn đến thư mục kế hoạch
         plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        contours_file = os.path.join(plan_dir, "contours.pkl")
         
-        # Lưu contours dưới dạng pickle
-        with open(contours_file, 'wb') as f:
-            pickle.dump(contours_data, f)
+        # Lưu contours dưới dạng DICOM - mô phỏng RTSTRUCT
+        self._create_dicom_file(contours_data, 'RTSTRUCT', plan_dir, "contours")
         
         return True
     
     def save_beam_settings(self, beam_settings):
-        """Lưu cài đặt chùm tia"""
+        """Lưu cài đặt chùm tia dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
-        # Tạo đường dẫn đến file beam settings
+        # Tạo đường dẫn đến thư mục kế hoạch
         plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        beam_file = os.path.join(plan_dir, "beam_settings.json")
         
-        # Lưu beam settings
-        with open(beam_file, 'w', encoding='utf-8') as f:
-            json.dump(beam_settings, f, ensure_ascii=False, indent=2)
+        # Lưu beam settings dưới dạng DICOM - phần của RTPLAN
+        self._create_dicom_file(beam_settings, 'RTPLAN', plan_dir, "beam_settings")
         
         return True
     
     def save_dose_calculation(self, dose_data, dose_metadata=None):
-        """Lưu dữ liệu tính liều"""
+        """Lưu dữ liệu tính liều dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
-        # Tạo đường dẫn đến file dose
+        # Tạo đường dẫn đến thư mục kế hoạch
         plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        dose_file = os.path.join(plan_dir, "dose.pkl")
         
-        # Lưu dose data dưới dạng pickle
-        with open(dose_file, 'wb') as f:
-            pickle.dump(dose_data, f)
+        # Lưu dose data dưới dạng DICOM - mô phỏng RTDOSE
+        self._create_dicom_file(dose_data, 'RTDOSE', plan_dir, "dose")
         
         # Lưu metadata nếu có
         if dose_metadata:
-            dose_metadata_file = os.path.join(plan_dir, "dose_metadata.json")
-            with open(dose_metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(dose_metadata, f, ensure_ascii=False, indent=2)
+            self._create_dicom_file(dose_metadata, 'RTDOSE', plan_dir, "dose_metadata")
         
         return True
     
     def save_dvh_data(self, dvh_data):
-        """Lưu dữ liệu DVH"""
+        """Lưu dữ liệu DVH dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
-        # Tạo đường dẫn đến file DVH
+        # Tạo đường dẫn đến thư mục kế hoạch
         plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        dvh_file = os.path.join(plan_dir, "dvh.pkl")
         
-        # Lưu DVH data dưới dạng pickle
-        with open(dvh_file, 'wb') as f:
-            pickle.dump(dvh_data, f)
+        # Lưu DVH data dưới dạng DICOM (dùng supplementary tag trong RTDOSE)
+        self._create_dicom_file(dvh_data, 'RTDOSE', plan_dir, "dvh")
         
         return True
     
     def save_optimization_results(self, optimization_results):
-        """Lưu kết quả tối ưu hóa"""
+        """Lưu kết quả tối ưu hóa dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
-        # Tạo đường dẫn đến file kết quả tối ưu hóa
+        # Tạo đường dẫn đến thư mục kế hoạch
         plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        opt_file = os.path.join(plan_dir, "optimization_results.pkl")
         
-        # Lưu kết quả tối ưu hóa dưới dạng pickle
-        with open(opt_file, 'wb') as f:
-            pickle.dump(optimization_results, f)
+        # Lưu kết quả tối ưu hóa dưới dạng DICOM (dùng private tags)
+        self._create_dicom_file(optimization_results, 'RTPLAN', plan_dir, "optimization_results")
         
         return True
     
     def save_screenshot(self, image_data, filename="screenshot.png"):
-        """Lưu ảnh chụp màn hình"""
+        """Lưu ảnh chụp màn hình dưới dạng DICOM Secondary Capture"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
         
@@ -149,16 +244,31 @@ class SessionManager:
         if not os.path.exists(screenshots_dir):
             os.makedirs(screenshots_dir)
         
-        # Tạo đường dẫn đến file ảnh
-        screenshot_file = os.path.join(screenshots_dir, filename)
+        # Tạo tên file không có phần mở rộng
+        base_filename = os.path.splitext(filename)[0]
         
-        # Lưu ảnh
-        image_data.save(screenshot_file)
+        # Lưu ảnh tạm thời để lấy thông tin (nếu nó là đối tượng PIL Image)
+        temp_file = os.path.join(tempfile.gettempdir(), filename)
+        image_data.save(temp_file)
         
-        return screenshot_file
+        # Đọc ảnh vào mảng numpy
+        from PIL import Image
+        import numpy as np
+        pil_image = Image.open(temp_file)
+        img_array = np.array(pil_image)
+        
+        # Lưu ảnh dưới dạng DICOM Secondary Capture
+        dcm_filename = os.path.join(screenshots_dir, f"{base_filename}.dcm")
+        self._create_dicom_file(img_array, 'SC', screenshots_dir, base_filename)
+        
+        # Xóa file tạm thời
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        
+        return dcm_filename
     
     def load_session(self, patient_id, plan_id):
-        """Tải phiên làm việc"""
+        """Tải phiên làm việc từ các file DICOM"""
         self.current_patient_id = patient_id
         self.current_plan_id = plan_id
         
@@ -168,53 +278,46 @@ class SessionManager:
             raise FileNotFoundError(f"Không tìm thấy kế hoạch: {plan_id} cho bệnh nhân: {patient_id}")
         
         # Tải metadata
-        metadata_file = os.path.join(plan_dir, "metadata.json")
+        metadata_file = os.path.join(plan_dir, "metadata.dcm")
         metadata = None
         if os.path.exists(metadata_file):
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            metadata = self._load_dicom_data(metadata_file)
         
         # Tải contours
-        contours_file = os.path.join(plan_dir, "contours.pkl")
+        contours_file = os.path.join(plan_dir, "contours.dcm")
         contours_data = None
         if os.path.exists(contours_file):
-            with open(contours_file, 'rb') as f:
-                contours_data = pickle.load(f)
+            contours_data = self._load_dicom_data(contours_file)
         
         # Tải beam settings
-        beam_file = os.path.join(plan_dir, "beam_settings.json")
+        beam_file = os.path.join(plan_dir, "beam_settings.dcm")
         beam_settings = None
         if os.path.exists(beam_file):
-            with open(beam_file, 'r', encoding='utf-8') as f:
-                beam_settings = json.load(f)
+            beam_settings = self._load_dicom_data(beam_file)
         
         # Tải dose data
-        dose_file = os.path.join(plan_dir, "dose.pkl")
+        dose_file = os.path.join(plan_dir, "dose.dcm")
         dose_data = None
         if os.path.exists(dose_file):
-            with open(dose_file, 'rb') as f:
-                dose_data = pickle.load(f)
+            dose_data = self._load_dicom_data(dose_file)
         
         # Tải dose metadata
-        dose_metadata_file = os.path.join(plan_dir, "dose_metadata.json")
+        dose_metadata_file = os.path.join(plan_dir, "dose_metadata.dcm")
         dose_metadata = None
         if os.path.exists(dose_metadata_file):
-            with open(dose_metadata_file, 'r', encoding='utf-8') as f:
-                dose_metadata = json.load(f)
+            dose_metadata = self._load_dicom_data(dose_metadata_file)
         
         # Tải DVH data
-        dvh_file = os.path.join(plan_dir, "dvh.pkl")
+        dvh_file = os.path.join(plan_dir, "dvh.dcm")
         dvh_data = None
         if os.path.exists(dvh_file):
-            with open(dvh_file, 'rb') as f:
-                dvh_data = pickle.load(f)
+            dvh_data = self._load_dicom_data(dvh_file)
         
         # Tải kết quả tối ưu hóa
-        opt_file = os.path.join(plan_dir, "optimization_results.pkl")
+        opt_file = os.path.join(plan_dir, "optimization_results.dcm")
         optimization_results = None
         if os.path.exists(opt_file):
-            with open(opt_file, 'rb') as f:
-                optimization_results = pickle.load(f)
+            optimization_results = self._load_dicom_data(opt_file)
         
         return {
             'metadata': metadata,
@@ -255,11 +358,10 @@ class SessionManager:
                 plan_dir = os.path.join(patient_dir, item)
                 if os.path.isdir(plan_dir):
                     # Tải metadata để hiển thị thông tin
-                    metadata_file = os.path.join(plan_dir, "metadata.json")
+                    metadata_file = os.path.join(plan_dir, "metadata.dcm")
                     metadata = None
                     if os.path.exists(metadata_file):
-                        with open(metadata_file, 'r', encoding='utf-8') as f:
-                            metadata = json.load(f)
+                        metadata = self._load_dicom_data(metadata_file)
                     
                     # Lấy thời gian tạo từ tên kế hoạch nếu có định dạng plan_YYYYMMDD_HHMMSS
                     created_at = None
@@ -367,24 +469,23 @@ class SessionManager:
                         shutil.copy2(src_subitem, dst_subitem)
         
         # Cập nhật metadata nếu có
-        metadata_file = os.path.join(target_plan_dir, "metadata.json")
+        metadata_file = os.path.join(target_plan_dir, "metadata.dcm")
         if os.path.exists(metadata_file):
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            metadata = self._load_dicom_data(metadata_file)
             
             # Cập nhật tên kế hoạch nếu được chỉ định
-            if new_plan_name:
-                metadata['plan_name'] = new_plan_name
-            else:
-                metadata['plan_name'] = f"Copy of {metadata.get('plan_name', 'Unknown Plan')}"
-            
-            # Cập nhật thời gian
-            metadata['created_at'] = datetime.datetime.now().isoformat()
-            metadata['modified_at'] = metadata['created_at']
-            
-            # Lưu metadata đã cập nhật
-            with open(metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            if metadata is not None:
+                if new_plan_name:
+                    metadata['plan_name'] = new_plan_name
+                else:
+                    metadata['plan_name'] = f"Copy of {metadata.get('plan_name', 'Unknown Plan')}"
+                
+                # Cập nhật thời gian
+                metadata['created_at'] = datetime.datetime.now().isoformat()
+                metadata['modified_at'] = metadata['created_at']
+                
+                # Lưu metadata đã cập nhật
+                self._create_dicom_file(metadata, 'RTPLAN', target_plan_dir, "metadata")
         
         return {
             'patient_id': patient_id,
@@ -448,25 +549,22 @@ class SessionManager:
             raise FileNotFoundError(f"Không tìm thấy kế hoạch: {plan_id}")
         
         # Tải metadata
-        metadata_file = os.path.join(plan_dir, "metadata.json")
+        metadata_file = os.path.join(plan_dir, "metadata.dcm")
         metadata = None
         if os.path.exists(metadata_file):
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            metadata = self._load_dicom_data(metadata_file)
         
         # Tải beam settings
-        beam_file = os.path.join(plan_dir, "beam_settings.json")
+        beam_file = os.path.join(plan_dir, "beam_settings.dcm")
         beam_settings = None
         if os.path.exists(beam_file):
-            with open(beam_file, 'r', encoding='utf-8') as f:
-                beam_settings = json.load(f)
+            beam_settings = self._load_dicom_data(beam_file)
         
         # Tải DVH data
-        dvh_file = os.path.join(plan_dir, "dvh.pkl")
+        dvh_file = os.path.join(plan_dir, "dvh.dcm")
         dvh_data = None
         if os.path.exists(dvh_file):
-            with open(dvh_file, 'rb') as f:
-                dvh_data = pickle.load(f)
+            dvh_data = self._load_dicom_data(dvh_file)
         
         # Tạo summary
         summary = {

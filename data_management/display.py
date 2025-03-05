@@ -1,15 +1,65 @@
-import vtk
 import numpy as np
+import os
+import sys
 import tkinter as tk
-from vtk.util.numpy_support import numpy_to_vtk
+from tkinter import messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import tempfile
+
+# Tự động cài đặt các thư viện nếu chưa có
+try:
+    import vtk
+    from vtk.util.numpy_support import numpy_to_vtk
+except ImportError:
+    print("Thư viện VTK chưa được cài đặt. Đang cài đặt...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "vtk"])
+    import vtk
+    from vtk.util.numpy_support import numpy_to_vtk
+
+try:
+    import cv2
+except ImportError:
+    print("Thư viện OpenCV chưa được cài đặt. Đang cài đặt...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "opencv-python"])
+    import cv2
+
+# Import image_loader từ module image_processing
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from image_processing.image_loader import ImageLoader
 
 class Display:
     def __init__(self, root, patient_id, db):
+        """Khởi tạo giao diện hiển thị"""
         self.root = root
         self.patient_id = patient_id
         self.db = db
+        self.volume = None
+        self.ct_volume = None
+        self.rt_structures = None
+        self.rt_dose = None
+        self.metadata = None
+        self.current_slice = 0
+        self.show_dose = False
+        self.show_dose_on_slice = False
+        self.dose_opacity = 0.5
+        self.dose_colormap = 'jet'
+        self.contour_tools = None
+        self.active_tool = None
+        self.measurement_points = []
+        self.slice_positions = []
+        
+        # Biến để lưu trữ dữ liệu RT Image
+        self.rt_image = None
+        self.rt_image_metadata = None
+        
+        # Thiết lập giao diện
+        self.setup_ui()
+        
+        # Tải dữ liệu bệnh nhân
+        self.update_patient(patient_id)
         
         # Lấy dữ liệu volume từ cơ sở dữ liệu
         volume_data = self.db.get_volume(self.patient_id, 'CT')
@@ -1485,3 +1535,103 @@ class Display:
         nearest_idx = np.argmin(distances)
         
         return nearest_idx
+
+    def setup_ui(self):
+        """Thiết lập giao diện người dùng"""
+        # Tạo frame chính
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Tạo frame cho hiển thị 2D
+        self.frame_2d = tk.Frame(self.main_frame)
+        self.frame_2d.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Tạo hình ảnh 2D với matplotlib
+        self.fig_2d = plt.figure(figsize=(8, 8))
+        self.canvas_2d = FigureCanvasTkAgg(self.fig_2d, self.frame_2d)
+        self.canvas_2d.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Tạo frame cho hiển thị 3D
+        self.frame_3d = tk.Frame(self.main_frame)
+        self.frame_3d.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        # Tạo VTK widget cho hiển thị 3D
+        self.vtk_widget = tk.Frame(self.frame_3d, width=400, height=400)
+        self.vtk_widget.pack(fill=tk.BOTH, expand=True)
+        
+        # Khởi tạo VTK renderer
+        self.init_vtk()
+        
+        # Tạo frame điều khiển
+        self.control_frame = tk.Frame(self.root)
+        self.control_frame.pack(fill=tk.X)
+        
+        # Tạo các nút điều khiển
+        self.create_control_buttons()
+        
+        # Liên kết sự kiện
+        self.bind_events()
+
+    def create_control_buttons(self):
+        """Tạo các nút điều khiển"""
+        # Nút hiển thị/ẩn liều
+        self.dose_button = tk.Button(
+            self.control_frame, 
+            text="Hiển thị liều", 
+            command=lambda: self.display_dose_overlay(not self.show_dose)
+        )
+        self.dose_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút hiển thị RT Structures
+        self.structures_button = tk.Button(
+            self.control_frame, 
+            text="Hiển thị cấu trúc", 
+            command=self.display_rt_structures
+        )
+        self.structures_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút công cụ đo
+        self.measurement_button = tk.Button(
+            self.control_frame, 
+            text="Công cụ đo", 
+            command=self.add_measurement_tools
+        )
+        self.measurement_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút chụp màn hình
+        self.screenshot_button = tk.Button(
+            self.control_frame, 
+            text="Chụp màn hình", 
+            command=lambda: self.create_screenshot("screenshot.png")
+        )
+        self.screenshot_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Thanh trượt slice
+        self.slice_label = tk.Label(self.control_frame, text="Slice:")
+        self.slice_label.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        self.slice_scale = tk.Scale(
+            self.control_frame, 
+            from_=0, 
+            to=100, 
+            orient=tk.HORIZONTAL,
+            command=self.on_slice_change
+        )
+        self.slice_scale.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
+        
+    def on_slice_change(self, event):
+        """Xử lý sự kiện thay đổi slice"""
+        if self.volume is not None and len(self.volume) > 0:
+            self.current_slice = int(self.slice_scale.get())
+            self.display_interface()
+            if self.rt_structures:
+                self.display_rt_structures()
+            if self.show_dose_on_slice:
+                self.display_dose_on_slice(True)
+                
+    def bind_events(self):
+        """Liên kết các sự kiện"""
+        # Sự kiện cuộn chuột để thay đổi slice
+        self.canvas_2d.get_tk_widget().bind("<MouseWheel>", self.on_scroll)
+        # Sự kiện click để đo
+        self.canvas_2d.get_tk_widget().bind("<Button-1>", self.on_click)
