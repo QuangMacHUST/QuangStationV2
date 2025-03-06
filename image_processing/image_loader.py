@@ -17,7 +17,7 @@ except ImportError:
     print("Thư viện SimpleITK chưa được cài đặt. Đang cài đặt...")
     import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "SimpleITK"])
-    import SimpleITK as sitk
+import SimpleITK as sitk
 
 from data_management.dicom_parser import DICOMParser
 
@@ -171,7 +171,7 @@ class ImageLoader:
     def get_numpy_array(self):
         """Chuyển đổi SimpleITK image thành mảng NumPy"""
         if self.image_series is None:
-            return None
+        return None
         
         # Chuyển đổi SimpleITK image thành mảng NumPy
         array = sitk.GetArrayFromImage(self.image_series)
