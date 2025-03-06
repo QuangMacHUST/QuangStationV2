@@ -245,3 +245,122 @@ class ContourTools:
             ax.plot(x/self.spacing[2], z/self.spacing[0], 'r+', markersize=10, markeredgewidth=2)
         elif axis == 'sagittal' and abs(x - slice_index * self.spacing[2]) < self.spacing[2]/2:
             ax.plot(y/self.spacing[1], z/self.spacing[0], 'r+', markersize=10, markeredgewidth=2)
+    
+    def copy_structure(self, source_name, target_name, color=None):
+        """Sao chép một cấu trúc từ một cấu trúc khác
+        
+        Args:
+            source_name (str): Tên cấu trúc nguồn
+            target_name (str): Tên cấu trúc đích
+            color (tuple, optional): Màu sắc của cấu trúc mới. Mặc định là None (sẽ sử dụng màu từ nguồn).
+            
+        Returns:
+            bool: True nếu sao chép thành công, False nếu thất bại
+        """
+        # Kiểm tra xem cấu trúc nguồn có tồn tại không
+        if source_name not in self.contours:
+            print(f"Cấu trúc nguồn '{source_name}' không tồn tại")
+            return False
+        
+        # Kiểm tra xem tên cấu trúc đích đã tồn tại chưa
+        if target_name in self.contours:
+            print(f"Cấu trúc đích '{target_name}' đã tồn tại. Việc sao chép sẽ ghi đè.")
+        
+        # Lấy màu sắc từ nguồn nếu không được chỉ định
+        if color is None:
+            color = self.colors[source_name]
+        
+        # Tạo cấu trúc mới
+        self.add_structure(target_name, color)
+        
+        # Sao chép dữ liệu từ cấu trúc nguồn
+        for axis in ['axial', 'coronal', 'sagittal']:
+            # Sao chép contours cho từng slice
+            slice_indices = self.contours[source_name].get(axis, {}).keys()
+            for slice_idx in slice_indices:
+                points = self.get_contour_points(source_name, slice_idx, axis)
+                if points and len(points) > 0:
+                    self.add_contour_points(slice_idx, points, axis)
+        
+        # Sao chép thông tin khác
+        self.current_struct = target_name
+        
+        print(f"Đã sao chép cấu trúc từ '{source_name}' sang '{target_name}'")
+        return True
+    
+    def expand_structure(self, source_name, target_name, margin_mm, color=None):
+        """Mở rộng một cấu trúc với lề xác định
+        
+        Args:
+            source_name (str): Tên cấu trúc nguồn
+            target_name (str): Tên cấu trúc đích sau khi mở rộng
+            margin_mm (float): Lề mở rộng tính bằng mm
+            color (tuple, optional): Màu sắc của cấu trúc mới
+            
+        Returns:
+            bool: True nếu mở rộng thành công, False nếu thất bại
+        """
+        import cv2
+        import numpy as np
+        
+        # Kiểm tra xem cấu trúc nguồn có tồn tại không
+        if source_name not in self.contours:
+            print(f"Cấu trúc nguồn '{source_name}' không tồn tại")
+            return False
+        
+        # Tạo cấu trúc mới
+        if color is None:
+            color = self.colors[source_name]
+        self.add_structure(target_name, color)
+        
+        # Tính số pixel cần mở rộng dựa trên spacing
+        margin_pixels_x = int(round(margin_mm / self.spacing[0]))
+        margin_pixels_y = int(round(margin_mm / self.spacing[1]))
+        margin_pixels_z = int(round(margin_mm / self.spacing[2]))
+        
+        # Mở rộng trên mỗi slice axial
+        for slice_idx, contour_points in self.contours[source_name].get('axial', {}).items():
+            if not contour_points or len(contour_points) == 0:
+                continue
+            
+            # Tạo mask từ contour
+            shape = self.image_data.shape[1:] if self.image_data.ndim == 3 else self.image_data.shape
+            mask = np.zeros(shape, dtype=np.uint8)
+            
+            # Vẽ contour lên mask
+            contour = np.array(contour_points, dtype=np.int32)
+            cv2.fillPoly(mask, [contour], 1)
+            
+            # Áp dụng phép giãn nở
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*margin_pixels_x+1, 2*margin_pixels_y+1))
+            dilated_mask = cv2.dilate(mask, kernel, iterations=1)
+            
+            # Tìm contour mới từ mask đã giãn nở
+            contours, _ = cv2.findContours(dilated_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Thêm contour mới vào cấu trúc đích
+            for contour in contours:
+                contour = contour.reshape(-1, 2).tolist()
+                self.add_contour_points(slice_idx, contour, 'axial')
+        
+        # Mở rộng theo trục Z bằng cách sao chép contour vào các slice lân cận
+        axial_slices = sorted(list(self.contours[source_name].get('axial', {}).keys()))
+        
+        # Tạo danh sách các slice mới cần thêm
+        new_slices = []
+        for slice_idx in axial_slices:
+            for offset in range(1, margin_pixels_z + 1):
+                if slice_idx + offset not in axial_slices:
+                    new_slices.append((slice_idx, slice_idx + offset))
+                if slice_idx - offset not in axial_slices:
+                    new_slices.append((slice_idx, slice_idx - offset))
+        
+        # Thêm contour vào các slice mới
+        for original_slice, new_slice in new_slices:
+            if 0 <= new_slice < self.image_data.shape[0]:  # Kiểm tra slice mới có nằm trong phạm vi không
+                points = self.get_contour_points(source_name, original_slice, 'axial')
+                if points and len(points) > 0:
+                    self.add_contour_points(new_slice, points, 'axial')
+        
+        print(f"Đã mở rộng cấu trúc '{source_name}' thành '{target_name}' với lề {margin_mm}mm")
+        return True

@@ -151,18 +151,60 @@ class SessionManager:
         
         return None
     
-    def save_plan_metadata(self, metadata):
-        """Lưu metadata cho kế hoạch dưới dạng DICOM"""
-        if not self.current_patient_id or not self.current_plan_id:
-            raise ValueError("Chưa tạo phiên làm việc")
+    def save_plan_metadata(self, metadata, plan_id=None, patient_id=None):
+        """Lưu metadata của kế hoạch xạ trị
         
-        # Tạo đường dẫn đến thư mục kế hoạch
-        plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
+        Args:
+            metadata (dict): Thông tin metadata cần lưu
+            plan_id (str, optional): ID của kế hoạch. Nếu None, sẽ lấy từ metadata
+            patient_id (str, optional): ID của bệnh nhân. Nếu None, sẽ lấy từ metadata
         
-        # Lưu metadata dưới dạng DICOM
-        self._create_dicom_file(metadata, 'RTPLAN', plan_dir, "metadata")
+        Returns:
+            bool: True nếu lưu thành công, False nếu thất bại
+        """
+        try:
+            # Lấy patient_id và plan_id từ metadata nếu không được cung cấp
+            if not patient_id:
+                patient_id = metadata.get('patient_id')
+                if not patient_id:
+                    print("Không tìm thấy patient_id trong metadata")
+                    return False
+            
+            if not plan_id:
+                plan_id = metadata.get('plan_id')
+                if not plan_id:
+                    # Nếu không có plan_id, tạo một plan_id mới
+                    import datetime
+                    import uuid
+                    plan_id = f"plan_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4())[:8]}"
+                    metadata['plan_id'] = plan_id
+            
+            # Đường dẫn đến thư mục của bệnh nhân
+            patient_dir = os.path.join(self.workspace_dir, patient_id)
+            if not os.path.exists(patient_dir):
+                os.makedirs(patient_dir)
+            
+            # Đường dẫn đến thư mục của kế hoạch
+            plan_dir = os.path.join(patient_dir, plan_id)
+            if not os.path.exists(plan_dir):
+                os.makedirs(plan_dir)
+            
+            # Đường dẫn đến file metadata
+            metadata_file = os.path.join(plan_dir, 'plan_metadata.json')
+            
+            # Thêm thời gian chỉnh sửa cuối cùng
+            metadata['last_modified'] = datetime.datetime.now().isoformat()
+            
+            # Lưu metadata dưới dạng file JSON
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+            
+            print(f"Đã lưu metadata kế hoạch tại: {metadata_file}")
+            return True
         
-        return True
+        except Exception as e:
+            print(f"Lỗi khi lưu metadata kế hoạch: {e}")
+            return False
     
     def save_contours(self, contours_data):
         """Lưu dữ liệu contour dưới dạng DICOM"""

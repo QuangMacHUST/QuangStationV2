@@ -682,24 +682,16 @@ private:
     // Chuẩn hóa liều theo liều kê toa
     void normalize_dose(
         std::vector<std::vector<std::vector<double>>>& dose,
-        const std::vector<std::vector<std::vector<int>>>& structure_masks,
-        double prescribed_dose
-    ) {
-        // Tìm cấu trúc PTV (Planning Target Volume)
-        // Giả sử structure_masks[0] là mặt nạ cho PTV
-        if (structure_masks.empty()) {
-            return;
-        }
+        const std::vector<std::vector<std::vector<int>>>& ptv_mask,
+        double prescribed_dose) {
         
-        const auto& ptv_mask = structure_masks[0];
-        
-        // Tính liều trung bình trong PTV
         double total_dose = 0.0;
-        int num_voxels = 0;
+        size_t num_voxels = 0;
         
+        // Tính tổng liều và số voxel trong PTV
         for (size_t z = 0; z < dose.size(); ++z) {
-            for (size_t y = 0; y < dose[0].size(); ++y) {
-                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+            for (size_t y = 0; y < dose[z].size() && y < ptv_mask.size() && z < ptv_mask.size(); ++y) {
+                for (size_t x = 0; x < dose[z][y].size() && x < ptv_mask[z][y].size() && y < ptv_mask[z].size(); ++x) {
                     if (ptv_mask[z][y][x] > 0) {
                         total_dose += dose[z][y][x];
                         ++num_voxels;
@@ -717,8 +709,8 @@ private:
         
         // Chuẩn hóa tất cả các voxel
         for (size_t z = 0; z < dose.size(); ++z) {
-            for (size_t y = 0; y < dose[0].size(); ++y) {
-                for (size_t x = 0; x < dose[0][0].size(); ++x) {
+            for (size_t y = 0; y < dose[z].size(); ++y) {
+                for (size_t x = 0; x < dose[z][y].size(); ++x) {
                     dose[z][y][x] *= scale_factor;
                 }
             }

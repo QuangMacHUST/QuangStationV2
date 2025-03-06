@@ -270,3 +270,186 @@ class ImageLoader:
         }
         
         return presets.get(preset.lower(), presets["default"])
+    
+    def find_rt_structure(self, directory):
+        """Tìm file RT Structure trong thư mục
+        
+        Args:
+            directory: Thư mục cần tìm
+            
+        Returns:
+            Đường dẫn đến file RT Structure nếu tìm thấy, None nếu không có
+        """
+        for root, _, files in os.walk(directory):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+                    if ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.3':  # RT Structure Set
+                        return file_path
+                except:
+                    continue
+        return None
+    
+    def load_rt_structure(self, file_path):
+        """Tải file RT Structure Set
+        
+        Args:
+            file_path: Đường dẫn đến file RT Structure
+            
+        Returns:
+            Dictionary chứa thông tin các cấu trúc
+        """
+        try:
+            # Đọc file DICOM
+            ds = pydicom.dcmread(file_path)
+            
+            # Kiểm tra xem file có phải là RT Structure không
+            if ds.SOPClassUID != '1.2.840.10008.5.1.4.1.1.481.3':
+                print(f"File không phải RT Structure: {file_path}")
+                return None
+            
+            # Dictionary để lưu trữ thông tin các cấu trúc
+            structures = {}
+            
+            # Lặp qua các cấu trúc trong RT Structure
+            if hasattr(ds, 'StructureSetROISequence'):
+                for roi in ds.StructureSetROISequence:
+                    roi_number = roi.ROINumber
+                    roi_name = roi.ROIName
+                    
+                    # Khởi tạo cấu trúc
+                    structures[roi_name] = {
+                        'id': roi_number,
+                        'name': roi_name,
+                        'color': [1, 0, 0],  # Màu mặc định là đỏ
+                        'contour_data': []
+                    }
+            
+            # Lấy màu sắc và dữ liệu contour
+            if hasattr(ds, 'ROIContourSequence'):
+                for roi_contour in ds.ROIContourSequence:
+                    # Tìm thông tin ROI tương ứng
+                    roi_number = roi_contour.ReferencedROINumber
+                    
+                    # Tìm tên ROI từ ROI Number
+                    roi_name = None
+                    for structure_name, structure_data in structures.items():
+                        if structure_data['id'] == roi_number:
+                            roi_name = structure_name
+                            break
+                    
+                    if roi_name is None:
+                        continue
+                    
+                    # Lấy màu sắc nếu có
+                    if hasattr(roi_contour, 'ROIDisplayColor'):
+                        color = [float(c) / 255.0 for c in roi_contour.ROIDisplayColor]
+                        structures[roi_name]['color'] = color
+                    
+                    # Lấy dữ liệu contour
+                    if hasattr(roi_contour, 'ContourSequence'):
+                        for contour in roi_contour.ContourSequence:
+                            contour_data = {
+                                'points': [],
+                                'z': 0.0
+                            }
+                            
+                            # Lấy số điểm và dữ liệu điểm
+                            num_points = contour.NumberOfContourPoints
+                            contour_data_raw = contour.ContourData
+                            
+                            # Chia dữ liệu thành các điểm (x, y, z)
+                            for i in range(num_points):
+                                x = float(contour_data_raw[i*3])
+                                y = float(contour_data_raw[i*3 + 1])
+                                z = float(contour_data_raw[i*3 + 2])
+                                contour_data['points'].append([x, y, z])
+                                
+                            # Gán z-coordinate (thường là giống nhau cho tất cả các điểm trong một contour)
+                            if len(contour_data['points']) > 0:
+                                contour_data['z'] = contour_data['points'][0][2]
+                            
+                            # Thêm vào danh sách contour của cấu trúc
+                            structures[roi_name]['contour_data'].append(contour_data)
+            
+            return structures
+            
+        except Exception as e:
+            print(f"Lỗi khi tải RT Structure: {e}")
+            return None
+    
+    def find_rt_dose(self, directory):
+        """Tìm file RT Dose trong thư mục
+        
+        Args:
+            directory: Thư mục cần tìm
+            
+        Returns:
+            Đường dẫn đến file RT Dose nếu tìm thấy, None nếu không có
+        """
+        for root, _, files in os.walk(directory):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+                    if ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.2':  # RT Dose
+                        return file_path
+                except:
+                    continue
+        return None
+    
+    def load_rt_dose(self, file_path):
+        """Tải file RT Dose
+        
+        Args:
+            file_path: Đường dẫn đến file RT Dose
+            
+        Returns:
+            Tuple (numpy_array, metadata): Mảng numpy chứa dữ liệu liều và metadata
+        """
+        try:
+            # Đọc file DICOM
+            ds = pydicom.dcmread(file_path)
+            
+            # Kiểm tra xem file có phải là RT Dose không
+            if ds.SOPClassUID != '1.2.840.10008.5.1.4.1.1.481.2':
+                print(f"File không phải RT Dose: {file_path}")
+                return None, None
+            
+            # Lấy dữ liệu pixel
+            dose_data = ds.pixel_array.astype(np.float32)
+            
+            # Áp dụng rescale slope và intercept nếu có
+            if hasattr(ds, 'DoseGridScaling'):
+                dose_data = dose_data * ds.DoseGridScaling
+            
+            # Thêm chiều nếu cần thiết
+            if len(dose_data.shape) == 2:
+                dose_data = dose_data.reshape(1, dose_data.shape[0], dose_data.shape[1])
+            
+            # Tạo metadata
+            metadata = {
+                'patient_name': getattr(ds, 'PatientName', None),
+                'patient_id': getattr(ds, 'PatientID', None),
+                'study_date': getattr(ds, 'StudyDate', None),
+                'dose_units': getattr(ds, 'DoseUnits', 'GY'),
+                'dose_type': getattr(ds, 'DoseType', None),
+                'dose_summation_type': getattr(ds, 'DoseSummationType', None),
+                'dose_comment': getattr(ds, 'DoseComment', None),
+                'grid_frame_offset_vector': getattr(ds, 'GridFrameOffsetVector', None),
+                'dose_grid_scaling': getattr(ds, 'DoseGridScaling', 1.0),
+                'dose_max': float(np.max(dose_data)) if dose_data is not None else 0,
+                'dose_min': float(np.min(dose_data)) if dose_data is not None else 0,
+                'position': getattr(ds, 'ImagePositionPatient', [0, 0, 0]),
+                'pixel_spacing': getattr(ds, 'PixelSpacing', [1, 1]),
+                'slice_thickness': getattr(ds, 'SliceThickness', 1),
+                'rows': getattr(ds, 'Rows', 0),
+                'columns': getattr(ds, 'Columns', 0)
+            }
+            
+            return dose_data, metadata
+            
+        except Exception as e:
+            print(f"Lỗi khi tải RT Dose: {e}")
+            return None, None

@@ -26,9 +26,18 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "opencv-python"])
     import cv2
 
+try:
+    from scipy.ndimage import zoom
+except ImportError:
+    print("Thư viện SciPy chưa được cài đặt. Đang cài đặt...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "scipy"])
+    from scipy.ndimage import zoom
+
 # Import image_loader từ module image_processing
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from image_processing.image_loader import ImageLoader
+from contouring.contour_tools import ContourTools
 
 class Display:
     def __init__(self, root, patient_id, db):
@@ -50,6 +59,9 @@ class Display:
         self.active_tool = None
         self.measurement_points = []
         self.slice_positions = []
+        self.measurement_mode = None
+        self.canvas = None
+        self.rt_structs = {}
         
         # Biến để lưu trữ dữ liệu RT Image
         self.rt_image = None
@@ -60,49 +72,45 @@ class Display:
         
         # Tải dữ liệu bệnh nhân
         self.update_patient(patient_id)
+    
+    def setup_ui(self):
+        """Thiết lập giao diện người dùng"""
+        # Tạo frame chính
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Lấy dữ liệu volume từ cơ sở dữ liệu
-        volume_data = self.db.get_volume(self.patient_id, 'CT')
-        if volume_data is not None and len(volume_data) == 2:
-            self.volume, self.metadata = volume_data
-        else:
-            # Xử lý trường hợp không tìm thấy dữ liệu volume
-            print(f"Không tìm thấy dữ liệu CT cho bệnh nhân {patient_id}")
-            self.volume = np.zeros((10, 10, 10), dtype=np.float32)  # Tạo volume rỗng
-            self.metadata = None
-            
-        self.current_slice = self.volume.shape[0] // 2
-
-        # Tạo giao diện Tkinter
-        self.fig_frame = tk.Frame(self.root)
-        self.fig_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Hiển thị 2D bằng matplotlib
-        self.fig_2d = plt.Figure(figsize=(9, 6))
-        self.canvas_2d = FigureCanvasTkAgg(self.fig_2d, master=self.fig_frame)
-        self.canvas_2d.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.canvas_2d.mpl_connect('scroll_event', self.on_scroll)
-
-        # Hiển thị 3D bằng VTK
-        self.vtk_frame = tk.Frame(self.root)
-        self.vtk_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-        self.init_vtk()
-
-        # Hiển thị giao diện ban đầu
-        self.display_interface()
+        # Tạo frame cho hiển thị 2D
+        self.frame_2d = tk.Frame(self.main_frame)
+        self.frame_2d.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Lấy và hiển thị dữ liệu RT Structure nếu có
-        self.rt_structures = self.db.get_rt_struct(self.patient_id)
-        if self.rt_structures:
-            print(f"Đã tải {len(self.rt_structures)} cấu trúc RT")
-            # Hiển thị contours trên các slice 2D
-            self.display_rt_structures()
-
-    def init_vtk(self):
-        # Tạo render window
-        self.vtk_widget = tk.Frame(self.vtk_frame, width=400, height=400)
+        # Tạo hình ảnh 2D với matplotlib
+        self.fig_2d = plt.figure(figsize=(8, 8))
+        self.canvas_2d = FigureCanvasTkAgg(self.fig_2d, self.frame_2d)
+        self.canvas_2d.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Thiết lập canvas từ matplotlib cho các phép đo
+        self.canvas = self.canvas_2d.get_tk_widget()
+        
+        # Tạo frame cho hiển thị 3D
+        self.frame_3d = tk.Frame(self.main_frame)
+        self.frame_3d.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        # Tạo VTK widget cho hiển thị 3D
+        self.vtk_widget = tk.Frame(self.frame_3d, width=400, height=400)
         self.vtk_widget.pack(fill=tk.BOTH, expand=True)
-
+        
+        # Tạo frame điều khiển
+        self.control_frame = tk.Frame(self.root)
+        self.control_frame.pack(fill=tk.X)
+        
+        # Tạo các nút điều khiển
+        self.create_control_buttons()
+        
+        # Liên kết sự kiện
+        self.bind_events()
+    
+    def init_vtk(self):
+        """Khởi tạo môi trường VTK"""
         # Tạo renderer và render window
         self.ren = vtk.vtkRenderer()
         self.ren_win = vtk.vtkRenderWindow()
@@ -111,11 +119,15 @@ class Display:
         # Tạo render window interactor
         self.iren = vtk.vtkRenderWindowInteractor()
         self.iren.SetRenderWindow(self.ren_win)
-
+        
         # Tạo interactor style
         style = vtk.vtkInteractorStyleTrackballCamera()
         self.iren.SetInteractorStyle(style)
-
+        
+        # Kiểm tra xem volume có tồn tại không trước khi tiến hành
+        if self.volume is None or len(self.volume) == 0:
+            return
+        
         # Lấy pixel spacing từ metadata nếu có
         pixel_spacing = [1.0, 1.0, 1.0]  # Mặc định
         if self.metadata and 'pixel_spacing' in self.metadata and self.metadata['pixel_spacing']:
@@ -124,7 +136,7 @@ class Display:
             
         if self.metadata and 'slice_thickness' in self.metadata and self.metadata['slice_thickness']:
             pixel_spacing[2] = self.metadata['slice_thickness']
-
+        
         # Tạo pipeline VTK cho volume rendering
         self.vtk_data = vtk.vtkImageData()
         self.vtk_data.SetDimensions(self.volume.shape[2], self.volume.shape[1], self.volume.shape[0])
@@ -135,42 +147,41 @@ class Display:
         flat_volume = self.volume.ravel(order='F')  # 'F' để phù hợp với thứ tự của VTK
         vtk_array = numpy_to_vtk(flat_volume, deep=True, array_type=vtk.VTK_FLOAT)
         self.vtk_data.GetPointData().SetScalars(vtk_array)
-
+        
         # Tạo volume property
         volume_property = vtk.vtkVolumeProperty()
         volume_property.ShadeOn()
         volume_property.SetInterpolationTypeToLinear()
-
+        
         # Tạo transfer function cho opacity và màu sắc
         opacity_tf = vtk.vtkPiecewiseFunction()
         opacity_tf.AddPoint(-1000, 0.0)   # Air
         opacity_tf.AddPoint(-400, 0.0)    # Lung
         opacity_tf.AddPoint(-100, 0.1)    # Fat
-        opacity_tf.AddPoint(200, 0.4)     # Soft tissue
-        opacity_tf.AddPoint(1000, 0.8)    # Bone
+        opacity_tf.AddPoint(200, 0.2)     # Soft tissue
+        opacity_tf.AddPoint(1000, 0.4)    # Bone
         volume_property.SetScalarOpacity(opacity_tf)
-
+        
         color_tf = vtk.vtkColorTransferFunction()
         color_tf.AddRGBPoint(-1000, 0.0, 0.0, 0.0)  # Air
         color_tf.AddRGBPoint(-400, 0.6, 0.6, 0.9)   # Lung
         color_tf.AddRGBPoint(-100, 0.9, 0.8, 0.9)   # Fat
-        color_tf.AddRGBPoint(200, 0.9, 0.7, 0.7)    # Soft tissue
+        color_tf.AddRGBPoint(200, 1.0, 0.8, 0.7)    # Soft tissue
         color_tf.AddRGBPoint(1000, 1.0, 1.0, 0.9)   # Bone
         volume_property.SetColor(color_tf)
-
+        
         # Tạo volume mapper
         # Sử dụng GPU Volume Ray Cast Mapper cho hiệu suất tốt hơn
         volume_mapper = vtk.vtkGPUVolumeRayCastMapper()
         volume_mapper.SetInputData(self.vtk_data)
-
+        
         # Tạo volume actor
         self.volume_actor = vtk.vtkVolume()
         self.volume_actor.SetMapper(volume_mapper)
         self.volume_actor.SetProperty(volume_property)
-
+        
         # Thêm vào renderer
-        self.ren.AddVolume(self.volume_actor)
-        self.ren.ResetCamera()
+        self.ren.AddViewProp(self.volume_actor)
         
         # Thêm text hiển thị thông tin
         self.text_actor = vtk.vtkTextActor()
@@ -179,24 +190,148 @@ class Display:
         self.text_actor.GetTextProperty().SetColor(1.0, 1.0, 1.0)
         self.text_actor.SetPosition(10, 10)
         self.ren.AddActor2D(self.text_actor)
-
-        # Chỉnh màu background
-        self.ren.SetBackground(0.1, 0.1, 0.2)
         
-        # Bắt đầu interactor
-        self.ren_win.SetSize(400, 400)
+        # Reset camera
+        self.ren.ResetCamera()
+        
+        # Hiển thị rendering
         self.ren_win.Render()
         
-        # Tạo rendering window ở tk widget
+        # Kết nối với widget Tkinter
         def vtk_widget_configure(event):
             self.ren_win.SetSize(event.width, event.height)
-            
+        
         self.vtk_widget.bind("<Configure>", vtk_widget_configure)
         
-        # Nhúng VTK rendering window vào Tkinter frame
-        self.ren_win.SetWindowInfo(str(int(self.vtk_widget.winfo_id())))
+        # Khởi tạo interactor
         self.iren.Initialize()
-        self.ren_win.Render()
+        self.iren.Start()
+    
+    def create_control_buttons(self):
+        """Tạo các nút điều khiển"""
+        # Nút hiển thị/ẩn liều
+        self.dose_button = tk.Button(
+            self.control_frame, 
+            text="Hiển thị liều", 
+            command=lambda: self.display_dose_overlay(not self.show_dose)
+        )
+        self.dose_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút hiển thị RT Structures
+        self.structures_button = tk.Button(
+            self.control_frame, 
+            text="Hiển thị cấu trúc", 
+            command=self.display_rt_structures
+        )
+        self.structures_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút công cụ đo
+        self.measurement_button = tk.Button(
+            self.control_frame, 
+            text="Công cụ đo", 
+            command=self.add_measurement_tools
+        )
+        self.measurement_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút chụp màn hình
+        self.screenshot_button = tk.Button(
+            self.control_frame, 
+            text="Chụp màn hình", 
+            command=lambda: self.create_screenshot("screenshot.png")
+        )
+        self.screenshot_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Thanh trượt slice
+        self.slice_label = tk.Label(self.control_frame, text="Slice:")
+        self.slice_label.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        self.slice_scale = tk.Scale(
+            self.control_frame, 
+            from_=0, 
+            to=100, 
+            orient=tk.HORIZONTAL,
+            command=self.on_slice_change
+        )
+        self.slice_scale.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
+        
+    def on_slice_change(self, event):
+        """Xử lý sự kiện thay đổi slice"""
+        if self.volume is not None and len(self.volume) > 0:
+            self.current_slice = int(self.slice_scale.get())
+            self.display_interface()
+            if self.rt_structures:
+                self.display_rt_structures()
+            if self.show_dose_on_slice:
+                self.display_dose_on_slice(True)
+                
+    def bind_events(self):
+        """Liên kết các sự kiện"""
+        # Sự kiện cuộn chuột để thay đổi slice
+        self.canvas_2d.get_tk_widget().bind("<MouseWheel>", self.on_scroll)
+        # Sự kiện click để đo
+        self.canvas_2d.get_tk_widget().bind("<Button-1>", self.on_click)
+    
+    def update_patient(self, patient_id):
+        """Cập nhật thông tin bệnh nhân"""
+        self.patient_id = patient_id
+        
+        # Lấy dữ liệu volume từ cơ sở dữ liệu
+        volume_data = self.db.get_volume(patient_id, 'CT')
+        if volume_data:
+            self.volume, self.metadata = volume_data
+            self.ct_volume = self.volume.copy()  # Lưu bản sao của CT volume
+            
+            # Cập nhật thanh trượt slice
+            if self.volume is not None and len(self.volume) > 0:
+                self.slice_scale.config(to=len(self.volume) - 1)
+                self.current_slice = len(self.volume) // 2
+                self.slice_scale.set(self.current_slice)
+            
+            # Khởi tạo công cụ contour
+            self.contour_tools = ContourTools(self.volume, spacing=self.metadata.get('pixel_spacing', [1.0, 1.0, 1.0]))
+            
+            # Hiển thị giao diện
+            self.display_interface()
+            
+            # Khởi tạo VTK
+            self.init_vtk()
+        else:
+            messagebox.showerror("Lỗi", f"Không tìm thấy dữ liệu CT cho bệnh nhân {patient_id}")
+        
+        # Lấy và hiển thị dữ liệu RT Structure nếu có
+        self.rt_structures = self.db.get_rt_struct(patient_id)
+        if self.rt_structures:
+            print(f"Đã tải {len(self.rt_structures)} cấu trúc RT")
+            self.rt_structs = self.rt_structures  # Gán cho biến rt_structs
+            # Hiển thị contours trên các slice 2D
+            self.display_rt_structures()
+        
+        # Lấy và hiển thị dữ liệu RT Dose nếu có
+        dose_data = self.db.get_rt_dose(patient_id)
+        if dose_data:
+            self.dose_volume, self.dose_metadata = dose_data
+            self.display_dose_overlay(True)
+    
+    def clear_measurements(self):
+        """Xóa tất cả phép đo"""
+        self.measurement_points = []
+        self.display_interface()
+        if self.rt_structures:
+            self.display_rt_structures()
+        if self.show_dose_on_slice:
+            self.display_dose_on_slice(True)
+    
+    def measure_hu_value(self):
+        """Đo giá trị HU tại điểm chọn"""
+        if len(self.measurement_points) > 0:
+            point = self.measurement_points[0]
+            x, y = point
+            self.display_hu_value(x, y)
+    
+    def on_scroll(self, event):
+        """Xử lý sự kiện cuộn chuột để di chuyển qua các slice"""
+        if self.volume is None or len(self.volume) == 0:
+            return
         
     def display_interface(self):
         # Hiển thị 2D
@@ -309,16 +444,14 @@ class Display:
         if self.metadata and 'slices' in self.metadata and len(self.metadata['slices']) > 0:
             if 'position' in self.metadata['slices'][0] and self.metadata['slices'][0]['position']:
                 origin = self.metadata['slices'][0]['position']
-        
         # Simple conversion assuming standard orientation
+
         # This needs refinement based on your specific coordinate system
         pixel_x = int((x - origin[0]) / pixel_spacing[0])
         pixel_y = int((y - origin[1]) / pixel_spacing[1])
-        
         # Ensure within image bounds
         pixel_x = max(0, min(pixel_x, self.volume.shape[2]-1))
         pixel_y = max(0, min(pixel_y, self.volume.shape[1]-1))
-        
         return pixel_x, pixel_y
 
     def on_scroll(self, event):
