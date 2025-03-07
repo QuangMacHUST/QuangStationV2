@@ -1,7 +1,8 @@
 import numpy as np
+import cv2
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
-import cv2
+from typing import Dict, List, Tuple, Any, Optional
 
 class ContourTools:
     """Cung cấp công cụ để vẽ và chỉnh sửa contour"""

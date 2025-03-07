@@ -1,25 +1,9 @@
 import numpy as np
 import os
 import sys
-
-# Thêm thư viện pydicom và SimpleITK
-try:
-    import pydicom
-except ImportError:
-    print("Thư viện pydicom chưa được cài đặt. Đang cài đặt...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pydicom"])
-    import pydicom
-
-try:
-    import SimpleITK as sitk
-except ImportError:
-    print("Thư viện SimpleITK chưa được cài đặt. Đang cài đặt...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "SimpleITK"])
+import pydicom
 import SimpleITK as sitk
-
-from data_management.dicom_parser import DICOMParser
+from quangstation.data_management.dicom_parser import DICOMParser
 
 class ImageLoader:
     """Lớp tải và xử lý chuỗi ảnh y tế (CT/MRI/PET/SPECT)"""

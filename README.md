@@ -116,7 +116,7 @@ Dự án được phân phối dưới Giấy phép MIT. Xem [LICENSE](LICENSE) 
 ## 🚧 Trạng thái Dự án
 - **Phiên bản**: 2.0.0-beta
 - **Tiến độ**: 40%
-- **Dự kiến phát hành chính thức**: Quý 2/2024
+- **Dự kiến phát hành chính thức**: tháng 6/2024
 
 ## 🌟 Hỗ trợ
 Nếu bạn thấy dự án hữu ích, hãy cho chúng tôi một sao ⭐ trên GitHub!

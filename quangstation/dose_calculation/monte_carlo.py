@@ -6,9 +6,10 @@ Module tính toán liều sử dụng phương pháp Monte Carlo đơn giản ch
 Mô phỏng quá trình lan truyền hạt photon trong môi trường vật chất thông qua kỹ thuật Monte Carlo.
 """
 
-import numpy as np
-import time
 import os
+import numpy as np
+from numpy.random import RandomState
+import time
 from typing import Dict, List, Tuple, Optional, Union, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import itertools
@@ -299,7 +300,7 @@ class MonteCarlo:
             Ma trận liều và ma trận phương sai
         """
         # Khởi tạo bộ sinh số ngẫu nhiên
-        rng = np.random.RandomState(seed)
+        rng = RandomState(seed)
         
         # Khởi tạo ma trận kết quả
         dose_grid = np.zeros(shape, dtype=np.float32)
