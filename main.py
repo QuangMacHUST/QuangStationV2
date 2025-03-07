@@ -5,37 +5,51 @@ from tkinter import ttk, messagebox
 import threading
 import time
 from datetime import datetime
+import uuid
+from typing import Dict, Any
 
 from data_management.patient_db import PatientDatabase
 from data_management.display import Display
 from data_management.import_interface import ImportInterface
 from data_management.session_managment import SessionManager
 from planning.plan_config import PlanConfig
+from data.database import AdvancedDatabase
+from utils.logging import get_logger
 
 class MainApp:
     def __init__(self, root):
-        self.root = root
-        self.root.title("QuangStation V2 - Hệ thống lập kế hoạch xạ trị")
-        self.root.geometry("1280x800")
+        """
+        Khởi tạo ứng dụng chính
         
-        # Tạo database và session manager
-        self.db = PatientDatabase()
+        Args:
+            root: Cửa sổ gốc Tkinter
+        """
+        self.root = root
+        self.root.title("QuangStation V2 - Hệ thống Lập kế hoạch Xạ trị")
+        
+        # Khởi tạo logger
+        self.logger = get_logger("MainApp")
+        self.logger.log_info("Khởi động ứng dụng QuangStation V2")
+        
+        # Khởi tạo các thành phần quản lý dữ liệu (Model)
+        self.patient_manager = PatientManager()
         self.session_manager = SessionManager()
         
-        # Tạo giao diện
+        # Khởi tạo các biến trạng thái
+        self.current_patient_id = None
+        self.current_plan_id = None
+        
+        # Thiết lập giao diện người dùng (View)
         self.setup_ui()
         
-        # Tạo thanh trạng thái
-        self.status_var = tk.StringVar()
-        self.status_var.set("Sẵn sàng")
-        self.status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        # Widget hiện tại
-        self.current_display = None
+        # Cấu hình sự kiện (Controller)
+        self.setup_event_handlers()
         
         # Cập nhật danh sách bệnh nhân
         self.update_patient_list()
+        
+        # Ghi log khởi động
+        self.logger.log_info("Ứng dụng QuangStation V2 đã khởi động thành công")
     
     def setup_ui(self):
         # Tạo menu
@@ -60,39 +74,39 @@ class MainApp:
         self.menu_bar = tk.Menu(self.root)
         
         # Menu File
-        file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        file_menu.add_command(label="Nhập DICOM", command=self.import_dicom)
-        file_menu.add_command(label="Xuất kế hoạch", command=self.export_plan)
-        file_menu.add_separator()
-        file_menu.add_command(label="Thoát", command=self.root.quit)
-        self.menu_bar.add_cascade(label="File", menu=file_menu)
+        self.menu_file = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_file.add_command(label="Nhập DICOM", command=self.import_dicom)
+        self.menu_file.add_command(label="Xuất kế hoạch", command=self.export_plan)
+        self.menu_file.add_separator()
+        self.menu_file.add_command(label="Thoát", command=self.root.quit)
+        self.menu_bar.add_cascade(label="File", menu=self.menu_file)
         
         # Menu Bệnh nhân
-        patient_menu = tk.Menu(self.menu_bar, tearoff=0)
-        patient_menu.add_command(label="Thêm bệnh nhân mới", command=self.add_new_patient)
-        patient_menu.add_command(label="Xóa bệnh nhân", command=self.delete_patient)
-        self.menu_bar.add_cascade(label="Bệnh nhân", menu=patient_menu)
+        self.menu_patient = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_patient.add_command(label="Thêm bệnh nhân mới", command=self.add_new_patient)
+        self.menu_patient.add_command(label="Xóa bệnh nhân", command=self.delete_patient)
+        self.menu_bar.add_cascade(label="Bệnh nhân", menu=self.menu_patient)
         
         # Menu Kế hoạch
-        plan_menu = tk.Menu(self.menu_bar, tearoff=0)
-        plan_menu.add_command(label="Tạo kế hoạch mới", command=self.create_new_plan)
-        plan_menu.add_command(label="Sao chép kế hoạch", command=self.copy_plan)
-        plan_menu.add_command(label="Xóa kế hoạch", command=self.delete_plan)
-        self.menu_bar.add_cascade(label="Kế hoạch", menu=plan_menu)
+        self.menu_plan = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_plan.add_command(label="Tạo kế hoạch mới", command=self.create_new_plan)
+        self.menu_plan.add_command(label="Sao chép kế hoạch", command=self.copy_plan)
+        self.menu_plan.add_command(label="Xóa kế hoạch", command=self.delete_plan)
+        self.menu_bar.add_cascade(label="Kế hoạch", menu=self.menu_plan)
         
         # Menu Công cụ
-        tools_menu = tk.Menu(self.menu_bar, tearoff=0)
-        tools_menu.add_command(label="Contour tự động", command=self.auto_contour)
-        tools_menu.add_command(label="Tính toán liều", command=self.calculate_dose)
-        tools_menu.add_command(label="Tối ưu hóa kế hoạch", command=self.optimize_plan)
-        tools_menu.add_command(label="DVH", command=self.show_dvh)
-        self.menu_bar.add_cascade(label="Công cụ", menu=tools_menu)
+        self.menu_tools = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_tools.add_command(label="Contour tự động", command=self.auto_contour)
+        self.menu_tools.add_command(label="Tính toán liều", command=self.calculate_dose)
+        self.menu_tools.add_command(label="Tối ưu hóa kế hoạch", command=self.optimize_plan)
+        self.menu_tools.add_command(label="DVH", command=self.show_dvh)
+        self.menu_bar.add_cascade(label="Công cụ", menu=self.menu_tools)
         
         # Menu Trợ giúp
-        help_menu = tk.Menu(self.menu_bar, tearoff=0)
-        help_menu.add_command(label="Hướng dẫn sử dụng", command=self.show_help)
-        help_menu.add_command(label="Về chúng tôi", command=self.show_about)
-        self.menu_bar.add_cascade(label="Trợ giúp", menu=help_menu)
+        self.menu_help = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_help.add_command(label="Hướng dẫn sử dụng", command=self.show_help)
+        self.menu_help.add_command(label="Giới thiệu", command=self.show_about)
+        self.menu_bar.add_cascade(label="Trợ giúp", menu=self.menu_help)
         
         self.root.config(menu=self.menu_bar)
     
@@ -143,7 +157,7 @@ class MainApp:
             self.patient_tree.delete(item)
         
         # Lấy danh sách bệnh nhân từ database
-        patients = self.db.get_all_patients()
+        patients = self.patient_manager.db.get_all_patients()
         
         # Thêm vào Treeview
         for patient in patients:
@@ -153,7 +167,7 @@ class MainApp:
             
             self.patient_tree.insert("", tk.END, values=(patient_id, name, date))
         
-        self.status_var.set(f"Đã tải {len(patients)} bệnh nhân")
+        self.logger.log_info(f"Đã tải {len(patients)} bệnh nhân")
     
     def on_patient_select(self, event):
         # Lấy item được chọn
@@ -178,9 +192,9 @@ class MainApp:
             widget.destroy()
         
         # Tạo đối tượng hiển thị mới
-        self.current_display = Display(self.display_frame, patient_id, self.db)
+        self.current_display = Display(self.display_frame, patient_id, self.patient_manager.db)
         
-        self.status_var.set(f"Đã tải dữ liệu bệnh nhân {patient_id}")
+        self.logger.log_info(f"Đã tải dữ liệu bệnh nhân {patient_id}")
     
     # Các hàm xử lý menu
     def import_dicom(self):
@@ -241,7 +255,7 @@ class MainApp:
                 return
             
             # Lưu vào database
-            success = self.db.insert_patient(patient_info)
+            success = self.patient_manager.db.insert_patient(patient_info)
             
             if success:
                 messagebox.showinfo("Thành công", "Đã thêm bệnh nhân mới")
@@ -429,10 +443,74 @@ class MainApp:
         Tác giả: Mạc Đăng Quang
         Liên hệ: 0974478238
         
-        © 2023 Mạc Đăng Quang, Đại học Y Hà Nội
+        © 2023 Mạc Đăng Quang, Đại học Bách Khoa Hà Nội
         """
         
         messagebox.showinfo("Về chúng tôi", about_text)
+
+    def setup_event_handlers(self):
+        """Thiết lập các trình xử lý sự kiện cho ứng dụng"""
+        # Các sự kiện menu
+        self.menu_file.entryconfig("Nhập DICOM", command=self.import_dicom)
+        self.menu_file.entryconfig("Xuất kế hoạch", command=self.export_plan)
+        
+        # Các sự kiện bệnh nhân
+        self.patient_tree.bind('<<TreeviewSelect>>', self.on_patient_select)
+        self.menu_patient.entryconfig("Thêm bệnh nhân mới", command=self.add_new_patient)
+        self.menu_patient.entryconfig("Xóa bệnh nhân", command=self.delete_patient)
+        
+        # Các sự kiện kế hoạch
+        self.menu_plan.entryconfig("Tạo kế hoạch mới", command=self.create_new_plan)
+        self.menu_plan.entryconfig("Sao chép kế hoạch", command=self.copy_plan)
+        self.menu_plan.entryconfig("Xóa kế hoạch", command=self.delete_plan)
+        
+        # Các sự kiện công cụ
+        self.menu_tools.entryconfig("Contour tự động", command=self.auto_contour)
+        self.menu_tools.entryconfig("Tính toán liều", command=self.calculate_dose)
+        self.menu_tools.entryconfig("Tối ưu hóa kế hoạch", command=self.optimize_plan)
+        self.menu_tools.entryconfig("DVH", command=self.show_dvh)
+        
+        # Các sự kiện trợ giúp
+        self.menu_help.entryconfig("Hướng dẫn sử dụng", command=self.show_help)
+        self.menu_help.entryconfig("Giới thiệu", command=self.show_about)
+        
+        # Ghi log
+        self.logger.log_info("Đã thiết lập các trình xử lý sự kiện")
+
+class PatientManager:
+    def __init__(self):
+        self.db = AdvancedDatabase()
+        self.logger = get_logger("PatientManager")
+    
+    def create_patient(self, patient_info: Dict[str, Any]) -> str:
+        """Tạo bệnh nhân mới"""
+        patient_id = str(uuid.uuid4())
+        patient_info['id'] = patient_id
+        
+        try:
+            self.db.insert_patient(patient_info)
+            self.logger.log_info(f"Tạo bệnh nhân mới: {patient_id}")
+            return patient_id
+        except Exception as e:
+            self.logger.log_error(f"Lỗi tạo bệnh nhân: {e}")
+            raise
+    
+    def update_patient(self, patient_id: str, update_data: Dict[str, Any]):
+        """Cập nhật thông tin bệnh nhân"""
+        try:
+            self.db.update_patient(patient_id, update_data)
+            self.logger.log_info(f"Cập nhật bệnh nhân: {patient_id}")
+        except Exception as e:
+            self.logger.log_error(f"Lỗi cập nhật bệnh nhân: {e}")
+            raise
+    
+    def get_patient_details(self, patient_id: str) -> Dict[str, Any]:
+        """Lấy chi tiết bệnh nhân"""
+        return self.db.get_patient_details(patient_id)
+    
+    def search_patients(self, **kwargs):
+        """Tìm kiếm bệnh nhân với nhiều tiêu chí"""
+        return self.db.search_patients(**kwargs)
 
 if __name__ == "__main__":
     root = tk.Tk()

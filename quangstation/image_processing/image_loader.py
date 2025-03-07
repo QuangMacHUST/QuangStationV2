@@ -171,7 +171,7 @@ class ImageLoader:
     def get_numpy_array(self):
         """Chuyển đổi SimpleITK image thành mảng NumPy"""
         if self.image_series is None:
-        return None
+            return None
         
         # Chuyển đổi SimpleITK image thành mảng NumPy
         array = sitk.GetArrayFromImage(self.image_series)

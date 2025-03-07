@@ -37,8 +37,11 @@ cd QuangStationV2
 # Cài đặt các phụ thuộc
 pip install -r requirements.txt
 
+# Cài đặt trong chế độ phát triển
+pip install -e .
+
 # Khởi chạy ứng dụng
-python main.py
+python -m quangstation.main
 ```
 
 ## 🔧 Cấu hình
@@ -48,6 +51,8 @@ QuangStation V2 cung cấp cấu hình linh hoạt thông qua file `config.json`
 - Cài đặt ghi log
 - Cấu hình thuật toán tính liều
 - Tùy chọn giao diện người dùng
+
+File cấu hình được tạo tự động trong thư mục `~/.quangstation/config.json` khi khởi động lần đầu.
 
 ## 📘 Hướng dẫn Sử dụng
 
@@ -68,16 +73,27 @@ QuangStation V2 cung cấp cấu hình linh hoạt thông qua file `config.json`
 8. Xuất báo cáo
 
 ## 📂 Cấu trúc Dự án
-- `data_management/`: Quản lý dữ liệu
-- `image_processing/`: Xử lý hình ảnh
-- `contouring/`: Công cụ contour
-- `planning/`: Lập kế hoạch
-- `dose_calculation/`: Tính toán liều
-- `optimization/`: Tối ưu hóa
-- `plan_evaluation/`: Đánh giá kế hoạch
-- `reporting/`: Tạo báo cáo
-- `gui/`: Giao diện người dùng
-- `utils/`: Công cụ hỗ trợ
+```
+QuangStationV2/
+├── quangstation/              # Package Python chính
+│   ├── contouring/            # Công cụ contour
+│   ├── data_management/       # Quản lý dữ liệu
+│   ├── dose_calculation/      # Tính toán liều
+│   ├── gui/                   # Giao diện người dùng
+│   ├── image_processing/      # Xử lý hình ảnh
+│   ├── optimization/          # Tối ưu hóa
+│   ├── plan_evaluation/       # Đánh giá kế hoạch
+│   ├── planning/              # Lập kế hoạch
+│   ├── quality_assurance/     # Đảm bảo chất lượng
+│   ├── reporting/             # Tạo báo cáo
+│   └── utils/                 # Công cụ hỗ trợ
+├── resources/                 # Tài nguyên ứng dụng
+├── docs/                      # Tài liệu
+├── tests/                     # Kiểm thử
+├── scripts/                   # Script hỗ trợ
+├── setup.py                   # Script cài đặt
+└── requirements.txt           # Phụ thuộc
+```
 
 ## 🤝 Đóng góp
 Chúng tôi rất hoan nghênh các đóng góp! Vui lòng xem [CONTRIBUTING.md](CONTRIBUTING.md)
