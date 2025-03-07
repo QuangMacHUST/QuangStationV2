@@ -1,8 +1,12 @@
+# pylint: disable=E1101
 import numpy as np
-import cv2  # type: ignore
+import cv2  # pylint: disable=E1101
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 from typing import Dict, List, Tuple, Any, Optional
+
+# Disable pylint errors for OpenCV functions
+# pylint: disable=no-member
 
 class ContourTools:
     """Cung cấp công cụ để vẽ và chỉnh sửa contour"""

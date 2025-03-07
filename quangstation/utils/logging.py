@@ -18,7 +18,7 @@ import threading
 import queue
 from typing import Dict, Any, Optional, List, Union
 
-from utils.config import get_config
+from quangstation.utils.config import get_config
 
 class DatabaseLogHandler(logging.Handler):
     """Handler ghi log vào cơ sở dữ liệu SQLite"""

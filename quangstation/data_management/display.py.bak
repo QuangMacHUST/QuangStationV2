@@ -323,8 +323,8 @@ class Display:
         if self.rt_structures:
             self.display_rt_structures()
             
-    def update_patient_3d(self, patient_id):
-        """Update display for a new patient in 3D view"""
+    def update_patient(self, patient_id):
+        """Update display for a new patient"""
         self.patient_id = patient_id
     
         # Lấy dữ liệu volume mới từ database
@@ -1517,20 +1517,130 @@ class Display:
         return mask
     
     def find_nearest_slice(self, z_position):
-        """Tìm slice gần nhất với vị trí z cho trước"""
-        if self.metadata is None or 'slices' not in self.metadata:
-            return 0
+        """Tìm chỉ số slice gần nhất với vị trí z"""
+        if not hasattr(self, 'slice_positions') or not self.slice_positions:
+            return None
         
-        slices = self.metadata['slices']
-        nearest_idx = 0
-        min_dist = float('inf')
-        
-        for idx, slice_data in enumerate(slices):
-            if 'position' in slice_data:
-                slice_z = slice_data['position'][2]
-                dist = abs(slice_z - z_position)
-                if dist < min_dist:
-                    min_dist = dist
-                    nearest_idx = idx
+        # Tìm chỉ số của slice gần nhất
+        distances = np.abs(np.array(self.slice_positions) - z_position)
+        nearest_idx = np.argmin(distances)
         
         return nearest_idx
+
+    def setup_ui(self):
+        """Thiết lập giao diện người dùng"""
+        # Tạo frame chính
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Tạo frame cho hiển thị 2D
+        self.frame_2d = tk.Frame(self.main_frame)
+        self.frame_2d.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Tạo hình ảnh 2D với matplotlib
+        self.fig_2d = plt.figure(figsize=(8, 8))
+        self.canvas_2d = FigureCanvasTkAgg(self.fig_2d, self.frame_2d)
+        self.canvas_2d.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        # Tạo frame cho hiển thị 3D
+        self.frame_3d = tk.Frame(self.main_frame)
+        self.frame_3d.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        # Tạo VTK widget cho hiển thị 3D
+        self.vtk_widget = tk.Frame(self.frame_3d, width=400, height=400)
+        self.vtk_widget.pack(fill=tk.BOTH, expand=True)
+        
+        # Khởi tạo VTK renderer
+        self.init_vtk()
+        
+        # Tạo frame điều khiển
+        self.control_frame = tk.Frame(self.root)
+        self.control_frame.pack(fill=tk.X)
+        
+        # Tạo các nút điều khiển
+        self.create_control_buttons()
+        
+        # Liên kết sự kiện
+        self.bind_events()
+
+    def create_control_buttons(self):
+        """Tạo các nút điều khiển"""
+        # Nút hiển thị/ẩn liều
+        self.dose_button = tk.Button(
+            self.control_frame, 
+            text="Hiển thị liều", 
+            command=lambda: self.display_dose_overlay(not self.show_dose)
+        )
+        self.dose_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút hiển thị RT Structures
+        self.structures_button = tk.Button(
+            self.control_frame, 
+            text="Hiển thị cấu trúc", 
+            command=self.display_rt_structures
+        )
+        self.structures_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút công cụ đo
+        self.measurement_button = tk.Button(
+            self.control_frame, 
+            text="Công cụ đo", 
+            command=self.add_measurement_tools
+        )
+        self.measurement_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Nút chụp màn hình
+        self.screenshot_button = tk.Button(
+            self.control_frame, 
+            text="Chụp màn hình", 
+            command=lambda: self.create_screenshot("screenshot.png")
+        )
+        self.screenshot_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Thanh trượt slice
+        self.slice_label = tk.Label(self.control_frame, text="Slice:")
+        self.slice_label.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        self.slice_scale = tk.Scale(
+            self.control_frame, 
+            from_=0, 
+            to=100, 
+            orient=tk.HORIZONTAL,
+            command=self.on_slice_change
+        )
+        self.slice_scale.pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
+        
+    def on_slice_change(self, event):
+        """Xử lý sự kiện thay đổi slice"""
+        if self.volume is not None and len(self.volume) > 0:
+            self.current_slice = int(self.slice_scale.get())
+            self.display_interface()
+            if self.rt_structures:
+                self.display_rt_structures()
+            if self.show_dose_on_slice:
+                self.display_dose_on_slice(True)
+                
+    def bind_events(self):
+        """Liên kết các sự kiện"""
+        # Sự kiện cuộn chuột để thay đổi slice
+        self.canvas_2d.get_tk_widget().bind("<MouseWheel>", self.on_scroll)
+        # Sự kiện click để đo
+        self.canvas_2d.get_tk_widget().bind("<Button-1>", self.on_click)
+
+    def on_scroll_3d(self, event):
+        """
+        Xử lý sự kiện cuộn chuột để thay đổi lát cắt ở chế độ 3D.
+        
+        Args:
+            event: Sự kiện cuộn chuột
+        """
+        if event.button == 'up' and self.current_slice < self.volume.shape[0] - 1:
+            self.current_slice += 1
+        elif event.button == 'down' and self.current_slice > 0:
+            self.current_slice -= 1
+        
+        self.display_interface()
+        if self.rt_structures:
+            self.display_rt_structures()
+        if self.show_dose:
+            self.display_dose_on_slice(True)
