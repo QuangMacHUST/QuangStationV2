@@ -1,5 +1,5 @@
 import numpy as np
-import cv2
+import cv2  # type: ignore
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 from typing import Dict, List, Tuple, Any, Optional

@@ -6,38 +6,15 @@ from tkinter import messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import tempfile
-
-# Tự động cài đặt các thư viện nếu chưa có
-try:
-    import vtk
-    from vtk.util.numpy_support import numpy_to_vtk
-except ImportError:
-    print("Thư viện VTK chưa được cài đặt. Đang cài đặt...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "vtk"])
-    import vtk
-    from vtk.util.numpy_support import numpy_to_vtk
-
-try:
-    import cv2
-except ImportError:
-    print("Thư viện OpenCV chưa được cài đặt. Đang cài đặt...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "opencv-python"])
-    import cv2
-
-try:
-    from scipy.ndimage import zoom
-except ImportError:
-    print("Thư viện SciPy chưa được cài đặt. Đang cài đặt...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "scipy"])
-    from scipy.ndimage import zoom
+import vtk  # type: ignore
+import cv2
+from scipy.ndimage import zoom
+from vtk.util.numpy_support import numpy_to_vtk  # type: ignore
 
 # Import image_loader từ module image_processing
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from image_processing.image_loader import ImageLoader
-from contouring.contour_tools import ContourTools
+from quangstation.image_processing.image_loader import ImageLoader
+from quangstation.contouring.contour_tools import ContourTools
 
 class Display:
     def __init__(self, root, patient_id, db):

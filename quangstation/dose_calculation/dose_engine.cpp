@@ -682,22 +682,32 @@ private:
     // Chuẩn hóa liều theo liều kê toa
     void normalize_dose(
         std::vector<std::vector<std::vector<double>>>& dose,
-        const std::vector<std::vector<std::vector<int>>>& ptv_mask,
+        const std::vector<std::vector<std::vector<int>>>& structure_masks,
         double prescribed_dose) {
         
         double total_dose = 0.0;
-        size_t num_voxels = 0;
+        int num_voxels = 0;
         
-        // Tính tổng liều và số voxel trong PTV
-        for (size_t z = 0; z < dose.size(); ++z) {
-            for (size_t y = 0; y < dose[z].size() && y < ptv_mask.size() && z < ptv_mask.size(); ++y) {
-                for (size_t x = 0; x < dose[z][y].size() && x < ptv_mask[z][y].size() && y < ptv_mask[z].size(); ++x) {
-                    if (ptv_mask[z][y][x] > 0) {
-                        total_dose += dose[z][y][x];
-                        ++num_voxels;
+        // Phương pháp đơn giản: duyệt qua tất cả phần tử trong dose và kiểm tra vị trí tương ứng trong ptv_mask
+        try {
+            for (size_t z = 0; z < dose.size(); ++z) {
+                for (size_t y = 0; y < dose[z].size(); ++y) {
+                    for (size_t x = 0; x < dose[z][y].size(); ++x) {
+                        // Kiểm tra nếu vị trí này nằm trong ptv_mask
+                        if (z < structure_masks.size() && y < structure_masks[z].size() && x < structure_masks[z][y].size()) {
+                            // Kiểm tra nếu điểm này là một phần của PTV
+                            if (structure_masks[z][y][x] > 0) {
+                                total_dose += dose[z][y][x];
+                                ++num_voxels;
+                            }
+                        }
                     }
                 }
             }
+        } catch (const std::exception& e) {
+            // Xử lý ngoại lệ nếu có
+            std::cerr << "Lỗi khi truy cập ptv_mask: " << e.what() << std::endl;
+            return;
         }
         
         if (num_voxels == 0) {
@@ -709,8 +719,8 @@ private:
         
         // Chuẩn hóa tất cả các voxel
         for (size_t z = 0; z < dose.size(); ++z) {
-            for (size_t y = 0; y < dose[z].size(); ++y) {
-                for (size_t x = 0; x < dose[z][y].size(); ++x) {
+            for (size_t y = 0; y < dose[0].size(); ++y) {
+                for (size_t x = 0; x < dose[0][0].size(); ++x) {
                     dose[z][y][x] *= scale_factor;
                 }
             }
@@ -1138,20 +1148,25 @@ private:
     ) {
         // Tìm cấu trúc PTV (Planning Target Volume)
         // Giả sử structure_masks[0] là mặt nạ cho PTV
-        if (structure_masks.empty()) {
+        if (structure_masks.empty() || dose.empty()) {
+            std::cerr << "Không có dữ liệu cấu trúc hoặc liều để chuẩn hóa" << std::endl;
             return;
         }
-        
-        const auto& ptv_mask = structure_masks[0];
         
         // Tính liều trung bình trong PTV
         double total_dose = 0.0;
         int num_voxels = 0;
         
-        for (size_t z = 0; z < dose.size(); ++z) {
-            for (size_t y = 0; y < dose[0].size(); ++y) {
-                for (size_t x = 0; x < dose[0][0].size(); ++x) {
-                    if (ptv_mask[z][y][x] > 0) {
+        // Lặp qua từng voxel trong không gian liều
+        size_t z_max = std::min(dose.size(), structure_masks.size());
+        for (size_t z = 0; z < z_max; ++z) {
+            size_t y_max = std::min(dose[z].size(), structure_masks[z].size());
+            for (size_t y = 0; y < y_max; ++y) {
+                size_t x_max = std::min(dose[z][y].size(), structure_masks[z][y].size());
+                for (size_t x = 0; x < x_max; ++x) {
+                    // Nếu voxel thuộc PTV (giá trị > 0 trong structure_masks)
+                    int mask_value = structure_masks[z][y][x];
+                    if (mask_value > 0) {
                         total_dose += dose[z][y][x];
                         ++num_voxels;
                     }
@@ -1159,20 +1174,28 @@ private:
             }
         }
         
+        // Nếu không có voxel nào trong PTV, trả về
         if (num_voxels == 0) {
+            std::cerr << "Không có voxel nào thuộc PTV để chuẩn hóa liều" << std::endl;
             return;
         }
         
+        // Tính liều trung bình trong PTV
         double mean_dose = total_dose / num_voxels;
+        
+        // Tính hệ số tỷ lệ để chuẩn hóa
         double scale_factor = prescribed_dose / mean_dose;
         
         // Chuẩn hóa tất cả các voxel
-        for (size_t z = 0; z < dose.size(); ++z) {
-            for (size_t y = 0; y < dose[0].size(); ++y) {
-                for (size_t x = 0; x < dose[0][0].size(); ++x) {
-                    dose[z][y][x] *= scale_factor;
+        for (auto& slice : dose) {
+            for (auto& row : slice) {
+                for (auto& voxel : row) {
+                    voxel *= scale_factor;
                 }
             }
         }
+        
+        std::cout << "Đã chuẩn hóa liều: liều trung bình PTV = " 
+                  << mean_dose << " -> " << prescribed_dose << " Gy" << std::endl;
     }
 };
