@@ -1,9 +1,9 @@
-import sqlite3
-import numpy as np
 import pickle
 import json
 import os
+import sqlite3
 from datetime import datetime
+import numpy as np
 
 class PatientDatabase:
     def __init__(self, db_file='patients.db'):
@@ -363,3 +363,128 @@ class PatientDatabase:
         """Đóng kết nối database"""
         if self.conn:
             self.conn.close()
+
+    def update_patient(self, patient_id: str, update_data: dict) -> bool:
+        """
+        Cập nhật thông tin bệnh nhân
+        
+        Args:
+            patient_id: ID bệnh nhân
+            update_data: Dữ liệu cập nhật
+            
+        Returns:
+            True nếu thành công, False nếu thất bại
+        """
+        try:
+            cursor = self.conn.cursor()
+            
+            # Tạo chuỗi cập nhật SQL
+            update_fields = []
+            update_values = []
+            
+            for key, value in update_data.items():
+                if key != 'patient_id':  # Không cập nhật patient_id
+                    update_fields.append(f"{key} = ?")
+                    update_values.append(value)
+            
+            if not update_fields:
+                return False
+                
+            update_sql = f"UPDATE patients SET {', '.join(update_fields)} WHERE patient_id = ?"
+            update_values.append(patient_id)
+            
+            cursor.execute(update_sql, update_values)
+            self.conn.commit()
+            
+            return True
+        except Exception as e:
+            print(f"Lỗi cập nhật bệnh nhân: {e}")
+            return False
+
+    def get_patient_details(self, patient_id: str) -> dict:
+        """
+        Lấy chi tiết thông tin bệnh nhân
+        
+        Args:
+            patient_id: ID bệnh nhân
+            
+        Returns:
+            Dictionary chứa thông tin bệnh nhân
+        """
+        try:
+            # Lưu lại row_factory hiện tại
+            old_row_factory = self.conn.row_factory
+            self.conn.row_factory = sqlite3.Row
+            cursor = self.conn.cursor()
+            
+            cursor.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
+            row = cursor.fetchone()
+            
+            result = {}
+            if row:
+                # Chuyển từ sqlite3.Row sang dict
+                patient_info = {key: row[key] for key in row.keys()}
+                
+                # Lấy thêm danh sách nghiên cứu
+                cursor.execute("SELECT * FROM studies WHERE patient_id = ?", (patient_id,))
+                studies = []
+                for study_row in cursor.fetchall():
+                    study_dict = {key: study_row[key] for key in study_row.keys()}
+                    studies.append(study_dict)
+                
+                patient_info['studies'] = studies
+                result = patient_info
+            
+            # Khôi phục row_factory
+            self.conn.row_factory = old_row_factory
+            return result
+        except Exception as e:
+            print(f"Lỗi lấy thông tin bệnh nhân: {e}")
+            return {}
+
+    def search_patients(self, **kwargs) -> list:
+        """
+        Tìm kiếm bệnh nhân theo tiêu chí
+        
+        Args:
+            **kwargs: Các tiêu chí tìm kiếm (name, id, etc.)
+            
+        Returns:
+            Danh sách bệnh nhân thỏa mãn
+        """
+        try:
+            # Lưu lại row_factory hiện tại
+            old_row_factory = self.conn.row_factory
+            self.conn.row_factory = sqlite3.Row
+            cursor = self.conn.cursor()
+            
+            query = "SELECT * FROM patients WHERE 1=1"
+            params = []
+            
+            # Xây dựng truy vấn từ các tiêu chí
+            for key, value in kwargs.items():
+                if value:
+                    if isinstance(value, str) and '%' in value:
+                        # Tìm kiếm mờ
+                        query += f" AND {key} LIKE ?"
+                        params.append(value)
+                    else:
+                        # Tìm kiếm chính xác
+                        query += f" AND {key} = ?"
+                        params.append(value)
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            results = []
+            for row in rows:
+                # Chuyển từ sqlite3.Row sang dict
+                patient_dict = {key: row[key] for key in row.keys()}
+                results.append(patient_dict)
+            
+            # Khôi phục row_factory
+            self.conn.row_factory = old_row_factory
+            return results
+        except Exception as e:
+            print(f"Lỗi tìm kiếm bệnh nhân: {e}")
+            return []
