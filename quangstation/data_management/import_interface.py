@@ -4,11 +4,14 @@ from tkinter import filedialog, messagebox, ttk
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
+import glob
+import pydicom
 
-from data_management.dicom_parser import DICOMParser
-from data_management.patient_db import PatientDatabase
-from data_management.session_managment import SessionManager
-from image_processing.image_loader import ImageLoader
+from quangstation.data_management.dicom_parser import DICOMParser
+from quangstation.data_management.patient_db import PatientDatabase
+from quangstation.data_management.session_management import SessionManager
+from quangstation.image_processing.image_loader import ImageLoader
 
 class ImportInterface:
     def __init__(self, root, update_callback=None):

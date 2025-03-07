@@ -4,7 +4,7 @@ import datetime
 import shutil
 import sys
 import numpy as np
-from data_management.patient_db import PatientDatabase
+from quangstation.data_management.patient_db import PatientDatabase
 
 # Sửa lỗi import pydicom
 try:

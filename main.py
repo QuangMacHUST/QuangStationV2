@@ -8,13 +8,12 @@ from datetime import datetime
 import uuid
 from typing import Dict, Any
 
-from data_management.patient_db import PatientDatabase
-from data_management.display import Display
-from data_management.import_interface import ImportInterface
-from data_management.session_managment import SessionManager
-from planning.plan_config import PlanConfig
-from data.database import AdvancedDatabase
-from utils.logging import get_logger
+from quangstation.data_management.patient_db import PatientDatabase
+from quangstation.data_management.display import Display
+from quangstation.data_management.import_interface import ImportInterface
+from quangstation.data_management.session_management import SessionManager
+from quangstation.planning.plan_config import PlanConfig
+from quangstation.utils.logging import get_logger
 
 class MainApp:
     def __init__(self, root):
@@ -479,7 +478,7 @@ class MainApp:
 
 class PatientManager:
     def __init__(self):
-        self.db = AdvancedDatabase()
+        self.db = PatientDatabase()
         self.logger = get_logger("PatientManager")
     
     def create_patient(self, patient_info: Dict[str, Any]) -> str:

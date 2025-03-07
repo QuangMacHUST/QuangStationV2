@@ -12,6 +12,10 @@ QuangStation V2 là một hệ thống lập kế hoạch xạ trị mã nguồn
 - 📈 Đánh giá kế hoạch qua Biểu đồ Liều-Thể tích (DVH)
 - 📝 Tạo báo cáo điều trị chi tiết
 - 🔒 Quản lý phiên làm việc an toàn
+- 🤖 Phân đoạn tự động với AI
+- 🔬 Tính toán hiệu quả sinh học (BED, EQD2)
+- 🔄 So sánh kế hoạch
+- 🎲 Tính toán liều Monte Carlo
 
 ## 🖥️ Yêu cầu Hệ thống
 - **Python**: 3.8 trở lên
@@ -71,6 +75,9 @@ File cấu hình được tạo tự động trong thư mục `~/.quangstation/c
 6. Tối ưu hóa kế hoạch
 7. Đánh giá DVH
 8. Xuất báo cáo
+
+## 💡 Xử lý lỗi
+Nếu bạn gặp vấn đề khi sử dụng QuangStation, hãy tham khảo [Hướng dẫn khắc phục sự cố](docs/TROUBLESHOOTING.md) của chúng tôi.
 
 ## 📂 Cấu trúc Dự án
 ```
