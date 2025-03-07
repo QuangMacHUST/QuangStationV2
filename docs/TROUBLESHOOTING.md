@@ -71,7 +71,113 @@ pip install vtk
 2. Kiểm tra driver card đồ họa
 3. Giảm độ phân giải hiển thị 3D trong phần cấu hình
 
+## Lỗi trong dose_engine.cpp
+Nếu bạn gặp lỗi liên quan đến tính toán liều lượng trong file C++:
+
+1. Lỗi "expression must have pointer-to-object type":
+   - Đây là lỗi khi truy cập phần tử trong mảng 3D
+   - Đảm bảo rằng bạn đang truy cập đúng kiểu dữ liệu
+   - Sử dụng phương pháp truy cập an toàn với kiểm tra kích thước
+
+2. Lỗi biên dịch C++:
+   - Đảm bảo bạn có trình biên dịch C++ phù hợp (GCC 7+ hoặc MSVC 2019+)
+   - Cài đặt các thư viện phát triển cần thiết:
+     ```bash
+     # Ubuntu/Debian
+     sudo apt-get install build-essential
+     
+     # Windows
+     # Cài đặt Visual Studio với C++ workload
+     ```
+
+3. Lỗi khi gọi hàm C++ từ Python:
+   - Kiểm tra xem module pybind11 đã được cài đặt chưa
+   - Đảm bảo rằng thư viện động (.so/.dll) đã được biên dịch đúng cách
+   - Kiểm tra đường dẫn tới thư viện động trong biến môi trường (PATH/LD_LIBRARY_PATH)
+
+## Lỗi OpenCV
+Nếu bạn gặp lỗi liên quan đến OpenCV như "Module 'cv2' has no member":
+
+1. Cài đặt lại OpenCV:
+```bash
+pip uninstall opencv-python
+pip install opencv-python
+```
+
+2. Nếu vẫn gặp lỗi với linter, thêm comment `# type: ignore` sau dòng import:
+```python
+import cv2  # type: ignore
+```
+
+## Lỗi ReportLab
+Nếu bạn gặp lỗi khi tạo báo cáo PDF:
+
+1. Cài đặt ReportLab:
+```bash
+pip install reportlab
+```
+
+2. Nếu gặp lỗi về font, hãy đảm bảo các font cần thiết đã được cài đặt trong hệ thống
+3. Nếu gặp lỗi về quyền truy cập file, kiểm tra quyền ghi trong thư mục đầu ra
+
+## Lỗi Monte Carlo
+Nếu bạn gặp lỗi khi sử dụng thuật toán Monte Carlo:
+
+1. Lỗi "numpy.random has no member RandomState":
+   - Cập nhật cách sử dụng numpy.random theo phiên bản mới nhất:
+   ```python
+   # Thay vì
+   rng = numpy.random.RandomState(seed)
+   
+   # Sử dụng
+   rng = numpy.random.default_rng(seed)
+   ```
+
+2. Lỗi hiệu suất:
+   - Tăng số luồng trong cấu hình Monte Carlo
+   - Giảm số hạt nếu bộ nhớ bị giới hạn
+   - Sử dụng GPU nếu có thể (yêu cầu CUDA và CuPy)
+
+## Lỗi khi cài đặt từ nguồn
+Nếu bạn gặp lỗi khi cài đặt QuangStation từ mã nguồn:
+
+1. Đảm bảo bạn có đủ các công cụ phát triển:
+```bash
+# Ubuntu/Debian
+sudo apt-get install python3-dev
+
+# Windows
+# Cài đặt Visual C++ Build Tools
+```
+
+2. Cài đặt các phụ thuộc trước:
+```bash
+pip install -r requirements.txt
+```
+
+3. Sử dụng môi trường ảo:
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
+```
+
+## Sử dụng script khởi động nhanh
+Để tránh nhiều vấn đề cài đặt, bạn có thể sử dụng script khởi động nhanh:
+
+```bash
+python -m quangstation.utils.quick_start --gui
+```
+
+Script này sẽ:
+- Kiểm tra và cài đặt các thư viện phụ thuộc
+- Tạo cấu hình mặc định
+- Thiết lập thư mục làm việc
+- Tạo dữ liệu mẫu (tùy chọn)
+- Khởi chạy ứng dụng
+
 ## Liên hệ hỗ trợ
 Nếu bạn vẫn gặp vấn đề, hãy liên hệ:
 - Email: quangmacdang@gmail.com
 - Điện thoại: 0974478238 
+- GitHub: Tạo issue tại [repository chính thức](https://github.com/quangmacdang/QuangStationV2) 
