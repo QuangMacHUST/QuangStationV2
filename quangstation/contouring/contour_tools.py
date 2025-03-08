@@ -1,6 +1,5 @@
-# pylint: disable=E1101
 import numpy as np
-import cv2  # pylint: disable=E1101
+import cv2  
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 from typing import Dict, List, Tuple, Any, Optional

@@ -10,7 +10,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 
 try:
-    from quangstation.dose_calculation.dose_engine import CollapsedConeConvolution, PencilBeam
+    from quangstation.dose_calculation._dose_engine import CollapsedConeConvolution, PencilBeam
     HAS_CPP_MODULE = True
 except ImportError:
     HAS_CPP_MODULE = False
