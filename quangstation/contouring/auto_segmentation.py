@@ -9,6 +9,7 @@ Sử dụng các mô hình học sâu để phân đoạn cơ quan tự động 
 import os
 import numpy as np
 import time
+import json
 from typing import Dict, List, Tuple, Optional, Union, Any
 from pathlib import Path
 
@@ -23,338 +24,347 @@ try:
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
-    logger.log_warning("PyTorch không có sẵn. Một số chức năng phân đoạn tự động sẽ bị vô hiệu hóa.")
+    logger.warning("PyTorch không có sẵn. Một số chức năng phân đoạn tự động sẽ bị vô hiệu hóa.")
 
 class SegmentationModel:
-    """Lớp cơ sở cho các mô hình phân đoạn"""
+    """
+    Lớp cơ sở cho các mô hình phân đoạn tự động.
+    """
     
     def __init__(self, model_path: Optional[str] = None):
-        """
-        Khởi tạo mô hình phân đoạn
-        
-        Args:
-            model_path: Đường dẫn đến file mô hình (nếu có)
-        """
         self.model_path = model_path
         self.model = None
-        self.device = 'cpu'
+        self.device = "cpu"
+        self.logger = get_logger(__name__)
         
-        if HAS_TORCH:
-            # Sử dụng GPU nếu có
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            logger.log_info(f"Sử dụng thiết bị: {self.device}")
+        # Kiểm tra GPU
+        try:
+            if torch.cuda.is_available():
+                self.device = "cuda"
+                self.logger.info("Phát hiện GPU, sử dụng CUDA cho phân đoạn tự động")
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                self.device = "mps"  # Apple Silicon GPU
+                self.logger.info("Phát hiện Apple GPU, sử dụng MPS cho phân đoạn tự động")
+        except ImportError:
+            self.logger.warning("Không tìm thấy PyTorch, sẽ sử dụng CPU cho phân đoạn tự động")
+        except Exception as error:
+            self.logger.error(f"Lỗi khi kiểm tra GPU: {str(error)}")
     
     def load_model(self):
         """Tải mô hình từ file"""
-        if not HAS_TORCH:
-            logger.log_error("Không thể tải mô hình: PyTorch không có sẵn")
-            return False
-        
-        if not self.model_path or not os.path.exists(self.model_path):
-            logger.log_error(f"Không tìm thấy file mô hình: {self.model_path}")
-            return False
-        
         try:
+            if not HAS_TORCH:
+                self.logger.warning("PyTorch không có sẵn. Không thể tải mô hình.")
+                return False
+            
+            if not self.model_path or not os.path.exists(self.model_path):
+                self.logger.error(f"Không tìm thấy file mô hình: {self.model_path}")
+                return False
+            
+            # Tải mô hình
             self.model = torch.load(self.model_path, map_location=self.device)
-            self.model.eval()
-            logger.log_info(f"Đã tải mô hình từ: {self.model_path}")
+            self.model.eval()  # Đặt ở chế độ đánh giá
+            
+            self.logger.info(f"Đã tải mô hình từ {self.model_path}")
             return True
-        except Exception as e:
-            logger.log_error(f"Lỗi khi tải mô hình: {str(e)}")
+            
+        except Exception as error:
+            self.logger.error(f"Lỗi khi tải mô hình: {str(error)}")
             return False
     
     def preprocess(self, image: np.ndarray) -> Union[np.ndarray, torch.Tensor]:
-        """
-        Tiền xử lý hình ảnh đầu vào
-        
-        Args:
-            image: Hình ảnh đầu vào (3D numpy array)
-            
-        Returns:
-            Hình ảnh đã xử lý
-        """
-        # Chuẩn hóa
-        image = (image - np.min(image)) / (np.max(image) - np.min(image) + 1e-8)
-        
-        if HAS_TORCH:
-            # Chuyển sang torch tensor
-            image_tensor = torch.from_numpy(image).float()
-            
-            # Thêm chiều batch và channel
-            if len(image_tensor.shape) == 3:
-                image_tensor = image_tensor.unsqueeze(0).unsqueeze(0)
-            
-            return image_tensor.to(self.device)
-        
-        return image
+        """Tiền xử lý hình ảnh đầu vào."""
+        raise NotImplementedError("Phương thức này cần được ghi đè trong lớp con")
     
     def predict(self, image: np.ndarray) -> np.ndarray:
-        """
-        Dự đoán mask từ hình ảnh đầu vào
-        
-        Args:
-            image: Hình ảnh đầu vào (3D numpy array)
+        """Thực hiện phân đoạn trên hình ảnh đầu vào."""
+        if self.model is None:
+            self.load_model()
             
-        Returns:
-            Mask dự đoán (3D numpy array)
-        """
-        if not HAS_TORCH or self.model is None:
-            logger.log_error("Không thể dự đoán: Mô hình chưa được tải")
-            # Trả về mask trống
-            return np.zeros_like(image)
-        
         try:
-            # Tiền xử lý
-            processed_image = self.preprocess(image)
+            import torch
             
-            # Dự đoán
+            # Tiền xử lý hình ảnh
+            input_tensor = self.preprocess(image)
+            
+            # Thực hiện phân đoạn
             with torch.no_grad():
-                output = self.model(processed_image)
+                output = self.model(input_tensor)
+                
+            # Hậu xử lý kết quả
+            if isinstance(output, tuple):
+                output = output[0]  # Lấy đầu ra chính nếu mô hình trả về nhiều đầu ra
+                
+            # Chuyển về CPU và numpy
+            output = output.cpu().numpy()
             
-            # Hậu xử lý
-            if isinstance(output, torch.Tensor):
-                output = output.cpu().numpy()
-            
-            # Loại bỏ chiều batch và channel
-            if output.shape[0] == 1:
+            # Nếu đầu ra là one-hot encoding, chuyển về nhãn
+            if len(output.shape) == 4 and output.shape[1] > 1:  # [batch, classes, height, width]
+                output = np.argmax(output, axis=1)
+                
+            # Loại bỏ chiều batch nếu có
+            if len(output.shape) == 3 and output.shape[0] == 1:
                 output = output[0]
-            if len(output.shape) > 3 and output.shape[0] == 1:
-                output = output[0]
+                
+            # Đảm bảo kiểu dữ liệu là uint8 cho mask
+            output = output.astype(np.uint8)
             
-            # Chuyển sang mask nhị phân
-            mask = (output > 0.5).astype(np.uint8)
+            return output
             
-            return mask
-        
-        except Exception as e:
-            logger.log_error(f"Lỗi khi dự đoán: {str(e)}")
-            return np.zeros_like(image)
+        except Exception as error:
+            self.logger.error(f"Lỗi khi thực hiện phân đoạn: {str(error)}")
+            raise
 
 class UNetModel(SegmentationModel):
-    """Mô hình U-Net cho phân đoạn hình ảnh y tế"""
+    """
+    Mô hình UNet cho phân đoạn tự động.
+    """
     
     def __init__(self, model_path: Optional[str] = None):
-        """
-        Khởi tạo mô hình U-Net
-        
-        Args:
-            model_path: Đường dẫn đến file mô hình (nếu có)
-        """
         super().__init__(model_path)
         
-        # Tải mô hình mặc định nếu không chỉ định
-        if not model_path and HAS_TORCH:
-            # Tìm mô hình mặc định trong thư mục resources
-            default_models_dir = Path(__file__).parent.parent.parent / "resources" / "models"
-            default_model_path = default_models_dir / "unet_ct_organs.pth"
-            
-            if default_model_path.exists():
-                self.model_path = str(default_model_path)
-                self.load_model()
-            else:
-                logger.log_warning(f"Không tìm thấy mô hình mặc định tại: {default_model_path}")
+        # Thông số chuẩn hóa
+        self.mean = 0.0
+        self.std = 1.0
+        self.input_size = (256, 256)  # Kích thước đầu vào của mô hình
+        
+        # Tải thông số chuẩn hóa từ file config nếu có
+        if model_path and os.path.exists(model_path):
+            config_path = os.path.join(os.path.dirname(model_path), "config.json")
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                        self.mean = config.get("mean", self.mean)
+                        self.std = config.get("std", self.std)
+                        self.input_size = tuple(config.get("input_size", self.input_size))
+                except Exception as error:
+                    self.logger.warning(f"Không thể tải cấu hình mô hình: {str(error)}")
     
     def preprocess(self, image: np.ndarray) -> Union[np.ndarray, torch.Tensor]:
-        """
-        Tiền xử lý hình ảnh đầu vào cho U-Net
-        
-        Args:
-            image: Hình ảnh đầu vào (3D numpy array)
+        """Tiền xử lý hình ảnh cho mô hình UNet."""
+        try:
+            import torch
+            from torchvision import transforms
+            from PIL import Image
             
-        Returns:
-            Hình ảnh đã xử lý
-        """
-        # Chỉnh window/level cho ảnh CT
-        min_val = -1000
-        max_val = 1000
-        image = np.clip(image, min_val, max_val)
-        
-        # Chuẩn hóa về [0, 1]
-        image = (image - min_val) / (max_val - min_val)
-        
-        if HAS_TORCH:
-            # Chuyển sang torch tensor
-            image_tensor = torch.from_numpy(image).float()
+            # Đảm bảo kiểu dữ liệu và phạm vi là 0-255
+            if image.dtype != np.uint8:
+                image_min = np.min(image)
+                image_max = np.max(image)
+                
+                # Nếu là ảnh CT (HU), chuyển về thang xám 0-255
+                if image_min < -100:  # Có thể là ảnh CT
+                    # Chuẩn hóa cửa sổ CT (-1000, 1000) thành 0-255
+                    image = np.clip(image, -1000, 1000)
+                    image = ((image + 1000) / 2000 * 255).astype(np.uint8)
+                else:
+                    # Chuẩn hóa thông thường
+                    image = ((image - image_min) / (image_max - image_min) * 255).astype(np.uint8)
             
-            # Thêm chiều batch và channel
-            if len(image_tensor.shape) == 3:
-                image_tensor = image_tensor.unsqueeze(0).unsqueeze(0)
+            # Chuyển sang ảnh PIL
+            pil_image = Image.fromarray(image)
             
-            return image_tensor.to(self.device)
-        
-        return image
+            # Đổi kích thước về kích thước đầu vào của mô hình
+            pil_image = pil_image.resize(self.input_size, Image.BILINEAR)
+            
+            # Áp dụng các biến đổi
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[self.mean], std=[self.std])
+            ])
+            
+            # Biến đổi và thêm chiều batch
+            input_tensor = transform(pil_image).unsqueeze(0)
+            
+            # Chuyển sang device của mô hình
+            input_tensor = input_tensor.to(self.device)
+            
+            return input_tensor
+            
+        except ImportError as e:
+            self.logger.error(f"Lỗi import thư viện khi tiền xử lý: {str(error)}")
+            raise
+        except Exception as error:
+            self.logger.error(f"Lỗi khi tiền xử lý hình ảnh: {str(error)}")
+            raise
 
 class AutoSegmentation:
-    """Lớp chính cho phân đoạn tự động"""
+    """
+    Quản lý và thực hiện phân đoạn tự động.
+    """
     
     def __init__(self):
-        """Khởi tạo AutoSegmentation"""
-        self.logger = get_logger("AutoSegmentation")
         self.models = {}
-        self.default_model = None
+        self.structure_to_model = {}
+        self.logger = get_logger(__name__)
         
-        # Khởi tạo các mô hình có sẵn
+        # Khởi tạo các mô hình
         self._initialize_models()
     
     def _initialize_models(self):
-        """Khởi tạo các mô hình có sẵn"""
-        if HAS_TORCH:
-            # Tạo thư mục models trong resources nếu chưa tồn tại
-            models_dir = Path(__file__).parent.parent.parent / "resources" / "models"
-            models_dir.mkdir(parents=True, exist_ok=True)
+        """Khởi tạo các mô hình phân đoạn."""
+        try:
+            # Kiểm tra xem có PyTorch không
+            import torch
+        except ImportError:
+            self.logger.warning("PyTorch không được cài đặt. Phân đoạn tự động sẽ không khả dụng.")
+            return
             
-            # Các mô hình có sẵn
-            standard_models = {
-                "unet_ct_general": "U-Net cho ảnh CT tổng quát",
-                "unet_brain": "U-Net cho phân đoạn não",
-                "unet_thorax": "U-Net cho phân đoạn ngực",
-                "unet_pelvis": "U-Net cho phân đoạn vùng chậu"
-            }
+        # Đường dẫn đến thư mục chứa mô hình
+        from quangstation.utils.config import get_config
+        config = get_config()
+        models_dir = config.get("paths", {}).get("models_dir", "models")
+        
+        if not os.path.exists(models_dir):
+            self.logger.warning(f"Thư mục mô hình không tồn tại: {models_dir}")
             
-            # Kiểm tra mô hình nào có sẵn
-            for model_name, model_desc in standard_models.items():
-                model_path = models_dir / f"{model_name}.pth"
-                
-                if model_path.exists():
-                    self.logger.log_info(f"Tìm thấy mô hình: {model_name} - {model_desc}")
-                    self.models[model_name] = {
-                        "path": str(model_path),
-                        "description": model_desc,
-                        "instance": None  # Sẽ tải khi cần
-                    }
-            
-            # Đặt mô hình mặc định
-            if "unet_ct_general" in self.models:
-                self.default_model = "unet_ct_general"
-            elif len(self.models) > 0:
-                self.default_model = list(self.models.keys())[0]
-            
-            # Tìm các model đã lưu
-            if not os.path.exists(models_dir):
+            # Tạo thư mục nếu không tồn tại
+            try:
                 os.makedirs(models_dir, exist_ok=True)
-            model_dirs = [f for f in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, f))]
+                self.logger.info(f"Đã tạo thư mục mô hình: {models_dir}")
+            except Exception as error:
+                self.logger.error(f"Không thể tạo thư mục mô hình: {str(error)}")
+            return
+        
+        # Tìm tất cả các file mô hình
+        model_files = []
+        for root, _, files in os.walk(models_dir):
+            for file in files:
+                if file.endswith(".pt") or file.endswith(".pth"):
+                    model_files.append(os.path.join(root, file))
+        
+        if not model_files:
+            self.logger.warning(f"Không tìm thấy file mô hình nào trong {models_dir}")
+            return
             
-            for model_dir in model_dirs:
-                # ... existing code ...
+        # Đọc thông tin mô hình từ file config
+        for model_file in model_files:
+            model_name = os.path.basename(model_file).split(".")[0]
+            config_file = os.path.join(os.path.dirname(model_file), f"{model_name}_config.json")
+            
+            try:
+                # Đọc cấu hình mô hình
+                if os.path.exists(config_file):
+                    with open(config_file, 'r') as f:
+                        model_config = json.load(f)
+                else:
+                    # Tạo cấu hình mặc định
+                    model_config = {
+                        "type": "unet",
+                        "structures": [model_name],
+                        "description": f"Mô hình phân đoạn {model_name}"
+                    }
+                
+                # Khởi tạo mô hình dựa trên loại
+                model_type = model_config.get("type", "unet").lower()
+                if model_type == "unet":
+                    self.models[model_name] = UNetModel(model_file)
+                else:
+                    self.logger.warning(f"Loại mô hình không được hỗ trợ: {model_type}")
+                    continue
+                
+                # Liên kết các cấu trúc với mô hình
+                for structure in model_config.get("structures", [model_name]):
+                    self.structure_to_model[structure.lower()] = model_name
+                    
+                self.logger.info(f"Đã đăng ký mô hình {model_name} cho các cấu trúc: {model_config.get('structures', [model_name])}")
+                    
+            except Exception as error:
+                self.logger.error(f"Lỗi khi khởi tạo mô hình {model_name}: {str(error)}")
     
     def get_available_models(self) -> List[Dict[str, str]]:
-        """
-        Lấy danh sách các mô hình có sẵn
-        
-        Returns:
-            Danh sách các mô hình có sẵn
-        """
+        """Lấy danh sách các mô hình có sẵn."""
         result = []
-        for name, model_info in self.models.items():
+        
+        for model_name, model in self.models.items():
+            structures = [s for s, m in self.structure_to_model.items() if m == model_name]
+            
             result.append({
-                "name": name,
-                "description": model_info["description"]
+                "name": model_name,
+                "structures": structures,
+                "description": f"Mô hình phân đoạn {model_name}"
             })
+            
         return result
     
     def segment_volume(self, image_data: np.ndarray, model_name: Optional[str] = None) -> Dict[str, np.ndarray]:
-        """
-        Phân đoạn tự động từ dữ liệu hình ảnh 3D
-        
-        Args:
-            image_data: Dữ liệu hình ảnh 3D (numpy array)
-            model_name: Tên mô hình cần sử dụng (nếu không cung cấp, sử dụng mô hình mặc định)
-            
-        Returns:
-            Dictionary chứa các cấu trúc phân đoạn {tên_cấu_trúc: mask}
-        """
-        if not HAS_TORCH:
-            self.logger.log_error("PyTorch không có sẵn. Không thể thực hiện phân đoạn tự động.")
+        """Phân đoạn toàn bộ khối hình ảnh."""
+        if not self.models:
+            self.logger.warning("Không có mô hình phân đoạn nào được tải.")
             return {}
+            
+        # Nếu không chỉ định model_name, sử dụng mô hình đầu tiên
+        if model_name is None:
+            model_name = next(iter(self.models.keys()))
         
-        # Sử dụng mô hình mặc định nếu không chỉ định
-        if not model_name:
-            model_name = self.default_model
-        
-        if not model_name or model_name not in self.models:
-            self.logger.log_error(f"Không tìm thấy mô hình: {model_name}")
+        # Kiểm tra xem mô hình có tồn tại không
+        if model_name not in self.models:
+            self.logger.error(f"Không tìm thấy mô hình: {model_name}")
             return {}
-        
-        # Tải mô hình nếu chưa tải
-        if self.models[model_name]["instance"] is None:
-            start_time = time.time()
-            self.logger.log_info(f"Đang tải mô hình: {model_name}")
             
-            model_path = self.models[model_name]["path"]
-            model = UNetModel(model_path)
-            if not model.load_model():
-                self.logger.log_error(f"Không thể tải mô hình: {model_name}")
-                return {}
-            
-            self.models[model_name]["instance"] = model
-            self.logger.log_info(f"Đã tải mô hình: {model_name} ({time.time() - start_time:.2f} giây)")
-        
-        # Lấy mô hình
-        model = self.models[model_name]["instance"]
-        
-        # Thực hiện phân đoạn
-        start_time = time.time()
-        self.logger.log_info("Bắt đầu phân đoạn tự động")
-        
         try:
-            result = {}
+            model = self.models[model_name]
             
-            # Thực hiện dự đoán
-            prediction = model.predict(image_data)
+            # Kích thước của khối hình ảnh
+            depth, height, width = image_data.shape
+            self.logger.info(f"Bắt đầu phân đoạn khối hình ảnh kích thước {depth}x{height}x{width}")
             
-            # Nếu kết quả có nhiều kênh, mỗi kênh là một cấu trúc
-            if len(prediction.shape) == 4:
-                for i in range(prediction.shape[0]):
-                    structure_name = f"AUTO_STRUCT_{i+1}"
-                    result[structure_name] = prediction[i]
-            else:
-                # Nếu chỉ có một cấu trúc
-                result["AUTO_STRUCT"] = prediction
+            # Kết quả phân đoạn cho từng lát cắt
+            results = {}
             
-            self.logger.log_info(f"Hoàn thành phân đoạn tự động ({time.time() - start_time:.2f} giây)")
-            return result
+            # Xác định các cấu trúc mà mô hình này có thể phân đoạn
+            structures = [s for s, m in self.structure_to_model.items() if m == model_name]
             
-        except Exception as e:
-            self.logger.log_error(f"Lỗi khi thực hiện phân đoạn tự động: {str(e)}")
+            # Khởi tạo mask cho từng cấu trúc
+            for structure in structures:
+                results[structure] = np.zeros((depth, height, width), dtype=np.uint8)
+            
+            # Phân đoạn từng lát cắt
+            for z in range(depth):
+                try:
+                    # Lấy lát cắt
+                    slice_data = image_data[z, :, :]
+                    
+                    # Thực hiện phân đoạn
+                    prediction = model.predict(slice_data)
+                    
+                    # Xử lý kết quả phân đoạn
+                    if len(prediction.shape) == 2:  # Nhãn đơn
+                        # Đối với mỗi cấu trúc, tạo mask riêng
+                        for i, structure in enumerate(structures, 1):
+                            results[structure][z] = (prediction == i).astype(np.uint8) * 255
+                    else:  # Nhiều nhãn
+                        for i, structure in enumerate(structures):
+                            results[structure][z] = prediction[i].astype(np.uint8) * 255
+                    
+                    if (z + 1) % 10 == 0 or z == depth - 1:
+                        self.logger.info(f"Đã phân đoạn {z+1}/{depth} lát cắt")
+                        
+                except Exception as error:
+                    self.logger.error(f"Lỗi khi phân đoạn lát cắt {z}: {str(error)}")
+            
+            self.logger.info(f"Đã hoàn thành phân đoạn với mô hình {model_name}")
+            return results
+            
+        except Exception as error:
+            self.logger.error(f"Lỗi khi phân đoạn khối hình ảnh: {str(error)}")
             return {}
     
     def segment_structure(self, image_data: np.ndarray, structure_name: str, model_name: Optional[str] = None) -> np.ndarray:
-        """
-        Phân đoạn một cấu trúc cụ thể
+        """Phân đoạn một cấu trúc cụ thể."""
+        # Chuẩn hóa tên cấu trúc
+        structure_name_lower = structure_name.lower()
         
-        Args:
-            image_data: Dữ liệu hình ảnh 3D (numpy array)
-            structure_name: Tên cấu trúc cần phân đoạn
-            model_name: Tên mô hình cần sử dụng (nếu không cung cấp, sẽ chọn mô hình phù hợp)
-            
-        Returns:
-            Mask của cấu trúc
-        """
-        # Map tên cấu trúc với mô hình phù hợp
-        structure_to_model = {
-            "BRAIN": "unet_brain",
-            "BRAINSTEM": "unet_brain",
-            "LUNG_LEFT": "unet_thorax",
-            "LUNG_RIGHT": "unet_thorax",
-            "HEART": "unet_thorax",
-            "SPINAL_CORD": "unet_thorax",
-            "LIVER": "unet_thorax",
-            "BLADDER": "unet_pelvis",
-            "RECTUM": "unet_pelvis",
-            "PROSTATE": "unet_pelvis",
-        }
-        
-        # Nếu không chỉ định mô hình, chọn mô hình phù hợp
-        if not model_name:
-            if structure_name.upper() in structure_to_model:
-                model_name = structure_to_model[structure_name.upper()]
+        # Nếu không chỉ định model_name, tìm mô hình phù hợp cho cấu trúc
+        if model_name is None:
+            if structure_name_lower in self.structure_to_model:
+                model_name = self.structure_to_model[structure_name_lower]
                 
                 # Kiểm tra mô hình có tồn tại không
                 if model_name not in self.models:
-                    model_name = self.default_model
-            else:
-                model_name = self.default_model
-        
+                    model_name = next(iter(self.models.keys()))
+            
         # Thực hiện phân đoạn
         results = self.segment_volume(image_data, model_name)
         

@@ -35,7 +35,7 @@ class DVHCalculator:
         self.voxel_size = [1.0, 1.0, 1.0]  # Kích thước voxel (mm)
         self.dvh_results = {}  # Kết quả DVH đã tính
         
-        logger.log_info("Đã khởi tạo DVH Calculator")
+        logger.info("Đã khởi tạo DVH Calculator")
     
     def set_dose_data(self, dose_data: np.ndarray, dose_grid_scaling: float = None, voxel_size: List[float] = None):
         """
@@ -54,7 +54,7 @@ class DVHCalculator:
         if voxel_size is not None:
             self.voxel_size = voxel_size
             
-        logger.log_info(f"Đã thiết lập dữ liệu liều: shape={dose_data.shape}, scaling={self.dose_grid_scaling}, voxel_size={self.voxel_size}")
+        logger.info(f"Đã thiết lập dữ liệu liều: shape={dose_data.shape}, scaling={self.dose_grid_scaling}, voxel_size={self.voxel_size}")
     
     def add_structure(self, name: str, mask: np.ndarray, color: str = None):
         """
@@ -66,7 +66,7 @@ class DVHCalculator:
             color: Màu hiển thị (hex code hoặc tên màu)
         """
         if mask.shape != self.dose_data.shape and self.dose_data is not None:
-            logger.log_error(f"Kích thước mặt nạ cấu trúc {name} ({mask.shape}) không khớp với dữ liệu liều ({self.dose_data.shape})")
+            logger.error(f"Kích thước mặt nạ cấu trúc {name} ({mask.shape}) không khớp với dữ liệu liều ({self.dose_data.shape})")
             raise ValueError(f"Kích thước mặt nạ cấu trúc phải khớp với dữ liệu liều")
             
         # Lưu thông tin cấu trúc
@@ -101,7 +101,7 @@ class DVHCalculator:
             "volume_cc": np.sum(mask) * (self.voxel_size[0] * self.voxel_size[1] * self.voxel_size[2]) / 1000,  # cm3
         }
         
-        logger.log_info(f"Đã thêm cấu trúc: {name}, thể tích = {self.structures[name]['volume_cc']:.2f} cc")
+        logger.info(f"Đã thêm cấu trúc: {name}, thể tích = {self.structures[name]['volume_cc']:.2f} cc")
     
     def remove_structure(self, name: str):
         """
@@ -115,108 +115,187 @@ class DVHCalculator:
             # Xóa kết quả DVH nếu có
             if name in self.dvh_results:
                 del self.dvh_results[name]
-            logger.log_info(f"Đã xóa cấu trúc: {name}")
+            logger.info(f"Đã xóa cấu trúc: {name}")
         else:
-            logger.log_warning(f"Không tìm thấy cấu trúc: {name}")
+            logger.warning(f"Không tìm thấy cấu trúc: {name}")
     
-    def calculate_dvh(self, structure_name: str, bins: int = 100, dose_max: float = None) -> Dict:
+    def calculate_dvh(self, structure_name: str = None, structure_mask: np.ndarray = None, 
+                  dose_volume: np.ndarray = None, bins: int = 100, dose_max: float = None) -> Dict:
         """
         Tính toán DVH cho một cấu trúc.
         
         Args:
-            structure_name: Tên cấu trúc
+            structure_name: Tên cấu trúc (khi đã add_structure)
+            structure_mask: Có thể truyền trực tiếp mask thay vì dùng tên cấu trúc
+            dose_volume: Có thể truyền trực tiếp volume thay vì dùng dose_data thiết lập trước
             bins: Số lượng bins trong histogram
             dose_max: Liều tối đa để chuẩn hóa (Gy)
             
         Returns:
             Dict chứa thông tin DVH
         """
-        if structure_name not in self.structures:
-            logger.log_error(f"Không tìm thấy cấu trúc: {structure_name}")
-            raise ValueError(f"Cấu trúc {structure_name} không tồn tại")
+        # Thiết lập dữ liệu đầu vào
+        if dose_volume is None:
+            if self.dose_data is None:
+                raise ValueError("Chưa thiết lập dữ liệu liều")
+            dose_volume = self.dose_data
+        
+        # Thiết lập cấu trúc
+        if structure_mask is None:
+            if structure_name is None:
+                raise ValueError("Phải chỉ định structure_name hoặc structure_mask")
+            if structure_name not in self.structures:
+                raise ValueError(f"Cấu trúc {structure_name} không tồn tại")
+            structure_mask = self.structures[structure_name]
+        
+        # Kiểm tra kích thước
+        if structure_mask.shape != dose_volume.shape:
+            raise ValueError(f"Kích thước mặt nạ cấu trúc ({structure_mask.shape}) không khớp với dữ liệu liều ({dose_volume.shape})")
+        
+        try:
+            # Lấy giá trị liều trong cấu trúc
+            mask_indices = np.where(structure_mask > 0)
+            if len(mask_indices[0]) == 0:
+                logger.warning(f"Cấu trúc trống (không có voxel nào)")
+                return {
+                    'name': structure_name,
+                    'volume_cc': 0,
+                    'differential': {'dose': [], 'volume': []},
+                    'cumulative': {'dose': [], 'volume': []},
+                    'dose_metrics': {},
+                    'volume_metrics': {}
+                }
             
-        if self.dose_data is None:
-            logger.log_error("Chưa thiết lập dữ liệu liều")
-            raise ValueError("Cần thiết lập dữ liệu liều trước khi tính DVH")
+            # Tính thể tích cấu trúc (cc)
+            voxel_volume_cc = np.prod(self.voxel_size) / 1000  # mm³ -> cc
+            structure_volume_cc = len(mask_indices[0]) * voxel_volume_cc
             
-        # Lấy dữ liệu liều trong cấu trúc
-        structure_mask = self.structures[structure_name]["mask"]
-        doses_in_structure = self.dose_data[structure_mask] * self.dose_grid_scaling  # Chuyển đổi sang Gy
-        
-        # Xác định liều tối đa nếu không được chỉ định
-        if dose_max is None:
-            dose_max = np.max(doses_in_structure) * 1.1  # Thêm 10% dư
+            # Lấy giá trị liều trong cấu trúc
+            dose_values = dose_volume[mask_indices] * self.dose_grid_scaling  # Chuyển sang Gy
             
-        # Tạo bins liều
-        dose_bins = np.linspace(0, dose_max, bins + 1)
-        dvh_values = np.zeros(bins)
-        
-        # Tính histogram
-        hist, edges = np.histogram(doses_in_structure, bins=bins, range=(0, dose_max))
-        
-        # Tính DVH tích lũy
-        dvh = np.cumsum(hist[::-1])[::-1]
-        
-        # Kiểm tra trường hợp cấu trúc không có voxel nào
-        if dvh.size > 0 and dvh[0] > 0:
-            dvh = dvh / dvh[0] * 100
-        else:
-            # Trường hợp cấu trúc không có voxel hoặc tất cả voxel nằm ngoài phạm vi liều
-            dvh = np.zeros_like(dvh)
-            logger.log_warning(f"Cấu trúc {structure_name} không có dữ liệu liều hợp lệ để tính DVH")
-        
-        # Tính các thông số DVH
-        d_min = np.min(doses_in_structure)
-        d_max = np.max(doses_in_structure)
-        d_mean = np.mean(doses_in_structure)
-        
-        # Tính các thông số đánh giá thêm
-        volume_cc = self.structures[structure_name]["volume_cc"]
-        
-        # Tính D95, D50, D2cc
-        sorted_doses = np.sort(doses_in_structure)
-        index_95 = int(len(sorted_doses) * 0.05)  # 95% thể tích nhận liều lớn hơn hoặc bằng D95
-        index_50 = int(len(sorted_doses) * 0.5)   # 50% thể tích nhận liều lớn hơn hoặc bằng D50
-        
-        d95 = sorted_doses[index_95] if index_95 < len(sorted_doses) else 0
-        d50 = sorted_doses[index_50] if index_50 < len(sorted_doses) else 0
-        
-        # D2cc - Liều tại 2cc thể tích cao nhất
-        voxel_volume_cc = (self.voxel_size[0] * self.voxel_size[1] * self.voxel_size[2]) / 1000
-        voxels_in_2cc = min(int(2 / voxel_volume_cc), len(sorted_doses) - 1)
-        d2cc = sorted_doses[-voxels_in_2cc] if voxels_in_2cc > 0 else d_max
-        
-        # Tính V95, V100 (% thể tích nhận 95%/100% liều chỉ định)
-        # Giả sử liều chỉ định = d_max
-        prescribed_dose = d_max
-        v95 = np.sum(doses_in_structure >= 0.95 * prescribed_dose) / len(doses_in_structure) * 100
-        v100 = np.sum(doses_in_structure >= prescribed_dose) / len(doses_in_structure) * 100
-        
-        # Lưu kết quả DVH
-        result = {
-            "structure_name": structure_name,
-            "color": self.structures[structure_name]["color"],
-            "volume_cc": volume_cc,
-            "dose_bins": dose_bins[:-1].tolist(),  # Bỏ giá trị cuối cùng
-            "dvh_values": dvh_values.tolist(),
-            "dose_metrics": {
-                "d_min": float(d_min),
-                "d_max": float(d_max),
-                "d_mean": float(d_mean),
-                "d95": float(d95),
-                "d50": float(d50),
-                "d2cc": float(d2cc),
-                "v95": float(v95),
-                "v100": float(v100)
+            # Xác định giá trị liều tối đa nếu không được chỉ định
+            if dose_max is None:
+                dose_max = np.max(dose_values) * 1.1  # Thêm 10% lề
+            
+            # Tính histogram vi phân
+            hist, bin_edges = np.histogram(dose_values, bins=bins, range=(0, dose_max))
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            
+            # Chuyển sang thể tích tương đối (%)
+            rel_volumes = hist / len(dose_values) * 100
+            
+            # Tính DVH tích lũy
+            cum_volumes = np.zeros_like(rel_volumes)
+            for i in range(len(rel_volumes)):
+                cum_volumes[i] = np.sum(rel_volumes[i:])
+            
+            # Làm trơn DVH để trông đẹp hơn
+            try:
+                from scipy.signal import savgol_filter
+                if len(cum_volumes) > 11:  # Cần ít nhất window_length điểm
+                    cum_volumes_smooth = savgol_filter(cum_volumes, 11, 3)
+                    cum_volumes = np.maximum(cum_volumes_smooth, 0)  # Đảm bảo không âm
+            except ImportError:
+                logger.info("Không có scipy, không làm trơn DVH")
+            
+            # Tính các chỉ số liều
+            dose_metrics = self.calculate_dose_metrics(dose_values)
+            
+            # Tính các chỉ số thể tích
+            volume_metrics = self.calculate_volume_metrics(bin_centers, cum_volumes)
+            
+            # Tạo kết quả DVH
+            dvh_data = {
+                'name': structure_name,
+                'volume_cc': structure_volume_cc,
+                'differential': {
+                    'dose': bin_centers.tolist(),
+                    'volume': rel_volumes.tolist()
+                },
+                'cumulative': {
+                    'dose': bin_centers.tolist(),
+                    'volume': cum_volumes.tolist()
+                },
+                'dose_metrics': dose_metrics,
+                'volume_metrics': volume_metrics
             }
-        }
+            
+            # Lưu kết quả
+            if structure_name is not None:
+                self.dvh_results[structure_name] = dvh_data
+                
+            logger.info(f"Đã tính DVH cho {'cấu trúc ' + structure_name if structure_name else 'mask được cung cấp'}")
+            return dvh_data
+            
+        except Exception as error:
+            import traceback
+            logger.error(f"Lỗi khi tính DVH: {str(error)}")
+            logger.error(traceback.format_exc())
+            return None
+    
+    def calculate_dose_metrics(self, dose_values: np.ndarray) -> Dict[str, float]:
+        """
+        Tính các chỉ số liều từ tập hợp giá trị liều.
+        Dx = Liều nhận bởi x% thể tích
         
-        # Lưu kết quả để sử dụng sau
-        self.dvh_results[structure_name] = result
+        Args:
+            dose_values: Mảng 1D chứa các giá trị liều trong cấu trúc
+            
+        Returns:
+            Dict chứa các chỉ số liều
+        """
+        metrics = {}
         
-        logger.log_info(f"Đã tính DVH cho {structure_name}: Dmin={d_min:.2f}Gy, Dmax={d_max:.2f}Gy, Dmean={d_mean:.2f}Gy")
+        # Chỉ số cơ bản
+        metrics["min"] = float(np.min(dose_values))
+        metrics["max"] = float(np.max(dose_values))
+        metrics["mean"] = float(np.mean(dose_values))
+        metrics["median"] = float(np.median(dose_values))
         
-        return result
+        # Các chỉ số Dx (liều nhận bởi x% thể tích)
+        dose_sorted = np.sort(dose_values)
+        total_voxels = len(dose_sorted)
+        
+        for x in [1, 2, 5, 10, 20, 50, 80, 90, 95, 98, 99]:
+            # Chỉ số tương ứng với tỷ lệ phần trăm x
+            idx = int(np.round(total_voxels * (100 - x) / 100))
+            
+            # Đảm bảo chỉ số nằm trong khoảng hợp lệ
+            if idx >= total_voxels:
+                idx = total_voxels - 1
+            elif idx < 0:
+                idx = 0
+                
+            metrics[f"D{x}"] = float(dose_sorted[idx])
+        
+        return metrics
+    
+    def calculate_volume_metrics(self, bin_centers, cum_volumes):
+        """
+        Tính các chỉ số thể tích từ DVH tích lũy.
+        
+        Args:
+            bin_centers: Mảng giá trị liều ở tâm bin
+            cum_volumes: Mảng phần trăm thể tích tích lũy
+            
+        Returns:
+            Dict chứa các chỉ số thể tích
+        """
+        # TODO: Triển khai tính V5, V10, V20, v.v.
+        volume_metrics = {}
+        
+        # Tính Vx
+        for dose_level in [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95]:
+            # Tìm chỉ số bin gần nhất với mức liều
+            idx = np.abs(bin_centers - dose_level).argmin()
+            
+            # Lấy thể tích tại bin này
+            if idx < len(cum_volumes):
+                volume_metrics[f'V{dose_level}'] = cum_volumes[idx]
+            else:
+                volume_metrics[f'V{dose_level}'] = 0.0
+                
+        return volume_metrics
     
     def calculate_dvh_for_all(self, bins: int = 100, dose_max: float = None) -> Dict[str, Dict]:
         """
@@ -238,9 +317,13 @@ class DVHCalculator:
         # Tính DVH cho từng cấu trúc
         for name in self.structures:
             try:
-                results[name] = self.calculate_dvh(name, bins, dose_max)
-            except Exception as e:
-                logger.log_error(f"Lỗi khi tính DVH cho {name}: {e}")
+                results[name] = self.calculate_dvh(
+                    structure_name=name,
+                    bins=bins,
+                    dose_max=dose_max
+                )
+            except Exception as error:
+                logger.error(f"Lỗi khi tính DVH cho {name}: {e}")
                 
         return results
     
@@ -280,7 +363,7 @@ class DVHCalculator:
             # Tính toán DVH nếu chưa có
             return self.calculate_dvh(structure_name)
         else:
-            logger.log_error(f"Không tìm thấy cấu trúc: {structure_name}")
+            logger.error(f"Không tìm thấy cấu trúc: {structure_name}")
             raise ValueError(f"Cấu trúc {structure_name} không tồn tại")
     
     def save_dvh_results(self, filename: str):
@@ -291,11 +374,13 @@ class DVHCalculator:
             filename: Tên file để lưu (JSON)
         """
         try:
-            with open(filename, 'w') as f:
-                json.dump(self.dvh_results, f, indent=2)
-            logger.log_info(f"Đã lưu kết quả DVH vào: {filename}")
-        except Exception as e:
-            logger.log_error(f"Lỗi khi lưu DVH: {e}")
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(self.dvh_results, f, indent=2, ensure_ascii=False)
+            logger.info(f"Đã lưu kết quả DVH vào: {filename}")
+            return True
+        except Exception as error:
+            logger.error(f"Lỗi khi lưu DVH: {e}")
+            return False
     
     def load_dvh_results(self, filename: str):
         """
@@ -305,239 +390,368 @@ class DVHCalculator:
             filename: Tên file để tải (JSON)
         """
         try:
-            with open(filename, 'r') as f:
+            with open(filename, 'r', encoding='utf-8') as f:
                 self.dvh_results = json.load(f)
-            logger.log_info(f"Đã tải kết quả DVH từ: {filename}")
-        except Exception as e:
-            logger.log_error(f"Lỗi khi tải DVH: {e}")
+            logger.info(f"Đã tải kết quả DVH từ: {filename}")
+            return True
+        except Exception as error:
+            logger.error(f"Lỗi khi tải DVH: {e}")
+            return False
 
-
-class DVHPlotter:
-    """
-    Lớp vẽ biểu đồ DVH từ dữ liệu đã tính.
-    Hỗ trợ vẽ trên matplotlib Figure hoặc trong Tkinter.
-    """
-    
-    def __init__(self, dvh_calculator: DVHCalculator = None):
+    def create_figure(self, figsize=(10, 6)):
         """
-        Khởi tạo DVH Plotter.
+        Tạo figure matplotlib để vẽ biểu đồ DVH.
         
         Args:
-            dvh_calculator: Đối tượng DVHCalculator đã có (tùy chọn)
-        """
-        self.dvh_calculator = dvh_calculator if dvh_calculator else DVHCalculator()
-        self.figure = None
-        self.canvas = None
-        logger.log_info("Đã khởi tạo DVH Plotter")
-    
-    def create_figure(self, figsize: Tuple[int, int] = (10, 6), dpi: int = 100) -> Figure:
-        """
-        Tạo đối tượng Figure của matplotlib để vẽ DVH.
-        
-        Args:
-            figsize: Kích thước figure (inches)
-            dpi: Độ phân giải (dots per inch)
+            figsize: Kích thước figure (inch)
             
         Returns:
             matplotlib.figure.Figure
         """
-        self.figure = Figure(figsize=figsize, dpi=dpi)
-        return self.figure
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111)
+        ax.set_title("Dose Volume Histogram (DVH)")
+        ax.set_xlabel("Dose (Gy)")
+        ax.set_ylabel("Volume (%)")
+        ax.grid(True)
+        return fig
+        
+    def plot_dvh(self, figure=None, structures=None):
+        """
+        Vẽ biểu đồ DVH.
+        
+        Args:
+            figure: Figure để vẽ (nếu None sẽ tạo mới)
+            structures: Danh sách tên cấu trúc cần vẽ (nếu None sẽ vẽ tất cả)
+            
+        Returns:
+            matplotlib.figure.Figure
+        """
+        if figure is None:
+            figure = self.create_figure()
+            
+        ax = figure.gca()
+        
+        # Xác định cấu trúc cần vẽ
+        if structures is None:
+            structures = list(self.dvh_results.keys())
+        elif isinstance(structures, str):
+            structures = [structures]
+            
+        # Vẽ DVH cho từng cấu trúc
+        for name in structures:
+            if name not in self.dvh_results:
+                continue
+                
+            dvh_data = self.dvh_results[name]
+            
+            # Lấy màu từ dữ liệu cấu trúc
+            if name in self.structures and 'color' in self.structures[name]:
+                color = self.structures[name]['color']
+            else:
+                # Màu mặc định
+                color = None
+                
+            # Vẽ đường DVH tích lũy
+            ax.plot(
+                dvh_data['cumulative']['dose'],
+                dvh_data['cumulative']['volume'],
+                label=name,
+                color=color
+            )
+            
+        # Thêm legend
+        ax.legend(loc='upper right')
+        
+        return figure
+        
+    def save_plot(self, file_path):
+        """
+        Lưu biểu đồ DVH ra file.
+        
+        Args:
+            file_path: Đường dẫn file đích
+            
+        Returns:
+            bool: True nếu thành công
+        """
+        try:
+            fig = self.create_figure()
+            
+            # Vẽ DVH
+            self.plot_dvh(figure=fig)
+            
+            # Lưu ra file
+            fig.savefig(file_path, dpi=150, bbox_inches='tight')
+            
+            return True
+        except Exception as error:
+            logger.error(f"Lỗi khi lưu biểu đồ DVH: {str(error)}")
+            return False
+
+
+class DVHPlotter:
+    """
+    Vẽ biểu đồ DVH (Dose Volume Histogram).
+    """
     
+    def __init__(self, dvh_calculator: DVHCalculator = None):
+        self.dvh_calculator = dvh_calculator
+        self.figure = None
+        self.canvas = None
+        self.logger = get_logger(__name__)
+        
+    def create_figure(self, figsize: Tuple[int, int] = (10, 6), dpi: int = 100) -> Figure:
+        """Tạo figure matplotlib."""
+        import matplotlib.pyplot as plt
+        
+        # Tạo figure mới
+        self.figure = plt.figure(figsize=figsize, dpi=dpi)
+        
+        return self.figure
+        
     def plot_dvh(self, structures: List[str] = None, figure: Figure = None,
                 title: str = "Dose Volume Histogram", grid: bool = True,
                 legend_loc: str = "upper right", show_metrics: bool = True,
                 highlight_prescription: bool = True, prescription_dose: float = None) -> Figure:
         """
-        Vẽ biểu đồ DVH cho các cấu trúc.
+        Vẽ biểu đồ DVH.
         
         Args:
-            structures: Danh sách tên cấu trúc cần vẽ (mặc định: tất cả)
-            figure: Đối tượng Figure để vẽ (mặc định: tạo mới)
+            structures: Danh sách các cấu trúc cần vẽ (mặc định: tất cả)
+            figure: Figure matplotlib để vẽ (mặc định: tạo mới)
             title: Tiêu đề biểu đồ
-            grid: Hiển thị lưới nền
+            grid: Hiển thị lưới
             legend_loc: Vị trí chú thích
-            show_metrics: Hiển thị thông số DVH trên chú thích
-            highlight_prescription: Đánh dấu liều chỉ định trên biểu đồ
-            prescription_dose: Liều chỉ định (Gy)
+            show_metrics: Hiển thị các chỉ số DVH
+            highlight_prescription: Đánh dấu liều kê toa
+            prescription_dose: Liều kê toa (Gy)
             
         Returns:
-            matplotlib.figure.Figure
+            Figure matplotlib
         """
-        # Tạo figure mới nếu không được cung cấp
-        if figure is None:
-            figure = self.create_figure()
-        self.figure = figure
+        if self.dvh_calculator is None:
+            self.logger.error("DVHCalculator chưa được thiết lập")
+            return None
             
+        # Sử dụng figure được cung cấp hoặc tạo mới
+        if figure is not None:
+            self.figure = figure
+        elif self.figure is None:
+            self.create_figure()
+            
+        # Xóa axes cũ nếu có
+        self.figure.clear()
+        
+        # Tạo axes mới
+        ax = self.figure.add_subplot(111)
+        
         # Xác định danh sách cấu trúc cần vẽ
-        dvh_results = self.dvh_calculator.dvh_results
-        if not dvh_results:
-            logger.log_warning("Không có dữ liệu DVH để vẽ")
-            return figure
-            
         if structures is None:
-            structures = list(dvh_results.keys())
+            structures = list(self.dvh_calculator.structures.keys())
             
-        # Tạo axes để vẽ
-        ax = figure.add_subplot(111)
-        
-        # Vẽ từng cấu trúc
-        for structure in structures:
-            if structure in dvh_results:
-                data = dvh_results[structure]
-                dose_bins = data["dose_bins"]
-                dvh_values = data["dvh_values"]
-                color = data["color"]
+        if not structures:
+            ax.text(0.5, 0.5, "Không có dữ liệu", horizontalalignment='center',
+                   verticalalignment='center', transform=ax.transAxes)
+            return self.figure
+            
+        # Vẽ DVH cho từng cấu trúc
+        max_dose = 0
+        for name in structures:
+            try:
+                # Lấy dữ liệu DVH
+                dvh_data = self.dvh_calculator.get_dvh_data(name)
                 
-                # Tạo nhãn với thông số nếu cần
-                if show_metrics:
-                    metrics = data["dose_metrics"]
-                    label = f"{structure} - V95: {metrics['v95']:.1f}%, Dmax: {metrics['d_max']:.1f}Gy, Dmean: {metrics['d_mean']:.1f}Gy"
-                else:
-                    label = structure
-                    
                 # Vẽ đường DVH
-                ax.plot(dose_bins, dvh_values, label=label, color=color, linewidth=2)
-        
-        # Đánh dấu liều chỉ định nếu được yêu cầu
-        if highlight_prescription and prescription_dose is not None:
-            ax.axvline(x=prescription_dose, color='black', linestyle='--', linewidth=1, 
-                     label=f"Liều chỉ định: {prescription_dose}Gy")
+                ax.plot(dvh_data['dose_bins'], dvh_data['dvh_values'], 
+                       label=f"{name} ({dvh_data['volume_cc']:.1f} cm³)",
+                       color=dvh_data['color'], linewidth=2)
+                       
+                # Cập nhật liều tối đa
+                max_dose = max(max_dose, dvh_data['dose_metrics']['d_max'])
+                
+                # Hiển thị các chỉ số nếu yêu cầu
+                if show_metrics:
+                    # Vẽ điểm D95
+                    if 'd95' in dvh_data['dose_metrics']:
+                        d95 = dvh_data['dose_metrics']['d95']
+                        ax.plot([d95], [95], 'o', color=dvh_data['color'], markersize=5)
+                        ax.text(d95 + 0.2, 95, f"D95={d95:.2f}Gy", fontsize=8, 
+                               color=dvh_data['color'], verticalalignment='center')
+                    
+                    # Vẽ điểm V20
+                    if 'v95' in dvh_data['dose_metrics']:
+                        v20 = dvh_data['dose_metrics']['v95']
+                        ax.plot([20], [v20], 's', color=dvh_data['color'], markersize=5)
+                        ax.text(20, v20 + 2, f"V20={v20:.1f}%", fontsize=8,
+                               color=dvh_data['color'], horizontalalignment='center')
+                
+            except Exception as error:
+                self.logger.error(f"Lỗi khi vẽ DVH cho {name}: {str(error)}")
+                
+        # Đánh dấu liều kê toa nếu yêu cầu
+        if highlight_prescription and prescription_dose is not None and prescription_dose > 0:
+            ax.axvline(x=prescription_dose, color='red', linestyle='--', linewidth=1.5)
+            ax.text(prescription_dose + 0.2, 5, f"Prescription: {prescription_dose}Gy", 
+                   color='red', fontsize=9, rotation=90, verticalalignment='bottom')
             
-        # Cấu hình axes
-        ax.set_xlim(0, max([max(dvh_results[s]["dose_bins"]) for s in structures if s in dvh_results]) * 1.05)
+        # Thiết lập các thuộc tính của biểu đồ
+        ax.set_xlabel("Liều (Gy)")
+        ax.set_ylabel("Thể tích (%)")
+        ax.set_title(title)
+        ax.set_xlim(0, max_dose * 1.1)  # Thêm 10% để nhìn rõ hơn
         ax.set_ylim(0, 105)
-        ax.set_xlabel("Liều (Gy)", fontsize=12)
-        ax.set_ylabel("Thể tích (%)", fontsize=12)
-        ax.set_title(title, fontsize=14)
         
-        # Thêm lưới nếu được yêu cầu
         if grid:
             ax.grid(True, linestyle='--', alpha=0.7)
             
         # Thêm chú thích
-        ax.legend(loc=legend_loc, fontsize=10)
+        if structures:
+            ax.legend(loc=legend_loc, fontsize=9)
+            
+        # Điều chỉnh layout
+        self.figure.tight_layout()
         
-        # Cập nhật figure
-        figure.tight_layout()
+        return self.figure
         
-        return figure
-    
     def embed_in_tkinter(self, parent_frame: tk.Frame, structures: List[str] = None) -> FigureCanvasTkAgg:
         """
         Nhúng biểu đồ DVH vào widget Tkinter.
         
         Args:
-            parent_frame: Frame Tkinter để chứa biểu đồ
-            structures: Danh sách tên cấu trúc cần vẽ
+            parent_frame: Frame Tkinter để nhúng biểu đồ
+            structures: Danh sách các cấu trúc cần vẽ
             
         Returns:
-            matplotlib.backends.backend_tkagg.FigureCanvasTkAgg
+            Canvas matplotlib nhúng trong Tkinter
         """
-        # Tạo figure mới nếu chưa có
-        if self.figure is None:
-            self.create_figure()
-            
-        # Vẽ DVH
+        # Tạo figure với kích thước phù hợp
+        self.create_figure(figsize=(6, 4), dpi=80)
+        
+        # Vẽ biểu đồ DVH
         self.plot_dvh(structures=structures)
         
-        # Tạo canvas Tkinter
+        # Tạo canvas
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+        
+        # Xóa canvas cũ nếu có
+        if self.canvas is not None:
+            self.canvas.get_tk_widget().destroy()
+            
+        # Tạo canvas mới
         self.canvas = FigureCanvasTkAgg(self.figure, master=parent_frame)
         self.canvas.draw()
         
-        # Đóng gói canvas vào frame
-        canvas_widget = self.canvas.get_tk_widget()
-        canvas_widget.pack(fill=tk.BOTH, expand=True)
+        # Thêm canvas vào frame
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        # Thêm thanh công cụ
+        toolbar_frame = tk.Frame(parent_frame)
+        toolbar_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        toolbar.update()
         
         return self.canvas
-    
-    def save_plot(self, filename: str, dpi: int = 300):
-        """
-        Lưu biểu đồ DVH vào file hình ảnh.
         
-        Args:
-            filename: Tên file để lưu
-            dpi: Độ phân giải (dots per inch)
-        """
+    def save_plot(self, filename: str, dpi: int = 300):
+        """Lưu biểu đồ DVH ra file."""
         if self.figure is None:
-            logger.log_error("Không có biểu đồ để lưu")
-            return
+            self.logger.error("Không có biểu đồ để lưu")
+            return False
             
         try:
             self.figure.savefig(filename, dpi=dpi, bbox_inches='tight')
-            logger.log_info(f"Đã lưu biểu đồ DVH vào: {filename}")
-        except Exception as e:
-            logger.log_error(f"Lỗi khi lưu biểu đồ: {e}")
-    
+            self.logger.info(f"Đã lưu biểu đồ DVH vào file {filename}")
+            return True
+        except Exception as error:
+            self.logger.error(f"Lỗi khi lưu biểu đồ: {str(error)}")
+            return False
+            
     def update_plot(self, structures: List[str] = None):
-        """
-        Cập nhật biểu đồ DVH hiện tại.
-        
-        Args:
-            structures: Danh sách tên cấu trúc cần vẽ
-        """
+        """Cập nhật biểu đồ DVH."""
         if self.figure is None:
             self.create_figure()
             
-        # Xóa tất cả axes hiện tại
-        self.figure.clear()
-        
-        # Vẽ lại biểu đồ
         self.plot_dvh(structures=structures, figure=self.figure)
         
-        # Cập nhật canvas nếu đang hiển thị trong Tkinter
-        if self.canvas:
+        # Cập nhật canvas nếu đang hiển thị
+        if self.canvas is not None:
             self.canvas.draw()
-    
+            
     def add_constraints_to_plot(self, constraints: Dict[str, List[Dict]], figure: Figure = None) -> Figure:
         """
-        Thêm đường ràng buộc liều lượng lên biểu đồ DVH.
+        Thêm các ràng buộc liều lượng vào biểu đồ DVH.
         
         Args:
-            constraints: Dict chứa các ràng buộc theo cấu trúc
-                {structure_name: [{dose: float, volume: float, type: "max"/"min"}]}
-            figure: Đối tượng Figure để vẽ (mặc định: figure hiện tại)
+            constraints: Dictionary các ràng buộc liều lượng theo cấu trúc
+                {structure_name: [
+                    {'type': 'max_dose', 'value': 50.0, 'unit': 'Gy'},
+                    {'type': 'V20', 'value': 30.0, 'unit': '%'},
+                    ...
+                ]}
+            figure: Figure matplotlib để vẽ
             
         Returns:
-            matplotlib.figure.Figure
+            Figure matplotlib
         """
-        if figure is None:
-            figure = self.figure
+        # Sử dụng figure được cung cấp hoặc figure hiện tại
+        if figure is not None:
+            self.figure = figure
+        elif self.figure is None:
+            self.create_figure()
             
-        if figure is None:
-            logger.log_error("Không có biểu đồ để thêm ràng buộc")
-            return None
-            
-        ax = figure.axes[0] if figure.axes else figure.add_subplot(111)
+        # Lấy axes hiện tại
+        ax = self.figure.gca()
         
-        for structure_name, constraint_list in constraints.items():
-            if structure_name not in self.dvh_calculator.dvh_results:
+        # Thêm các ràng buộc vào biểu đồ
+        for structure_name, structure_constraints in constraints.items():
+            # Kiểm tra xem cấu trúc có tồn tại không
+            if structure_name not in self.dvh_calculator.structures:
+                self.logger.warning(f"Cấu trúc {structure_name} không tồn tại, bỏ qua ràng buộc")
                 continue
                 
-            color = self.dvh_calculator.dvh_results[structure_name]["color"]
+            # Lấy màu của cấu trúc
+            color = self.dvh_calculator.structures[structure_name]['color']
             
-            for constraint in constraint_list:
-                dose = constraint.get("dose", 0)
-                volume = constraint.get("volume", 0)
-                constraint_type = constraint.get("type", "max")
+            # Thêm từng ràng buộc
+            for constraint in structure_constraints:
+                constraint_type = constraint.get('type', '').lower()
+                value = constraint.get('value', 0.0)
+                unit = constraint.get('unit', '')
                 
-                if constraint_type.lower() == "max":
-                    # Ràng buộc tối đa: không quá volume% thể tích nhận liều lớn hơn dose Gy
-                    ax.plot([dose, dose], [0, volume], color=color, linestyle=':', linewidth=1.5)
-                    ax.plot([0, dose], [volume, volume], color=color, linestyle=':', linewidth=1.5)
-                    ax.scatter([dose], [volume], color=color, marker='o', s=30)
-                    
-                elif constraint_type.lower() == "min":
-                    # Ràng buộc tối thiểu: ít nhất volume% thể tích nhận liều lớn hơn dose Gy
-                    ax.plot([dose, dose], [volume, 100], color=color, linestyle=':', linewidth=1.5)
-                    ax.plot([0, dose], [volume, volume], color=color, linestyle=':', linewidth=1.5)
-                    ax.scatter([dose], [volume], color=color, marker='s', s=30)
+                if 'max_dose' in constraint_type:
+                    # Ràng buộc liều tối đa
+                    ax.axvline(x=value, color=color, linestyle=':', linewidth=1.5)
+                    ax.text(value + 0.2, 50, f"{structure_name} Max: {value}{unit}", 
+                           color=color, fontsize=8, rotation=90)
+                           
+                elif 'mean_dose' in constraint_type:
+                    # Ràng buộc liều trung bình
+                    ax.axvline(x=value, color=color, linestyle='-.', linewidth=1.5)
+                    ax.text(value + 0.2, 60, f"{structure_name} Mean: {value}{unit}", 
+                           color=color, fontsize=8, rotation=90)
+                           
+                elif constraint_type.startswith('v') and constraint_type[1:].isdigit():
+                    # Ràng buộc Vx
+                    dose_level = float(constraint_type[1:])
+                    ax.axhline(y=value, xmin=dose_level/ax.get_xlim()[1], color=color, 
+                              linestyle=':', linewidth=1.5)
+                    ax.text(dose_level + 1, value + 2, f"{structure_name} {constraint_type.upper()}: {value}{unit}", 
+                           color=color, fontsize=8)
+                           
+                elif constraint_type.startswith('d') and constraint_type[1:].isdigit():
+                    # Ràng buộc Dx
+                    volume_level = float(constraint_type[1:])
+                    ax.axvline(x=value, ymin=volume_level/100, color=color, 
+                              linestyle=':', linewidth=1.5)
+                    ax.text(value + 0.2, volume_level - 2, f"{structure_name} {constraint_type.upper()}: {value}{unit}", 
+                           color=color, fontsize=8, rotation=90)
         
-        # Cập nhật canvas nếu đang hiển thị trong Tkinter
-        if self.canvas:
+        # Cập nhật canvas nếu đang hiển thị
+        if self.canvas is not None:
             self.canvas.draw()
             
-        return figure
+        return self.figure
 
 
 # Hàm tiện ích

@@ -3,452 +3,413 @@ import os
 import sys
 import pydicom
 import SimpleITK as sitk
+from typing import Dict, List, Tuple, Optional, Any, Union
+import cv2
+from scipy.ndimage import zoom
+
+# Import module DICOMParser từ data_management
 from quangstation.data_management.dicom_parser import DICOMParser
+from quangstation.utils.logging import get_logger
+
+logger = get_logger("ImageLoader")
 
 class ImageLoader:
-    """Lớp tải và xử lý chuỗi ảnh y tế (CT/MRI/PET/SPECT)"""
+    """
+    Lớp tải và xử lý chuỗi ảnh y tế (CT/MRI/PET/SPECT).
+    Hỗ trợ hiển thị theo các trục Axial, Coronal, Sagittal và dựng mô hình 3D.
+    """
+    
+    # Các hằng số cho các trục
+    AXIAL = 0
+    CORONAL = 1
+    SAGITTAL = 2
     
     def __init__(self):
-        self.image_series = None
-        self.image_type = None
-        self.spacing = None
-        self.origin = None
-        self.direction = None
-        self.metadata = {}
+        self.image_series = None  # Đối tượng SimpleITK.Image
+        self.image_type = None    # Loại ảnh (CT, MRI, PET, SPECT)
+        self.spacing = None       # Khoảng cách giữa các pixel (mm)
+        self.origin = None        # Điểm gốc của ảnh (mm)
+        self.direction = None     # Ma trận hướng
+        self.metadata = {}        # Metadata từ DICOM
+        self.volume_data = None   # Dữ liệu thể tích dạng numpy.ndarray
+        self.pixel_data_loaded = False  # Flag kiểm tra đã tải pixel data hay chưa
+        self.window_center = None  # Window center mặc định
+        self.window_width = None   # Window width mặc định
+        self.dicom_parser = None   # Đối tượng DICOMParser
     
-    def load_dicom_series(self, directory):
-        """Tải chuỗi ảnh DICOM từ thư mục"""
-        reader = sitk.ImageSeriesReader()
-        all_files = [os.path.join(directory, f) for f in os.listdir(directory)
-                      if os.path.isfile(os.path.join(directory, f))]
-        
-        # Kiểm tra từng file có phải DICOM không
-        dicom_files = []
-        for file_path in all_files:
-            try:
-                with open(file_path, 'rb') as f:
-                    # Kiểm tra DICOM magic number (DICM ở offset 128)
-                    f.seek(128)
-                    magic = f.read(4)
-                    if magic == b'DICM':
-                        dicom_files.append(file_path)
-            except:
-                continue
-        
-        reader.SetFileNames(dicom_files)
-        self.image_series = reader.Execute()
-        
-        # Lấy thông tin không gian
-        self.spacing = self.image_series.GetSpacing()
-        self.origin = self.image_series.GetOrigin()
-        self.direction = self.image_series.GetDirection()
-        
-        # Xác định loại ảnh từ metadata
-        first_dicom = pydicom.dcmread(dicom_files[0])
-        self.image_type = first_dicom.Modality
-        
-        # Trích xuất thông tin cơ bản
-        parser = DICOMParser(directory)
-        self.metadata = parser.extract_patient_info()
-        
-        return self.get_numpy_array(), self.metadata
-    
-    def load_single_dicom(self, file_path):
-        """Tải một file DICOM đơn lẻ"""
-        # Đọc file DICOM
-        ds = pydicom.dcmread(file_path)
-        
-        # Tạo một SimpleITK Image từ dữ liệu DICOM
-        img = sitk.ReadImage(file_path)
-        self.image_series = img
-        
-        # Lấy thông tin không gian
-        self.spacing = img.GetSpacing()
-        self.origin = img.GetOrigin()
-        self.direction = img.GetDirection()
-        
-        # Xác định loại ảnh từ metadata
-        self.image_type = ds.Modality
-        
-        # Trích xuất thông tin cơ bản
-        self.metadata = {
-            'patient_name': getattr(ds, 'PatientName', None),
-            'patient_id': getattr(ds, 'PatientID', None),
-            'study_date': getattr(ds, 'StudyDate', None),
-            'modality': self.image_type,
-            'bits_allocated': getattr(ds, 'BitsAllocated', None),
-            'pixel_spacing': getattr(ds, 'PixelSpacing', [1, 1]),
-            'position': getattr(ds, 'ImagePositionPatient', [0, 0, 0])
-        }
-        
-        return self.get_numpy_array(), self.metadata
-    
-    def load_rt_image(self, file_path):
-        """Tải file RT Image DICOM
+    def load_dicom_series(self, directory: str) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Tải chuỗi ảnh DICOM từ thư mục và tạo thể tích 3D.
         
         Args:
-            file_path: Đường dẫn đến file RT Image
+            directory: Đường dẫn đến thư mục chứa các file DICOM
             
         Returns:
-            Tuple (numpy_array, metadata): Mảng numpy chứa dữ liệu ảnh và metadata
+            Tuple[np.ndarray, Dict]: Mảng numpy 3D và metadata
         """
+        logger.info(f"Đang tải dữ liệu DICOM từ thư mục: {directory}")
+        
         try:
-            # Đọc file DICOM
-            ds = pydicom.dcmread(file_path)
+            # Sử dụng DICOMParser để phân loại và lấy danh sách file
+            self.dicom_parser = DICOMParser(directory)
             
-            # Kiểm tra xem file có phải là RT Image không
-            if ds.SOPClassUID != '1.2.840.10008.5.1.4.1.1.481.1':
-                print(f"File không phải RT Image: {file_path}")
-                return None, None
+            # Lấy thông tin bệnh nhân
+            patient_info = self.dicom_parser.extract_patient_info()
             
-            # Lấy dữ liệu pixel
-            image_data = ds.pixel_array.astype(np.float32)
+            # Kiểm tra xem có hình ảnh CT/MRI/PET/SPECT không
+            modalities = self.dicom_parser.get_modalities()
             
-            # Áp dụng rescale slope và intercept nếu có
-            if hasattr(ds, 'RescaleSlope') and hasattr(ds, 'RescaleIntercept'):
-                image_data = image_data * ds.RescaleSlope + ds.RescaleIntercept
+            # Xác định modality để tải dữ liệu
+            if modalities['CT'] > 0:
+                self.image_type = 'CT'
+            elif modalities['MRI'] > 0:
+                self.image_type = 'MRI'
+            elif modalities['PET'] > 0:
+                self.image_type = 'PET'
+            elif modalities['SPECT'] > 0:
+                self.image_type = 'SPECT'
+            else:
+                logger.error("Không tìm thấy dữ liệu ảnh y tế trong thư mục")
+                return None, {}
+                
+            logger.info(f"Phát hiện dữ liệu hình ảnh kiểu: {self.image_type}")
             
-            # Tạo metadata
-            metadata = {
-                'patient_name': getattr(ds, 'PatientName', None),
-                'patient_id': getattr(ds, 'PatientID', None),
-                'study_date': getattr(ds, 'StudyDate', None),
-                'position': getattr(ds, 'ImagePositionPatient', [0, 0, 0]),
-                'pixel_spacing': getattr(ds, 'PixelSpacing', [1, 1]),
-                'slice_thickness': getattr(ds, 'SliceThickness', 1),
-                'rows': getattr(ds, 'Rows', 0),
-                'columns': getattr(ds, 'Columns', 0),
-                'beam_limiting_device_angle': getattr(ds, 'BeamLimitingDeviceAngle', None),
-                'patient_position': getattr(ds, 'PatientPosition', None),
-                'gantry_angle': getattr(ds, 'GantryAngle', None),
-                'radiation_type': getattr(ds, 'RadiationType', None),
-                'referenced_plan_seq': []
-            }
+            # Trích xuất khối dữ liệu hình ảnh
+            volume_data, metadata = self.dicom_parser.extract_image_volume(self.image_type)
             
-            # Lấy thông tin tham chiếu đến kế hoạch RT Plan
-            if hasattr(ds, 'ReferencedRTPlanSequence'):
-                for ref_plan in ds.ReferencedRTPlanSequence:
-                    plan_ref = {
-                        'rt_plan_uid': getattr(ref_plan, 'ReferencedSOPInstanceUID', None)
-                    }
-                    
-                    # Thông tin beam reference
-                    if hasattr(ref_plan, 'ReferencedBeamNumber'):
-                        plan_ref['beam_number'] = ref_plan.ReferencedBeamNumber
-                    
-                    metadata['referenced_plan_seq'].append(plan_ref)
+            if volume_data is None or volume_data.size == 0:
+                logger.error("Không thể tạo khối dữ liệu hình ảnh")
+                return None, {}
+                
+            # Lưu dữ liệu vào thuộc tính
+            self.volume_data = volume_data
+            self.metadata = metadata
             
-            # Lưu trữ dữ liệu
-            self.image_type = "RT_IMAGE"
+            # Thiết lập thông tin không gian
+            if 'pixel_spacing' in metadata and metadata['pixel_spacing'] is not None:
+                pixel_spacing = metadata['pixel_spacing']
+                if len(pixel_spacing) >= 2:
+                    # SimpleITK spacing theo thứ tự [z, y, x]
+                    slice_thickness = metadata.get('slice_thickness', 1.0)
+                    self.spacing = (float(pixel_spacing[0]), float(pixel_spacing[1]), float(slice_thickness))
+                else:
+                    self.spacing = (1.0, 1.0, 1.0)
+            else:
+                self.spacing = (1.0, 1.0, 1.0)
+                logger.warning("Không tìm thấy thông tin pixel spacing, sử dụng giá trị mặc định (1.0, 1.0, 1.0)")
             
-            return image_data, metadata
+            # Xác định origin
+            if hasattr(metadata.get('slices', [{}])[0], 'ImagePositionPatient'):
+                first_slice = metadata['slices'][0]
+                self.origin = (
+                    float(first_slice.ImagePositionPatient[0]),
+                    float(first_slice.ImagePositionPatient[1]),
+                    float(first_slice.ImagePositionPatient[2])
+                )
+            else:
+                self.origin = (0.0, 0.0, 0.0)
+                logger.warning("Không tìm thấy thông tin origin, sử dụng giá trị mặc định (0.0, 0.0, 0.0)")
             
-        except Exception as e:
-            print(f"Lỗi khi tải RT Image: {e}")
-            return None, None
+            # Xác định direction
+            if hasattr(metadata.get('slices', [{}])[0], 'ImageOrientationPatient'):
+                first_slice = metadata['slices'][0]
+                orientation = first_slice.ImageOrientationPatient
+                # Tạo ma trận hướng 3x3 từ 6 giá trị orientation
+                self.direction = (
+                    float(orientation[0]), float(orientation[1]), float(orientation[2]),
+                    float(orientation[3]), float(orientation[4]), float(orientation[5]),
+                    0.0, 0.0, 1.0  # Giả định trục Z là thẳng đứng
+                )
+            else:
+                self.direction = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+                logger.warning("Không tìm thấy thông tin direction, sử dụng giá trị mặc định (identity)")
+            
+            # Thiết lập window/level mặc định dựa trên loại ảnh
+            self._set_default_window_level()
+            
+            # Đánh dấu đã tải pixel data
+            self.pixel_data_loaded = True
+            
+            logger.info(f"Đã tải thành công dữ liệu ảnh {self.image_type}, kích thước: {self.volume_data.shape}")
+            logger.info(f"Spacing: {self.spacing}, Origin: {self.origin}")
+            
+            return self.volume_data, patient_info
+            
+        except Exception as error:
+            import traceback
+            logger.error(f"Lỗi khi tải dữ liệu DICOM: {str(error)}")
+            logger.error(traceback.format_exc())
+            return None, {}
     
-    def find_rt_image(self, directory):
-        """Tìm file RT Image trong thư mục
+    def _set_default_window_level(self):
+        """Thiết lập giá trị mặc định cho window/level dựa vào loại ảnh"""
+        if self.image_type == 'CT':
+            self.window_center = 40    # Giá trị cho soft tissue
+            self.window_width = 400
+        elif self.image_type == 'MRI':
+            # Tính toán dựa trên dữ liệu
+            if self.volume_data is not None:
+                p5 = np.percentile(self.volume_data, 5)
+                p95 = np.percentile(self.volume_data, 95)
+                self.window_width = p95 - p5
+                self.window_center = (p95 + p5) / 2
+            else:
+                self.window_center = 500
+                self.window_width = 1000
+        elif self.image_type == 'PET' or self.image_type == 'SPECT':
+            # Cho PET/SPECT thường là SUV hoặc count
+            if self.volume_data is not None:
+                p99 = np.percentile(self.volume_data, 99)
+                self.window_width = p99
+                self.window_center = p99 / 2
+            else:
+                self.window_center = 5
+                self.window_width = 10
+    
+    def get_slice(self, slice_index: int, orientation: int = AXIAL, apply_window: bool = True) -> np.ndarray:
+        """
+        Lấy một lát cắt theo hướng chỉ định.
         
         Args:
-            directory: Thư mục cần tìm
+            slice_index: Chỉ số lát cắt
+            orientation: Hướng lát cắt (AXIAL=0, CORONAL=1, SAGITTAL=2)
+            apply_window: Áp dụng cửa sổ Hounsfield cho CT
             
         Returns:
-            Đường dẫn đến file RT Image nếu tìm thấy, None nếu không có
+            np.ndarray: Lát cắt dạng ảnh 2D
         """
-        for root, _, files in os.walk(directory):
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
-                    if ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.1':  # RT Image
-                        return file_path
-                except:
-                    continue
-        return None
-    
-    def get_numpy_array(self):
-        """Chuyển đổi SimpleITK image thành mảng NumPy"""
-        if self.image_series is None:
-            return None
-        
-        # Chuyển đổi SimpleITK image thành mảng NumPy
-        array = sitk.GetArrayFromImage(self.image_series)
-        return array
-    
-    def get_slice(self, axis, slice_index):
-        """Lấy một slice theo trục và chỉ số slice"""
-        array = self.get_numpy_array()
-        if array is None:
-            return None
-        
-        if axis == 'axial':
-            # Trục Z
-            if 0 <= slice_index < array.shape[0]:
-                return array[slice_index]
-        elif axis == 'coronal':
-            # Trục Y
-            if 0 <= slice_index < array.shape[1]:
-                return array[:, slice_index, :]
-        elif axis == 'sagittal':
-            # Trục X
-            if 0 <= slice_index < array.shape[2]:
-                return array[:, :, slice_index]
-        
-        return None
-    
-    def apply_window_level(self, image, window, level):
-        """Áp dụng window/level cho ảnh (để hiển thị)
-        
-        Args:
-            image: Mảng NumPy chứa dữ liệu ảnh
-            window: Độ rộng cửa sổ (window width)
-            level: Giá trị trung tâm cửa sổ (window level/center)
+        if not self.pixel_data_loaded or self.volume_data is None:
+            logger.error("Dữ liệu ảnh chưa được tải. Hãy gọi load_dicom_series trước.")
+            raise ValueError("Dữ liệu ảnh chưa được tải.")
             
-        Returns:
-            Mảng NumPy đã được điều chỉnh window/level
-        """
-        # Tính toán giá trị min/max
-        min_value = level - window / 2
-        max_value = level + window / 2
-        
-        # Clip và normalize về khoảng [0, 1]
-        windowed = np.clip(image, min_value, max_value)
-        windowed = (windowed - min_value) / (max_value - min_value)
-        
-        return windowed
-    
-    def hounsfield_to_density(self, hu_value):
-        """Chuyển đổi giá trị Hounsfield thành giá trị mật độ"""
-        # Bảng chuyển đổi đơn giản từ HU sang mật độ tương đối
-        conversion_table = [
-            (-1000, 0.00),  # Không khí
-            (-800, 0.20),   # Phổi
-            (-500, 0.45),   # Phổi
-            (-100, 0.95),   # Mỡ
-            (0, 1.00),      # Nước
-            (400, 1.10),    # Mô mềm
-            (1000, 1.85),   # Xương xốp
-            (2000, 2.35),   # Xương đặc
-            (3000, 2.70)    # Xương dày đặc
-        ]
-        
-        # Nội suy tuyến tính giữa các điểm trong bảng
-        for i in range(len(conversion_table) - 1):
-            hu1, density1 = conversion_table[i]
-            hu2, density2 = conversion_table[i + 1]
-            
-            if hu1 <= hu_value <= hu2:
-                # Nội suy tuyến tính
-                density = density1 + (density2 - density1) * (hu_value - hu1) / (hu2 - hu1)
-                return density
-        
-        # Nằm ngoài bảng
-        if hu_value < conversion_table[0][0]:
-            return conversion_table[0][1]
+        # Lấy slice theo orientation
+        if orientation == self.AXIAL:  # Axial (z-plane)
+            if slice_index >= 0 and slice_index < self.volume_data.shape[0]:
+                slice_data = self.volume_data[slice_index, :, :]
+            else:
+                raise IndexError(f"Chỉ số lát cắt axial nằm ngoài phạm vi: {slice_index}. Phạm vi hợp lệ: 0-{self.volume_data.shape[0]-1}")
+        elif orientation == self.CORONAL:  # Coronal (y-plane)
+            if slice_index >= 0 and slice_index < self.volume_data.shape[1]:
+                slice_data = self.volume_data[:, slice_index, :]
+            else:
+                raise IndexError(f"Chỉ số lát cắt coronal nằm ngoài phạm vi: {slice_index}. Phạm vi hợp lệ: 0-{self.volume_data.shape[1]-1}")
+        elif orientation == self.SAGITTAL:  # Sagittal (x-plane)
+            if slice_index >= 0 and slice_index < self.volume_data.shape[2]:
+                slice_data = self.volume_data[:, :, slice_index]
+            else:
+                raise IndexError(f"Chỉ số lát cắt sagittal nằm ngoài phạm vi: {slice_index}. Phạm vi hợp lệ: 0-{self.volume_data.shape[2]-1}")
         else:
-            return conversion_table[-1][1]
+            raise ValueError(f"Orientation không hợp lệ: {orientation}. Sử dụng AXIAL(0), CORONAL(1), hoặc SAGITTAL(2).")
+            
+        # Áp dụng cửa sổ Hounsfield nếu là CT
+        if apply_window and self.image_type == 'CT':
+            slice_data = self.apply_window_level(slice_data, self.window_center, self.window_width)
+            
+        return slice_data
     
-    def get_hounsfield_range(self):
-        """Trả về phạm vi giá trị Hounsfield trong dữ liệu"""
+    def apply_window_level(self, image_data: np.ndarray, window_center: float, window_width: float) -> np.ndarray:
+        """
+        Áp dụng cửa sổ Hounsfield cho ảnh CT.
+        
+        Args:
+            image_data: Dữ liệu ảnh gốc
+            window_center: Trung tâm cửa sổ
+            window_width: Độ rộng cửa sổ
+            
+        Returns:
+            np.ndarray: Ảnh đã áp dụng cửa sổ, giá trị từ 0-255
+        """
+        # Tính toán min và max
+        min_value = window_center - window_width / 2
+        max_value = window_center + window_width / 2
+        
+        # Clip dữ liệu trong khoảng [min_value, max_value]
+        windowed = np.clip(image_data, min_value, max_value)
+        
+        # Chuyển đổi sang khoảng [0, 255]
+        if max_value != min_value:  # Tránh chia cho 0
+            windowed = ((windowed - min_value) / (max_value - min_value)) * 255.0
+        else:
+            windowed = np.zeros_like(image_data)
+            
+        return windowed.astype(np.uint8)
+    
+    def set_window_level(self, window_center: float, window_width: float):
+        """
+        Thiết lập thông số cửa sổ mới.
+        
+        Args:
+            window_center: Trung tâm cửa sổ mới
+            window_width: Độ rộng cửa sổ mới
+        """
+        self.window_center = window_center
+        self.window_width = window_width
+        logger.info(f"Đã thiết lập cửa sổ mới: C={window_center}, W={window_width}")
+    
+    def get_volume_shape(self) -> Tuple[int, int, int]:
+        """
+        Lấy kích thước thể tích dữ liệu.
+            
+        Returns:
+            Tuple[int, int, int]: Kích thước (depth, height, width)
+        """
+        if self.volume_data is None:
+            logger.error("Dữ liệu thể tích chưa được tải.")
+            raise ValueError("Dữ liệu thể tích chưa được tải.")
+        
+        return self.volume_data.shape
+    
+    def get_volume_center(self) -> Tuple[float, float, float]:
+        """
+        Lấy tọa độ tâm thể tích theo tọa độ DICOM (mm).
+        
+        Returns:
+            Tuple[float, float, float]: Tọa độ tâm (x, y, z) mm
+        """
+        if self.volume_data is None or self.origin is None or self.spacing is None:
+            logger.error("Dữ liệu thể tích hoặc thông tin không gian chưa được tải.")
+            raise ValueError("Dữ liệu không đầy đủ để tính tọa độ tâm.")
+            
+        shape = self.volume_data.shape  # (z, y, x)
+        
+        # Tính tọa độ tâm (mm) = origin + spacing * (shape / 2)
+        center_x = self.origin[0] + self.spacing[0] * shape[2] / 2
+        center_y = self.origin[1] + self.spacing[1] * shape[1] / 2
+        center_z = self.origin[2] + self.spacing[2] * shape[0] / 2
+        
+        return (center_x, center_y, center_z)
+    
+    def resample_volume(self, new_spacing: Tuple[float, float, float]) -> np.ndarray:
+        """
+        Resampling thể tích dữ liệu theo spacing mới.
+        
+        Args:
+            new_spacing: Khoảng cách mới (mm) theo trục (x, y, z)
+            
+        Returns:
+            np.ndarray: Thể tích đã được resampling
+        """
+        if self.volume_data is None or self.spacing is None:
+            logger.error("Dữ liệu thể tích hoặc thông tin không gian chưa được tải.")
+            raise ValueError("Dữ liệu không đầy đủ để thực hiện resampling.")
+            
+        # Tính tỷ lệ scaling
+        spacing_ratio = (
+            self.spacing[2] / new_spacing[0],  # x
+            self.spacing[1] / new_spacing[1],  # y
+            self.spacing[0] / new_spacing[2]   # z
+        )
+        
+        # Tính kích thước mới
+        new_shape = (
+            int(round(self.volume_data.shape[0] * spacing_ratio[2])),
+            int(round(self.volume_data.shape[1] * spacing_ratio[1])),
+            int(round(self.volume_data.shape[2] * spacing_ratio[0]))
+        )
+        
+        # Sử dụng scipy.ndimage.zoom để resampling
+        resampled_volume = zoom(self.volume_data, spacing_ratio, order=3)
+        
+        logger.info(f"Đã resampling thể tích từ {self.volume_data.shape} sang {resampled_volume.shape}")
+        
+        return resampled_volume
+    
+    def generate_mpr_views(self, slice_indices: Dict[str, int]) -> Dict[str, np.ndarray]:
+        """
+        Tạo các view MPR (Multiplanar Reconstruction) cho điểm hiện tại.
+        
+        Args:
+            slice_indices: Dict chứa chỉ số slice cho mỗi hướng {'axial': idx, 'coronal': idx, 'sagittal': idx}
+            
+        Returns:
+            Dict[str, np.ndarray]: Dict chứa các view {'axial': img, 'coronal': img, 'sagittal': img}
+        """
+        if not self.pixel_data_loaded:
+            raise ValueError("Dữ liệu ảnh chưa được tải.")
+            
+        result = {}
+            
+        # Lấy các lát cắt theo các hướng
+        if 'axial' in slice_indices:
+            result['axial'] = self.get_slice(slice_indices['axial'], orientation=self.AXIAL)
+            
+        if 'coronal' in slice_indices:
+            result['coronal'] = self.get_slice(slice_indices['coronal'], orientation=self.CORONAL)
+            
+        if 'sagittal' in slice_indices:
+            result['sagittal'] = self.get_slice(slice_indices['sagittal'], orientation=self.SAGITTAL)
+            
+        return result
+    
+    def get_hounsfield_value(self, x: int, y: int, z: int) -> float:
+        """
+        Lấy giá trị Hounsfield tại một điểm trong thể tích.
+        
+        Args:
+            x, y, z: Tọa độ điểm trong thể tích (voxel coordinates)
+            
+        Returns:
+            float: Giá trị Hounsfield
+        """
+        if self.volume_data is None:
+            raise ValueError("Dữ liệu thể tích chưa được tải.")
+            
+        if (0 <= z < self.volume_data.shape[0] and 
+            0 <= y < self.volume_data.shape[1] and 
+            0 <= x < self.volume_data.shape[2]):
+            return float(self.volume_data[z, y, x])
+        else:
+            raise IndexError("Tọa độ nằm ngoài phạm vi thể tích.")
+    
+    def export_to_nifti(self, output_path: str):
+        """
+        Xuất dữ liệu thể tích sang định dạng NIfTI.
+        
+        Args:
+            output_path: Đường dẫn đến file NIfTI xuất ra
+        """
         if self.image_series is None:
-            return None
-        
-        array = self.get_numpy_array()
-        return np.min(array), np.max(array)
+            raise ValueError("Dữ liệu ảnh chưa được tải.")
+            
+        sitk.WriteImage(self.image_series, output_path)
+        logger.info(f"Đã xuất dữ liệu thể tích sang file NIfTI: {output_path}")
     
-    def get_window_preset(self, preset="default"):
-        """Trả về các giá trị window level và width theo preset"""
-        presets = {
-            "default": (40, 400),        # Mặc định
-            "lung": (-600, 1500),        # Phổi
-            "bone": (400, 1800),         # Xương
-            "brain": (40, 80),           # Não
-            "soft_tissue": (50, 450),    # Mô mềm
-            "mediastinum": (50, 350)     # Trung thất
-        }
-        
-        return presets.get(preset.lower(), presets["default"])
-    
-    def find_rt_structure(self, directory):
-        """Tìm file RT Structure trong thư mục
+    def create_3d_rendering_data(self, threshold_min: Optional[float] = None, threshold_max: Optional[float] = None) -> np.ndarray:
+        """
+        Tạo dữ liệu cho việc dựng hình 3D từ thể tích hiện tại.
         
         Args:
-            directory: Thư mục cần tìm
+            threshold_min: Ngưỡng dưới (HU) cho dựng hình
+            threshold_max: Ngưỡng trên (HU) cho dựng hình
             
         Returns:
-            Đường dẫn đến file RT Structure nếu tìm thấy, None nếu không có
+            np.ndarray: Thể tích đã được áp dụng ngưỡng
         """
-        for root, _, files in os.walk(directory):
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
-                    if ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.3':  # RT Structure Set
-                        return file_path
-                except:
-                    continue
-        return None
-    
-    def load_rt_structure(self, file_path):
-        """Tải file RT Structure Set
+        if self.volume_data is None:
+            raise ValueError("Dữ liệu thể tích chưa được tải.")
+            
+        # Mặc định ngưỡng dựa vào loại ảnh
+        if threshold_min is None:
+            if self.image_type == 'CT':
+                threshold_min = 400  # Xương
+            else:
+                threshold_min = np.percentile(self.volume_data, 75)
+                
+        if threshold_max is None:
+            if self.image_type == 'CT':
+                threshold_max = 3000
+            else:
+                threshold_max = np.percentile(self.volume_data, 99)
         
-        Args:
-            file_path: Đường dẫn đến file RT Structure
-            
-        Returns:
-            Dictionary chứa thông tin các cấu trúc
-        """
-        try:
-            # Đọc file DICOM
-            ds = pydicom.dcmread(file_path)
-            
-            # Kiểm tra xem file có phải là RT Structure không
-            if ds.SOPClassUID != '1.2.840.10008.5.1.4.1.1.481.3':
-                print(f"File không phải RT Structure: {file_path}")
-                return None
-            
-            # Dictionary để lưu trữ thông tin các cấu trúc
-            structures = {}
-            
-            # Lặp qua các cấu trúc trong RT Structure
-            if hasattr(ds, 'StructureSetROISequence'):
-                for roi in ds.StructureSetROISequence:
-                    roi_number = roi.ROINumber
-                    roi_name = roi.ROIName
-                    
-                    # Khởi tạo cấu trúc
-                    structures[roi_name] = {
-                        'id': roi_number,
-                        'name': roi_name,
-                        'color': [1, 0, 0],  # Màu mặc định là đỏ
-                        'contour_data': []
-                    }
-            
-            # Lấy màu sắc và dữ liệu contour
-            if hasattr(ds, 'ROIContourSequence'):
-                for roi_contour in ds.ROIContourSequence:
-                    # Tìm thông tin ROI tương ứng
-                    roi_number = roi_contour.ReferencedROINumber
-                    
-                    # Tìm tên ROI từ ROI Number
-                    roi_name = None
-                    for structure_name, structure_data in structures.items():
-                        if structure_data['id'] == roi_number:
-                            roi_name = structure_name
-                            break
-                    
-                    if roi_name is None:
-                        continue
-                    
-                    # Lấy màu sắc nếu có
-                    if hasattr(roi_contour, 'ROIDisplayColor'):
-                        color = [float(c) / 255.0 for c in roi_contour.ROIDisplayColor]
-                        structures[roi_name]['color'] = color
-                    
-                    # Lấy dữ liệu contour
-                    if hasattr(roi_contour, 'ContourSequence'):
-                        for contour in roi_contour.ContourSequence:
-                            contour_data = {
-                                'points': [],
-                                'z': 0.0
-                            }
-                            
-                            # Lấy số điểm và dữ liệu điểm
-                            num_points = contour.NumberOfContourPoints
-                            contour_data_raw = contour.ContourData
-                            
-                            # Chia dữ liệu thành các điểm (x, y, z)
-                            for i in range(num_points):
-                                x = float(contour_data_raw[i*3])
-                                y = float(contour_data_raw[i*3 + 1])
-                                z = float(contour_data_raw[i*3 + 2])
-                                contour_data['points'].append([x, y, z])
-                                
-                            # Gán z-coordinate (thường là giống nhau cho tất cả các điểm trong một contour)
-                            if len(contour_data['points']) > 0:
-                                contour_data['z'] = contour_data['points'][0][2]
-                            
-                            # Thêm vào danh sách contour của cấu trúc
-                            structures[roi_name]['contour_data'].append(contour_data)
-            
-            return structures
-            
-        except Exception as e:
-            print(f"Lỗi khi tải RT Structure: {e}")
-            return None
-    
-    def find_rt_dose(self, directory):
-        """Tìm file RT Dose trong thư mục
+        # Áp dụng ngưỡng
+        thresholded_volume = np.clip(self.volume_data, threshold_min, threshold_max)
         
-        Args:
-            directory: Thư mục cần tìm
+        # Chuẩn hóa về khoảng [0, 1]
+        if threshold_max != threshold_min:
+            thresholded_volume = (thresholded_volume - threshold_min) / (threshold_max - threshold_min)
+        else:
+            thresholded_volume = np.zeros_like(self.volume_data)
             
-        Returns:
-            Đường dẫn đến file RT Dose nếu tìm thấy, None nếu không có
-        """
-        for root, _, files in os.walk(directory):
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    ds = pydicom.dcmread(file_path, stop_before_pixels=True)
-                    if ds.SOPClassUID == '1.2.840.10008.5.1.4.1.1.481.2':  # RT Dose
-                        return file_path
-                except:
-                    continue
-        return None
-    
-    def load_rt_dose(self, file_path):
-        """Tải file RT Dose
+        logger.info(f"Đã tạo dữ liệu cho dựng hình 3D với ngưỡng [{threshold_min}, {threshold_max}]")
         
-        Args:
-            file_path: Đường dẫn đến file RT Dose
-            
-        Returns:
-            Tuple (numpy_array, metadata): Mảng numpy chứa dữ liệu liều và metadata
-        """
-        try:
-            # Đọc file DICOM
-            ds = pydicom.dcmread(file_path)
-            
-            # Kiểm tra xem file có phải là RT Dose không
-            if ds.SOPClassUID != '1.2.840.10008.5.1.4.1.1.481.2':
-                print(f"File không phải RT Dose: {file_path}")
-                return None, None
-            
-            # Lấy dữ liệu pixel
-            dose_data = ds.pixel_array.astype(np.float32)
-            
-            # Áp dụng rescale slope và intercept nếu có
-            if hasattr(ds, 'DoseGridScaling'):
-                dose_data = dose_data * ds.DoseGridScaling
-            
-            # Thêm chiều nếu cần thiết
-            if len(dose_data.shape) == 2:
-                dose_data = dose_data.reshape(1, dose_data.shape[0], dose_data.shape[1])
-            
-            # Tạo metadata
-            metadata = {
-                'patient_name': getattr(ds, 'PatientName', None),
-                'patient_id': getattr(ds, 'PatientID', None),
-                'study_date': getattr(ds, 'StudyDate', None),
-                'dose_units': getattr(ds, 'DoseUnits', 'GY'),
-                'dose_type': getattr(ds, 'DoseType', None),
-                'dose_summation_type': getattr(ds, 'DoseSummationType', None),
-                'dose_comment': getattr(ds, 'DoseComment', None),
-                'grid_frame_offset_vector': getattr(ds, 'GridFrameOffsetVector', None),
-                'dose_grid_scaling': getattr(ds, 'DoseGridScaling', 1.0),
-                'dose_max': float(np.max(dose_data)) if dose_data is not None else 0,
-                'dose_min': float(np.min(dose_data)) if dose_data is not None else 0,
-                'position': getattr(ds, 'ImagePositionPatient', [0, 0, 0]),
-                'pixel_spacing': getattr(ds, 'PixelSpacing', [1, 1]),
-                'slice_thickness': getattr(ds, 'SliceThickness', 1),
-                'rows': getattr(ds, 'Rows', 0),
-                'columns': getattr(ds, 'Columns', 0)
-            }
-            
-            return dose_data, metadata
-            
-        except Exception as e:
-            print(f"Lỗi khi tải RT Dose: {e}")
-            return None, None
+        return thresholded_volume

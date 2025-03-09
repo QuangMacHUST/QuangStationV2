@@ -60,99 +60,181 @@ class SessionManager:
         }
     
     def _create_dicom_file(self, data, modality, directory, filename):
-        """Tạo file DICOM với metadata cơ bản"""
-        # Tạo file DICOM mới
-        file_meta = Dataset()
-        file_meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.3'  # RT Plan Storage
-        file_meta.MediaStorageSOPInstanceUID = generate_uid()
-        file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+        """
+        Tạo file DICOM với metadata cơ bản
         
-        # Tạo dataset
-        ds = FileDataset(filename, {}, file_meta=file_meta, preamble=b"\0" * 128)
+        Args:
+            data: Dữ liệu cần lưu
+            modality: Loại dữ liệu DICOM (RTPLAN, RTDOSE, ...)
+            directory: Thư mục lưu file
+            filename: Tên file (không bao gồm đuôi .dcm)
         
-        # Thêm các thẻ bắt buộc
-        ds.PatientID = self.current_patient_id
-        ds.PatientName = self.db.get_patient_info(self.current_patient_id).get('patient_name', 'Unknown')
-        ds.StudyInstanceUID = generate_uid()
-        ds.SeriesInstanceUID = generate_uid()
-        ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
-        ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
-        ds.Modality = modality
-        ds.InstanceCreationDate = datetime.datetime.now().strftime('%Y%m%d')
-        ds.InstanceCreationTime = datetime.datetime.now().strftime('%H%M%S')
-        
-        # Thêm dữ liệu vào thuộc tính riêng của chúng ta
-        ds.ContentDescription = f"{self.current_plan_id}_{filename}"
-        
-        # Lưu dữ liệu thực tế vào thuộc tính private tag
-        if isinstance(data, dict):
-            # Chuyển đổi dict thành chuỗi JSON
-            ds.add_new([0x0071, 0x0010], 'LO', 'JSON')
-            ds.add_new([0x0071, 0x1000], 'OB', str(data).encode('utf-8'))
-        elif isinstance(data, np.ndarray):
-            # Lưu mảng numpy
-            ds.add_new([0x0071, 0x0010], 'LO', 'NUMPY')
-            ds.add_new([0x0071, 0x1001], 'OB', data.tobytes())
-            ds.add_new([0x0071, 0x1002], 'LO', str(data.shape))
-            ds.add_new([0x0071, 0x1003], 'LO', str(data.dtype))
-        else:
-            # Lưu dữ liệu dưới dạng đã được chuyển thành chuỗi
-            ds.add_new([0x0071, 0x0010], 'LO', 'STRING')
-            ds.add_new([0x0071, 0x1004], 'OB', str(data).encode('utf-8'))
-        
-        # Lưu file
-        file_path = os.path.join(directory, f"{filename}.dcm")
-        ds.save_as(file_path)
-        
-        return file_path
+        Returns:
+            str: Đường dẫn đến file đã tạo
+        """
+        try:
+            # Tạo file DICOM mới
+            file_meta = Dataset()
+            file_meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.3'  # RT Plan Storage
+            file_meta.MediaStorageSOPInstanceUID = generate_uid()
+            file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+            
+            # Tạo dataset
+            ds = FileDataset(filename, {}, file_meta=file_meta, preamble=b"\0" * 128)
+            
+            # Thêm các thẻ bắt buộc
+            ds.PatientID = self.current_patient_id
+            
+            # Lấy thông tin bệnh nhân
+            patient_info = self.db.get_patient_info(self.current_patient_id)
+            if patient_info:
+                # Trích xuất tên bệnh nhân từ trường 'name'
+                patient_name = patient_info.get('name', 'Unknown')
+            else:
+                patient_name = 'Unknown'
+                
+            ds.PatientName = patient_name
+            ds.StudyInstanceUID = generate_uid()
+            ds.SeriesInstanceUID = generate_uid()
+            ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+            ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+            ds.Modality = modality
+            ds.InstanceCreationDate = datetime.datetime.now().strftime('%Y%m%d')
+            ds.InstanceCreationTime = datetime.datetime.now().strftime('%H%M%S')
+            
+            # Thêm dữ liệu vào thuộc tính riêng của chúng ta
+            ds.ContentDescription = f"{self.current_plan_id}_{filename}"
+            
+            # Lưu dữ liệu thực tế vào thuộc tính private tag
+            if isinstance(data, dict):
+                # Chuyển đổi dict thành chuỗi JSON
+                ds.add_new([0x0071, 0x0010], 'LO', 'JSON')
+                ds.add_new([0x0071, 0x1000], 'OB', str(data).encode('utf-8'))
+            elif isinstance(data, np.ndarray):
+                # Lưu mảng numpy
+                ds.add_new([0x0071, 0x0010], 'LO', 'NUMPY')
+                ds.add_new([0x0071, 0x1001], 'OB', data.tobytes())
+                ds.add_new([0x0071, 0x1002], 'LO', str(data.shape))
+                ds.add_new([0x0071, 0x1003], 'LO', str(data.dtype))
+            else:
+                # Lưu dữ liệu dưới dạng đã được chuyển thành chuỗi
+                ds.add_new([0x0071, 0x0010], 'LO', 'STRING')
+                ds.add_new([0x0071, 0x1000], 'OB', str(data).encode('utf-8'))
+            
+            # Đảm bảo thư mục tồn tại
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+            
+            # Lưu file DICOM
+            full_path = os.path.join(directory, f"{filename}.dcm")
+            ds.save_as(full_path)
+            
+            return full_path
+            
+        except Exception as error:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.error(f"Lỗi khi tạo file DICOM: {str(error)}", include_traceback=True)
+            raise ValueError(f"Không thể tạo file DICOM: {str(error)}")
     
     def _load_dicom_data(self, file_path):
-        """Đọc dữ liệu từ file DICOM"""
-        if not os.path.exists(file_path):
-            return None
+        """
+        Đọc dữ liệu từ file DICOM
         
-        ds = pydicom.dcmread(file_path)
-        data_type = ds[0x0071, 0x0010].value
-        
-        if data_type == 'JSON':
-            # Chuyển đổi dữ liệu JSON thành dict
-            json_str = ds[0x0071, 0x1000].value.decode('utf-8')
-            try:
-                # Cố gắng chuyển chuỗi Python thành dict
-                import ast
-                return ast.literal_eval(json_str)
-            except:
-                # Trả về dạng chuỗi nếu không thể chuyển đổi
-                return json_str
-        
-        elif data_type == 'NUMPY':
-            # Chuyển đổi dữ liệu thành mảng numpy
-            shape_str = ds[0x0071, 0x1002].value
-            dtype_str = ds[0x0071, 0x1003].value
+        Args:
+            file_path: Đường dẫn đến file DICOM
             
-            # Phân tích chuỗi shape và dtype
-            shape = tuple(map(int, shape_str.strip('()').split(',')))
-            if shape[-1] == '':  # Xử lý trường hợp shape = (n,)
-                shape = (shape[0],)
+        Returns:
+            Any: Dữ liệu được lưu trong file DICOM
+        """
+        try:
+            if not os.path.exists(file_path):
+                return None
+            
+            ds = pydicom.dcmread(file_path)
+            
+            # Kiểm tra xem có tag dữ liệu riêng hay không
+            if (0x0071, 0x0010) not in ds:
+                return None
                 
-            # Tạo lại mảng numpy
-            arr_bytes = ds[0x0071, 0x1001].value
-            arr = np.frombuffer(arr_bytes, dtype=np.dtype(dtype_str))
+            data_type = ds[0x0071, 0x0010].value
             
-            if len(shape) > 1:
-                arr = arr.reshape(shape)
+            if data_type == 'JSON':
+                # Chuyển đổi dữ liệu JSON thành dict
+                json_str = ds[0x0071, 0x1000].value.decode('utf-8')
+                try:
+                    # Cố gắng chuyển chuỗi Python thành dict
+                    import ast
+                    return ast.literal_eval(json_str)
+                except:
+                    # Trả về dạng chuỗi nếu không thể chuyển đổi
+                    return json_str
             
-            return arr
+            elif data_type == 'NUMPY':
+                # Chuyển đổi dữ liệu thành mảng numpy
+                shape_str = ds[0x0071, 0x1002].value
+                dtype_str = ds[0x0071, 0x1003].value
+                
+                # Phân tích chuỗi shape một cách an toàn
+                try:
+                    # Loại bỏ ngoặc và khoảng trắng
+                    clean_shape_str = shape_str.strip('() ')
+                    
+                    # Xử lý trường hợp shape có một phần tử
+                    if ',' not in clean_shape_str:
+                        shape = (int(clean_shape_str),)
+                    else:
+                        # Xử lý các trường hợp phức tạp
+                        parts = clean_shape_str.split(',')
+                        shape = tuple(int(p.strip()) for p in parts if p.strip())
+                        
+                        # Xử lý trường hợp phần tử cuối là dấu phẩy
+                        if shape_str.endswith(','):
+                            shape = shape + (1,)
+                except Exception as error:
+                    from quangstation.utils.logging import get_logger
+                    logger = get_logger()
+                    logger.error(f"Lỗi khi phân tích shape: {shape_str}, lỗi: {str(error)}")
+                    return None
+                
+                # Lấy dữ liệu mảng
+                arr_bytes = ds[0x0071, 0x1001].value
+                
+                try:
+                    # Tạo lại mảng numpy
+                    arr = np.frombuffer(arr_bytes, dtype=np.dtype(dtype_str))
+                    
+                    # Reshape nếu có nhiều hơn 1 phần tử
+                    if len(shape) > 1 or shape[0] > 1:
+                        arr = arr.reshape(shape)
+                    
+                    return arr
+                except Exception as error:
+                    from quangstation.utils.logging import get_logger
+                    logger = get_logger()
+                    logger.error(f"Lỗi khi tạo lại mảng numpy: {str(error)}")
+                    return None
+            
+            elif data_type == 'STRING':
+                # Đọc dữ liệu dạng chuỗi
+                string_data = ds[0x0071, 0x1000].value.decode('utf-8')
+                return string_data
+            
+            else:
+                from quangstation.utils.logging import get_logger
+                logger = get_logger()
+                logger.warning(f"Không xác định được kiểu dữ liệu: {data_type}")
+                return None
         
-        elif data_type == 'STRING':
-            # Chuyển đổi chuỗi thành dữ liệu gốc
-            data_str = ds[0x0071, 0x1004].value.decode('utf-8')
-            return data_str
-        
-        return None
+        except Exception as error:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.error(f"Lỗi khi đọc file DICOM {file_path}: {str(error)}")
+            return None
     
     def save_plan_metadata(self, metadata, plan_id=None, patient_id=None):
-        """Lưu metadata của kế hoạch xạ trị
+        """
+        Lưu metadata của kế hoạch xạ trị
         
         Args:
             metadata (dict): Thông tin metadata cần lưu
@@ -160,15 +242,17 @@ class SessionManager:
             patient_id (str, optional): ID của bệnh nhân. Nếu None, sẽ lấy từ metadata
         
         Returns:
-            bool: True nếu lưu thành công, False nếu thất bại
+            str: ID của kế hoạch nếu lưu thành công, None nếu thất bại
         """
         try:
             # Lấy patient_id và plan_id từ metadata nếu không được cung cấp
             if not patient_id:
-                patient_id = metadata.get('patient_id')
+                patient_id = metadata.get('patient_id', self.current_patient_id)
                 if not patient_id:
-                    print("Không tìm thấy patient_id trong metadata")
-                    return False
+                    from quangstation.utils.logging import get_logger
+                    logger = get_logger()
+                    logger.error("Không tìm thấy patient_id trong metadata và không được cung cấp")
+                    return None
             
             if not plan_id:
                 plan_id = metadata.get('plan_id')
@@ -179,32 +263,38 @@ class SessionManager:
                     plan_id = f"plan_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4())[:8]}"
                     metadata['plan_id'] = plan_id
             
-            # Đường dẫn đến thư mục của bệnh nhân
+            # Đảm bảo metadata chứa thông tin bệnh nhân
+            metadata['patient_id'] = patient_id
+            
+            # Tạo thư mục cho kế hoạch nếu chưa tồn tại
             patient_dir = os.path.join(self.workspace_dir, patient_id)
+            plan_dir = os.path.join(patient_dir, plan_id)
+            
             if not os.path.exists(patient_dir):
                 os.makedirs(patient_dir)
-            
-            # Đường dẫn đến thư mục của kế hoạch
-            plan_dir = os.path.join(patient_dir, plan_id)
             if not os.path.exists(plan_dir):
                 os.makedirs(plan_dir)
             
-            # Đường dẫn đến file metadata
+            # Lưu metadata dưới dạng JSON
             metadata_file = os.path.join(plan_dir, 'plan_metadata.json')
-            
-            # Thêm thời gian chỉnh sửa cuối cùng
-            metadata['last_modified'] = datetime.datetime.now().isoformat()
-            
-            # Lưu metadata dưới dạng file JSON
             with open(metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=4)
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
             
-            print(f"Đã lưu metadata kế hoạch tại: {metadata_file}")
-            return True
-        
-        except Exception as e:
-            print(f"Lỗi khi lưu metadata kế hoạch: {e}")
-            return False
+            # Cập nhật trạng thái hiện tại
+            self.current_patient_id = patient_id
+            self.current_plan_id = plan_id
+            
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.info(f"Đã lưu metadata kế hoạch: {plan_id}")
+            
+            return plan_id
+            
+        except Exception as error:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.error(f"Lỗi khi lưu metadata kế hoạch: {str(error)}")
+            return None
     
     def save_contours(self, contours_data):
         """Lưu dữ liệu contour dưới dạng DICOM"""
@@ -310,66 +400,83 @@ class SessionManager:
         return dcm_filename
     
     def load_session(self, patient_id, plan_id):
-        """Tải phiên làm việc từ các file DICOM"""
-        self.current_patient_id = patient_id
-        self.current_plan_id = plan_id
+        """Tải phiên làm việc từ thư mục workspace."""
+        try:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            
+            session_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+            
+            if not os.path.exists(session_dir):
+                logger.error(f"Không tìm thấy thư mục phiên: {session_dir}")
+                raise FileNotFoundError(f"Không tìm thấy phiên {plan_id} cho bệnh nhân {patient_id}")
+            
+            session_data = {}
+            
+            # Tải metadata kế hoạch
+            metadata_file = os.path.join(session_dir, 'plan_metadata.json')
+            if os.path.exists(metadata_file):
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    session_data['plan_metadata'] = json.load(f)
+            else:
+                logger.warning(f"Không tìm thấy file metadata: {metadata_file}")
+                session_data['plan_metadata'] = {}
+            
+            # Tải dữ liệu contour
+            contours_file = os.path.join(session_dir, 'contours.json')
+            if os.path.exists(contours_file):
+                with open(contours_file, 'r', encoding='utf-8') as f:
+                    session_data['contours'] = json.load(f)
+            else:
+                logger.warning(f"Không tìm thấy file contours: {contours_file}")
+                session_data['contours'] = {}
+            
+            # Tải beam settings
+            beam_file = os.path.join(session_dir, "beam_settings.dcm")
+            beam_settings = None
+            if os.path.exists(beam_file):
+                beam_settings = self._load_dicom_data(beam_file)
+            
+            # Tải dose data
+            dose_file = os.path.join(session_dir, "dose.dcm")
+            dose_data = None
+            if os.path.exists(dose_file):
+                dose_data = self._load_dicom_data(dose_file)
+            
+            # Tải dose metadata
+            dose_metadata_file = os.path.join(session_dir, "dose_metadata.dcm")
+            dose_metadata = None
+            if os.path.exists(dose_metadata_file):
+                dose_metadata = self._load_dicom_data(dose_metadata_file)
+            
+            # Tải DVH data
+            dvh_file = os.path.join(session_dir, "dvh.dcm")
+            dvh_data = None
+            if os.path.exists(dvh_file):
+                dvh_data = self._load_dicom_data(dvh_file)
+            
+            # Tải kết quả tối ưu hóa
+            opt_file = os.path.join(session_dir, "optimization_results.dcm")
+            optimization_results = None
+            if os.path.exists(opt_file):
+                optimization_results = self._load_dicom_data(opt_file)
+            
+            logger.info(f"Đã tải phiên {plan_id} cho bệnh nhân {patient_id}")
+            return {
+                'metadata': session_data['plan_metadata'],
+                'contours': session_data['contours'],
+                'beam_settings': beam_settings,
+                'dose_data': dose_data,
+                'dose_metadata': dose_metadata,
+                'dvh_data': dvh_data,
+                'optimization_results': optimization_results
+            }
         
-        # Kiểm tra xem phiên làm việc có tồn tại
-        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        if not os.path.exists(plan_dir):
-            raise FileNotFoundError(f"Không tìm thấy kế hoạch: {plan_id} cho bệnh nhân: {patient_id}")
-        
-        # Tải metadata
-        metadata_file = os.path.join(plan_dir, "metadata.dcm")
-        metadata = None
-        if os.path.exists(metadata_file):
-            metadata = self._load_dicom_data(metadata_file)
-        
-        # Tải contours
-        contours_file = os.path.join(plan_dir, "contours.dcm")
-        contours_data = None
-        if os.path.exists(contours_file):
-            contours_data = self._load_dicom_data(contours_file)
-        
-        # Tải beam settings
-        beam_file = os.path.join(plan_dir, "beam_settings.dcm")
-        beam_settings = None
-        if os.path.exists(beam_file):
-            beam_settings = self._load_dicom_data(beam_file)
-        
-        # Tải dose data
-        dose_file = os.path.join(plan_dir, "dose.dcm")
-        dose_data = None
-        if os.path.exists(dose_file):
-            dose_data = self._load_dicom_data(dose_file)
-        
-        # Tải dose metadata
-        dose_metadata_file = os.path.join(plan_dir, "dose_metadata.dcm")
-        dose_metadata = None
-        if os.path.exists(dose_metadata_file):
-            dose_metadata = self._load_dicom_data(dose_metadata_file)
-        
-        # Tải DVH data
-        dvh_file = os.path.join(plan_dir, "dvh.dcm")
-        dvh_data = None
-        if os.path.exists(dvh_file):
-            dvh_data = self._load_dicom_data(dvh_file)
-        
-        # Tải kết quả tối ưu hóa
-        opt_file = os.path.join(plan_dir, "optimization_results.dcm")
-        optimization_results = None
-        if os.path.exists(opt_file):
-            optimization_results = self._load_dicom_data(opt_file)
-        
-        return {
-            'metadata': metadata,
-            'contours': contours_data,
-            'beam_settings': beam_settings,
-            'dose_data': dose_data,
-            'dose_metadata': dose_metadata,
-            'dvh_data': dvh_data,
-            'optimization_results': optimization_results
-        }
+        except Exception as error:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.error(f"Lỗi khi tải phiên: {str(error)}", include_traceback=True)
+            raise
     
     def list_patients(self):
         """Liệt kê danh sách bệnh nhân"""
@@ -444,7 +551,7 @@ class SessionManager:
                 self.current_plan_id = None
             
             return True
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi xóa kế hoạch: {e}")
             return False
     
@@ -480,60 +587,83 @@ class SessionManager:
         return True
     
     def duplicate_plan(self, patient_id, plan_id, new_plan_name=None):
-        """Tạo bản sao của một kế hoạch"""
-        # Tạo phiên làm việc mới
-        self.create_new_session(patient_id)
-        new_plan_id = self.current_plan_id
+        """
+        Tạo bản sao của một kế hoạch
         
-        # Đường dẫn đến kế hoạch nguồn và đích
-        source_plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        target_plan_dir = os.path.join(self.workspace_dir, patient_id, new_plan_id)
-        
-        if not os.path.exists(source_plan_dir):
-            raise FileNotFoundError(f"Không tìm thấy kế hoạch nguồn: {plan_id}")
-        
-        # Sao chép các file từ kế hoạch nguồn sang kế hoạch đích
-        for item in os.listdir(source_plan_dir):
-            src_path = os.path.join(source_plan_dir, item)
-            dst_path = os.path.join(target_plan_dir, item)
+        Args:
+            patient_id (str): ID của bệnh nhân
+            plan_id (str): ID của kế hoạch cần sao chép
+            new_plan_name (str, optional): Tên mới cho bản sao kế hoạch
             
-            if os.path.isfile(src_path):
-                shutil.copy2(src_path, dst_path)
-            elif os.path.isdir(src_path):
-                # Sao chép thư mục con (như screenshots)
-                if not os.path.exists(dst_path):
-                    os.makedirs(dst_path)
+        Returns:
+            str: ID của kế hoạch mới nếu thành công, None nếu thất bại
+        """
+        try:
+            # Tạo phiên làm việc mới
+            self.create_new_session(patient_id)
+            new_plan_id = self.current_plan_id
+            
+            # Đường dẫn đến kế hoạch nguồn và đích
+            source_plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+            target_plan_dir = os.path.join(self.workspace_dir, patient_id, new_plan_id)
+            
+            if not os.path.exists(source_plan_dir):
+                raise FileNotFoundError(f"Không tìm thấy kế hoạch nguồn: {plan_id}")
+            
+            # Sao chép các file từ kế hoạch nguồn sang kế hoạch đích
+            for item in os.listdir(source_plan_dir):
+                src_path = os.path.join(source_plan_dir, item)
+                dst_path = os.path.join(target_plan_dir, item)
                 
-                for subitem in os.listdir(src_path):
-                    src_subitem = os.path.join(src_path, subitem)
-                    dst_subitem = os.path.join(dst_path, subitem)
-                    if os.path.isfile(src_subitem):
-                        shutil.copy2(src_subitem, dst_subitem)
-        
-        # Cập nhật metadata nếu có
-        metadata_file = os.path.join(target_plan_dir, "metadata.dcm")
-        if os.path.exists(metadata_file):
-            metadata = self._load_dicom_data(metadata_file)
+                if os.path.isfile(src_path):
+                    shutil.copy2(src_path, dst_path)
+                elif os.path.isdir(src_path):
+                    # Sao chép thư mục con (như screenshots)
+                    if not os.path.exists(dst_path):
+                        os.makedirs(dst_path)
+                    
+                    for file_item in os.listdir(src_path):
+                        src_file = os.path.join(src_path, file_item)
+                        dst_file = os.path.join(dst_path, file_item)
+                        if os.path.isfile(src_file):
+                            shutil.copy2(src_file, dst_file)
             
-            # Cập nhật tên kế hoạch nếu được chỉ định
-            if metadata is not None:
+            # Cập nhật metadata
+            metadata_json_file = os.path.join(target_plan_dir, "plan_metadata.json")
+            if os.path.exists(metadata_json_file):
+                # Đọc metadata
+                with open(metadata_json_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
+                # Cập nhật thông tin
+                metadata['plan_id'] = new_plan_id
+                
+                # Cập nhật tên kế hoạch nếu được cung cấp
                 if new_plan_name:
                     metadata['plan_name'] = new_plan_name
                 else:
-                    metadata['plan_name'] = f"Copy of {metadata.get('plan_name', 'Unknown Plan')}"
+                    # Mặc định thêm "- Bản sao" vào tên
+                    metadata['plan_name'] = metadata.get('plan_name', 'Kế hoạch') + " - Bản sao"
                 
-                # Cập nhật thời gian
-                metadata['created_at'] = datetime.datetime.now().isoformat()
-                metadata['modified_at'] = metadata['created_at']
+                # Cập nhật thời gian sửa đổi
+                metadata['modified_at'] = datetime.datetime.now().isoformat()
                 
-                # Lưu metadata đã cập nhật
-                self._create_dicom_file(metadata, 'RTPLAN', target_plan_dir, "metadata")
-        
-        return {
-            'patient_id': patient_id,
-            'plan_id': new_plan_id,
-            'plan_name': new_plan_name or f"Copy of {plan_id}"
-        }
+                # Ghi lại metadata
+                with open(metadata_json_file, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+            
+            # Ghi log
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.info(f"Đã sao chép kế hoạch {plan_id} thành kế hoạch mới {new_plan_id}")
+            
+            return new_plan_id
+            
+        except Exception as error:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger()
+            logger.error(f"Lỗi khi sao chép kế hoạch: {str(error)}", include_traceback=True)
+            return None
     
     def backup_workspace(self, backup_dir):
         """Sao lưu toàn bộ workspace"""
@@ -590,36 +720,31 @@ class SessionManager:
         if not os.path.exists(plan_dir):
             raise FileNotFoundError(f"Không tìm thấy kế hoạch: {plan_id}")
         
-        # Tải metadata
+        # Tải metadata từ file JSON (định dạng mới)
+        metadata_json_file = os.path.join(plan_dir, "plan_metadata.json")
+        if os.path.exists(metadata_json_file):
+            try:
+                with open(metadata_json_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as error:
+                from quangstation.utils.logging import get_logger
+                logger = get_logger()
+                logger.error(f"Lỗi khi đọc plan_metadata.json: {str(error)}")
+        
+        # Thử tải metadata từ DICOM (định dạng cũ)
         metadata_file = os.path.join(plan_dir, "metadata.dcm")
-        metadata = None
         if os.path.exists(metadata_file):
-            metadata = self._load_dicom_data(metadata_file)
+            try:
+                return self._load_dicom_data(metadata_file)
+            except Exception as error:
+                from quangstation.utils.logging import get_logger
+                logger = get_logger()
+                logger.error(f"Lỗi khi đọc metadata.dcm: {str(error)}")
         
-        # Tải beam settings
-        beam_file = os.path.join(plan_dir, "beam_settings.dcm")
-        beam_settings = None
-        if os.path.exists(beam_file):
-            beam_settings = self._load_dicom_data(beam_file)
-        
-        # Tải DVH data
-        dvh_file = os.path.join(plan_dir, "dvh.dcm")
-        dvh_data = None
-        if os.path.exists(dvh_file):
-            dvh_data = self._load_dicom_data(dvh_file)
-        
-        # Tạo summary
-        summary = {
-            'patient_id': patient_id,
-            'plan_id': plan_id,
-            'plan_name': metadata.get('plan_name', 'Unknown') if metadata else 'Unknown',
-            'created_at': metadata.get('created_at', 'Unknown') if metadata else 'Unknown',
-            'modified_at': metadata.get('modified_at', 'Unknown') if metadata else 'Unknown',
-            'technique': metadata.get('technique', 'Unknown') if metadata else 'Unknown',
-            'total_dose': metadata.get('total_dose', 0) if metadata else 0,
-            'fraction_count': metadata.get('fraction_count', 0) if metadata else 0,
-            'beam_count': len(beam_settings.get('beams', [])) if beam_settings else 0,
-            'structures': list(dvh_data.keys()) if dvh_data else []
+        # Nếu không tìm thấy metadata, trả về thông tin tối thiểu
+        return {
+            "plan_id": plan_id,
+            "patient_id": patient_id,
+            "plan_name": "Không rõ tên",
+            "created_at": os.path.getctime(plan_dir)
         }
-        
-        return summary

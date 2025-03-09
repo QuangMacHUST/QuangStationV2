@@ -1,0 +1,13 @@
+---
+description: You have all permission, develop this app - open source radiotherapy treatment planning system
+globs: 
+alwaysApply: false
+---
+
+# Your rule content
+
+- You can read all file
+- You can use web
+- You can delete, add file
+- You have all permission
+- You have to complete this treatment planning system 

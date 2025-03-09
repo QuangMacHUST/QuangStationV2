@@ -57,16 +57,14 @@ class PlanComparison:
             plan_id: ID của kế hoạch
             plan_data: Dữ liệu kế hoạch
         """
-        # Kiểm tra dữ liệu kế hoạch
-        required_keys = ["dose_matrix", "structures", "prescription_dose"]
-        for key in required_keys:
-            if key not in plan_data:
-                self.logger.log_error(f"Dữ liệu kế hoạch thiếu thông tin: {key}")
-                return False
-        
-        # Thêm kế hoạch
+        # Kiểm tra dữ liệu kế hoạch có đầy đủ không
+        for key in ["dose_data", "dvh_data", "structures"]:
+            if key not in plan_data or not plan_data[key]:
+                self.logger.error(f"Dữ liệu kế hoạch thiếu thông tin: {key}")
+                raise ValueError(f"Dữ liệu kế hoạch thiếu thông tin: {key}")
+                    
         self.plans[plan_id] = plan_data
-        self.logger.log_info(f"Đã thêm kế hoạch: {plan_id}")
+        self.logger.info(f"Đã thêm kế hoạch: {plan_id}")
         
         # Cập nhật cấu trúc chung
         structures = set(plan_data["structures"].keys())
@@ -89,7 +87,7 @@ class PlanComparison:
         """
         if plan_id in self.plans:
             del self.plans[plan_id]
-            self.logger.log_info(f"Đã xóa kế hoạch: {plan_id}")
+            self.logger.info(f"Đã xóa kế hoạch: {plan_id}")
             
             # Cập nhật lại cấu trúc chung
             if self.plans:
@@ -99,7 +97,7 @@ class PlanComparison:
             
             return True
         else:
-            self.logger.log_warning(f"Không tìm thấy kế hoạch: {plan_id}")
+            self.logger.warning(f"Không tìm thấy kế hoạch: {plan_id}")
             return False
     
     def compare_dvhs(self, structure_name: str, normalization: str = "prescription") -> Tuple[plt.Figure, Dict]:
@@ -113,9 +111,11 @@ class PlanComparison:
         Returns:
             Figure và dữ liệu DVH
         """
-        if structure_name not in self.common_structures:
-            self.logger.log_warning(f"Cấu trúc {structure_name} không có trong tất cả các kế hoạch")
-            return plt.figure(), {}
+        # Kiểm tra xem structure_name có trong tất cả các plans không
+        for plan_id, plan_data in self.plans.items():
+            if structure_name not in plan_data["structures"]:
+                self.logger.warning(f"Cấu trúc {structure_name} không có trong tất cả các kế hoạch")
+                return plt.figure(), {}
         
         # Tạo hình
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -147,7 +147,7 @@ class PlanComparison:
             dose_in_structure = normalized_dose[structure_mask > 0]
             
             if len(dose_in_structure) == 0:
-                self.logger.log_warning(f"Không có dữ liệu liều trong cấu trúc {structure_name} cho kế hoạch {plan_id}")
+                self.logger.warning(f"Không có dữ liệu liều trong cấu trúc {structure_name} cho kế hoạch {plan_id}")
                 continue
             
             # Sắp xếp giá trị liều
@@ -204,14 +204,14 @@ class PlanComparison:
         structures_to_compare = [structure_name] if structure_name else self.common_structures
         
         if not structures_to_compare:
-            self.logger.log_warning("Không có cấu trúc chung giữa các kế hoạch")
+            self.logger.warning("Không có cấu trúc chung giữa các kế hoạch")
             return pd.DataFrame()
         
         results = []
         
         for structure in structures_to_compare:
             if structure not in self.common_structures:
-                self.logger.log_warning(f"Cấu trúc {structure} không có trong tất cả các kế hoạch")
+                self.logger.warning(f"Cấu trúc {structure} không có trong tất cả các kế hoạch")
                 continue
             
             structure_metrics = {"Structure": structure}
@@ -229,7 +229,7 @@ class PlanComparison:
                 dose_in_structure = normalized_dose[structure_mask > 0]
                 
                 if len(dose_in_structure) == 0:
-                    self.logger.log_warning(f"Không có dữ liệu liều trong cấu trúc {structure} cho kế hoạch {plan_id}")
+                    self.logger.warning(f"Không có dữ liệu liều trong cấu trúc {structure} cho kế hoạch {plan_id}")
                     continue
                 
                 # Tính các chỉ số liều
@@ -296,14 +296,14 @@ class PlanComparison:
         structures_to_compare = structure_list if structure_list else self.common_structures
         
         if not structures_to_compare:
-            self.logger.log_warning("Không có cấu trúc chung giữa các kế hoạch")
+            self.logger.warning("Không có cấu trúc chung giữa các kế hoạch")
             return pd.DataFrame()
         
         results = []
         
         for structure in structures_to_compare:
             if structure not in self.common_structures:
-                self.logger.log_warning(f"Cấu trúc {structure} không có trong tất cả các kế hoạch")
+                self.logger.warning(f"Cấu trúc {structure} không có trong tất cả các kế hoạch")
                 continue
             
             # Lấy giá trị α/β
@@ -325,7 +325,7 @@ class PlanComparison:
                 dose_in_structure = dose_matrix[structure_mask > 0]
                 
                 if len(dose_in_structure) == 0:
-                    self.logger.log_warning(f"Không có dữ liệu liều trong cấu trúc {structure} cho kế hoạch {plan_id}")
+                    self.logger.warning(f"Không có dữ liệu liều trong cấu trúc {structure} cho kế hoạch {plan_id}")
                     continue
                 
                 # Tính liều trung bình
@@ -397,16 +397,13 @@ class PlanComparison:
             Dictionary chứa kết quả so sánh và đường dẫn file
         """
         if not self.plans:
-            self.logger.log_warning("Không có kế hoạch nào để so sánh")
+            self.logger.warning("Không có kế hoạch nào để so sánh")
             return {}
         
-        # Xác định kế hoạch cơ sở
-        if not base_plan_id:
-            base_plan_id = list(self.plans.keys())[0]
-        
-        if base_plan_id not in self.plans:
-            self.logger.log_warning(f"Không tìm thấy kế hoạch cơ sở: {base_plan_id}")
-            base_plan_id = list(self.plans.keys())[0]
+        # Kiểm tra base_plan_id có tồn tại không
+        if base_plan_id and base_plan_id not in self.plans:
+            self.logger.warning(f"Không tìm thấy kế hoạch cơ sở: {base_plan_id}")
+            return {}
         
         # Tạo thư mục đầu ra nếu cần
         if output_dir:
@@ -476,7 +473,7 @@ class PlanComparison:
             Dictionary các tiêu chí và kế hoạch tốt nhất tương ứng
         """
         if not self.plans:
-            self.logger.log_warning("Không có kế hoạch nào để so sánh")
+            self.logger.warning("Không có kế hoạch nào để so sánh")
             return {}
         
         # Lấy dữ liệu chỉ số

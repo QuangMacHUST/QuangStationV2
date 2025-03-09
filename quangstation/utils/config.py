@@ -113,8 +113,8 @@ class GlobalConfig:
                     json.dump(config, f, indent=4, ensure_ascii=False)
             
             return config
-        except Exception as e:
-            logging.error(f"Lỗi khi tải cấu hình: {str(e)}")
+        except Exception as error:
+            logging.error(f"Lỗi khi tải cấu hình: {str(error)}")
             return self._default_config.copy()
     
     def _merge_configs(self, default_config: Dict, user_config: Dict) -> Dict:
@@ -192,8 +192,8 @@ class GlobalConfig:
             self.save()
             
             return True
-        except Exception as e:
-            logging.error(f"Lỗi khi đặt cấu hình {key_path}: {str(e)}")
+        except Exception as error:
+            logging.error(f"Lỗi khi đặt cấu hình {key_path}: {str(error)}")
             return False
     
     def save(self) -> bool:
@@ -207,8 +207,8 @@ class GlobalConfig:
             with open(self._config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True
-        except Exception as e:
-            logging.error(f"Lỗi khi lưu cấu hình: {str(e)}")
+        except Exception as error:
+            logging.error(f"Lỗi khi lưu cấu hình: {str(error)}")
             return False
     
     def reset_to_default(self) -> bool:
@@ -223,8 +223,8 @@ class GlobalConfig:
             self.save()
             self._ensure_directories()
             return True
-        except Exception as e:
-            logging.error(f"Lỗi khi đặt lại cấu hình: {str(e)}")
+        except Exception as error:
+            logging.error(f"Lỗi khi đặt lại cấu hình: {str(error)}")
             return False
     
     def validate_config(self) -> List[str]:
@@ -270,8 +270,8 @@ class GlobalConfig:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True
-        except Exception as e:
-            logging.error(f"Lỗi khi xuất cấu hình: {str(e)}")
+        except Exception as error:
+            logging.error(f"Lỗi khi xuất cấu hình: {str(error)}")
             return False
     
     def import_config(self, file_path: str) -> bool:
@@ -298,8 +298,8 @@ class GlobalConfig:
             self._ensure_directories()
             
             return True
-        except Exception as e:
-            logging.error(f"Lỗi khi nhập cấu hình: {str(e)}")
+        except Exception as error:
+            logging.error(f"Lỗi khi nhập cấu hình: {str(error)}")
             return False
 
 # Tạo instance toàn cục

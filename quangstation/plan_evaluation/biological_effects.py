@@ -80,20 +80,22 @@ class BiologicalEffectsCalculator:
         """
         # Kiểm tra đầu vào
         if dose <= 0:
-            self.logger.log_warning("Liều không hợp lệ")
-            return 0
+            result = 0
+            self.logger.warning("Liều không hợp lệ")
+            return result
         
         if fractions <= 0:
-            self.logger.log_warning("Số phân liều không hợp lệ")
-            return 0
+            result = dose
+            self.logger.warning("Số phân liều không hợp lệ")
+            return result
         
-        # Xác định α/β
+        # Nếu không có alpha_beta, sử dụng giá trị mặc định
         if alpha_beta is None:
             if structure_name and structure_name.upper() in self.default_alphabeta_values:
                 alpha_beta = self.default_alphabeta_values[structure_name.upper()]
             else:
                 alpha_beta = 10.0  # Giá trị mặc định cho khối u
-                self.logger.log_warning(f"Sử dụng α/β mặc định: {alpha_beta} Gy")
+                self.logger.warning(f"Sử dụng α/β mặc định: {alpha_beta} Gy")
         
         # Tính liều mỗi phân liều
         dose_per_fraction = dose / fractions
@@ -129,20 +131,22 @@ class BiologicalEffectsCalculator:
         """
         # Kiểm tra đầu vào
         if dose <= 0:
-            self.logger.log_warning("Liều không hợp lệ")
-            return 0
+            result = 0
+            self.logger.warning("Liều không hợp lệ")
+            return result
         
         if fractions <= 0:
-            self.logger.log_warning("Số phân liều không hợp lệ")
-            return 0
+            result = dose
+            self.logger.warning("Số phân liều không hợp lệ")
+            return result
         
-        # Xác định α/β
+        # Nếu không có alpha_beta, sử dụng giá trị mặc định
         if alpha_beta is None:
             if structure_name and structure_name.upper() in self.default_alphabeta_values:
                 alpha_beta = self.default_alphabeta_values[structure_name.upper()]
             else:
                 alpha_beta = 10.0  # Giá trị mặc định cho khối u
-                self.logger.log_warning(f"Sử dụng α/β mặc định: {alpha_beta} Gy")
+                self.logger.warning(f"Sử dụng α/β mặc định: {alpha_beta} Gy")
         
         # Tính liều mỗi phân liều
         dose_per_fraction = dose / fractions
@@ -169,7 +173,7 @@ class BiologicalEffectsCalculator:
         """
         # Kiểm tra đầu vào
         if fractions <= 0:
-            self.logger.log_warning("Số phân liều không hợp lệ")
+            self.logger.warning("Số phân liều không hợp lệ")
             return np.zeros_like(dose_matrix)
         
         # Tính liều mỗi phân liều
@@ -197,7 +201,7 @@ class BiologicalEffectsCalculator:
         """
         # Kiểm tra đầu vào
         if fractions <= 0:
-            self.logger.log_warning("Số phân liều không hợp lệ")
+            self.logger.warning("Số phân liều không hợp lệ")
             return np.zeros_like(dose_matrix)
         
         # Tính liều mỗi phân liều
@@ -303,7 +307,7 @@ class BiologicalEffectsCalculator:
                 alpha_beta = self.default_alphabeta_values[structure_name.upper()]
             else:
                 alpha_beta = 10.0  # Giá trị mặc định cho khối u
-                self.logger.log_warning(f"Sử dụng α/β mặc định: {alpha_beta} Gy")
+                self.logger.warning(f"Sử dụng α/β mặc định: {alpha_beta} Gy")
         
         # Tính tổng BED
         total_bed = 0
@@ -432,8 +436,8 @@ class BiologicalEffectsCalculator:
             
             return fig
             
-        except Exception as e:
-            self.logger.log_error(f"Lỗi khi tạo biểu đồ phân liều: {str(e)}")
+        except Exception as error:
+            self.logger.error(f"Lỗi khi tạo biểu đồ phân liều: {str(error)}")
             return plt.figure()
     
     def create_summary_table(self, 
@@ -476,18 +480,27 @@ class BiologicalEffectsCalculator:
             
             # Lưu file nếu cần
             if output_file:
-                if output_file.endswith('.csv'):
-                    df.to_csv(output_file, index=False)
-                elif output_file.endswith('.xlsx'):
-                    df.to_excel(output_file, index=False)
-                else:
-                    self.logger.log_warning(f"Không hỗ trợ định dạng file: {output_file}")
+                if not output_file.endswith(('.csv', '.xlsx', '.html')):
+                    self.logger.warning(f"Không hỗ trợ định dạng file: {output_file}")
+                    output_file += '.csv'
+                
+                try:
+                    if output_file.endswith('.csv'):
+                        df.to_csv(output_file, index=False)
+                    elif output_file.endswith('.xlsx'):
+                        df.to_excel(output_file, index=False)
+                    else:
+                        self.logger.warning(f"Không hỗ trợ định dạng file: {output_file}")
+                
+                except Exception as error:
+                    self.logger.error(f"Lỗi khi tạo bảng tóm tắt: {str(error)}")
+                    return None
             
             return df
             
-        except Exception as e:
-            self.logger.log_error(f"Lỗi khi tạo bảng tóm tắt: {str(e)}")
-            return pd.DataFrame()
+        except Exception as error:
+            self.logger.error(f"Lỗi khi tạo bảng tóm tắt: {str(error)}")
+            return None
 
 # Tạo instance mặc định
 biological_calculator = BiologicalEffectsCalculator() 

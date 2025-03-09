@@ -236,36 +236,189 @@ class PlanOptimizer:
         Tối ưu hóa sử dụng triển khai Python thuần túy
         
         Returns:
-            Danh sách trọng số chùm tia tối ưu
+            List[float]: Danh sách trọng số chùm tia tối ưu
         """
-        # Triển khai thuật toán tối ưu hóa đơn giản bằng Python
-        # Đây chỉ là phiên bản giả để minh họa và dự phòng
-        
+        # Đảm bảo logger được import đúng cách
         from quangstation.utils.logging import get_logger
         logger = get_logger("Optimization")
-        logger.log_warning("Sử dụng triển khai Python thuần túy cho tối ưu hóa. Hiệu suất sẽ thấp hơn.")
+        logger.info("Bắt đầu tối ưu hóa với phiên bản Python thuần túy")
+        
+        # Khởi tạo hẹn giờ để đo thời gian tối ưu hóa
+        import time
+        start_time = time.time()
         
         # Khởi tạo trọng số chùm tia ngẫu nhiên
         import random
-        weights = [random.random() for _ in range(len(self.dose_matrices))]
+        import numpy as np
+        
+        # Khởi tạo trọng số với giá trị nhỏ ngẫu nhiên 
+        weights = [random.uniform(0.1, 1.0) for _ in range(len(self.dose_matrices))]
         
         # Chuẩn hóa trọng số
         total = sum(weights)
         weights = [w / total for w in weights]
         
-        # Giả lập quá trình tối ưu
-        self.objective_values = [100.0]  # Giá trị ban đầu
+        logger.info(f"Khởi tạo ngẫu nhiên {len(weights)} trọng số chùm tia")
         
-        for i in range(self.max_iterations):
-            # Giả lập cải thiện mục tiêu
-            improvement = (self.max_iterations - i) / self.max_iterations * 10.0
-            self.objective_values.append(self.objective_values[-1] - improvement)
+        # Tạo ma trận liều tổng
+        total_dose = np.zeros_like(self.dose_matrices[0])
+        for i, dose_matrix in enumerate(self.dose_matrices):
+            total_dose += weights[i] * dose_matrix
+        
+        # Chuẩn bị các hàm đánh giá mục tiêu
+        def calculate_objective(dose_matrix, objective):
+            """Tính giá trị mục tiêu từ ma trận liều"""
+            structure_name = objective['structure_name']
+            obj_type = objective['type']
+            target_dose = objective['dose']
+            volume = objective.get('volume', None)
+            weight = objective.get('weight', 1.0)
+            
+            # Lấy cấu trúc
+            if structure_name not in self.structures:
+                logger.warning(f"Cấu trúc {structure_name} không tồn tại")
+                return 0.0
+            
+            structure_mask = self.structures[structure_name]
+            
+            # Lấy liều trong cấu trúc
+            structure_dose = dose_matrix[structure_mask]
+            
+            if len(structure_dose) == 0:
+                logger.warning(f"Cấu trúc {structure_name} không có voxel nào")
+                return 0.0
+            
+            # Tính giá trị mục tiêu
+            if obj_type == 'MAX_DOSE':
+                # Phạt khi liều tối đa vượt quá giới hạn
+                max_dose = np.max(structure_dose)
+                if max_dose > target_dose:
+                    return weight * ((max_dose - target_dose) / target_dose) ** 2
+                return 0.0
+                
+            elif obj_type == 'MIN_DOSE':
+                # Phạt khi liều tối thiểu dưới mức
+                min_dose = np.min(structure_dose)
+                if min_dose < target_dose:
+                    return weight * ((target_dose - min_dose) / target_dose) ** 2
+                return 0.0
+                
+            elif obj_type == 'MEAN_DOSE':
+                # Phạt khi liều trung bình khác mục tiêu
+                mean_dose = np.mean(structure_dose)
+                return weight * ((mean_dose - target_dose) / target_dose) ** 2
+                
+            elif obj_type == 'MAX_DVH':
+                # Phạt khi phần trăm thể tích vượt quá liều
+                if volume is None:
+                    logger.warning(f"Thiếu thông số volume cho mục tiêu MAX_DVH của {structure_name}")
+                    return 0.0
+                    
+                # Tính phần trăm thể tích vượt quá liều
+                vol_over_dose = np.sum(structure_dose > target_dose) / len(structure_dose) * 100
+                if vol_over_dose > volume:
+                    return weight * ((vol_over_dose - volume) / volume) ** 2
+                return 0.0
+                
+            elif obj_type == 'MIN_DVH':
+                # Phạt khi phần trăm thể tích dưới liều
+                if volume is None:
+                    logger.warning(f"Thiếu thông số volume cho mục tiêu MIN_DVH của {structure_name}")
+                    return 0.0
+                    
+                # Tính phần trăm thể tích dưới liều
+                vol_under_dose = np.sum(structure_dose < target_dose) / len(structure_dose) * 100
+                if vol_under_dose > (100 - volume):
+                    return weight * ((vol_under_dose - (100 - volume)) / (100 - volume)) ** 2
+                return 0.0
+                
+            else:
+                logger.warning(f"Loại mục tiêu không hỗ trợ: {obj_type}")
+                return 0.0
+        
+        # Khởi tạo giá trị hàm mục tiêu
+        self.objective_values = []
+        
+        # Hàm tính tổng giá trị mục tiêu
+        def calculate_total_objective(w):
+            # Tính ma trận liều tổng với trọng số mới
+            dose = np.zeros_like(self.dose_matrices[0])
+            for i, dose_matrix in enumerate(self.dose_matrices):
+                dose += w[i] * dose_matrix
+                
+            # Tính tổng các giá trị mục tiêu
+            total = 0.0
+            for objective in self.objectives:
+                total += calculate_objective(dose, objective)
+                
+            return total
+        
+        # Tính giá trị hàm mục tiêu ban đầu
+        current_objective = calculate_total_objective(weights)
+        self.objective_values.append(current_objective)
+        
+        logger.info(f"Giá trị hàm mục tiêu ban đầu: {current_objective:.6f}")
+        
+        # Tối ưu bằng thuật toán Gradient Descent đơn giản
+        for iteration in range(self.max_iterations):
+            # Tính gradient
+            gradients = []
+            for i in range(len(weights)):
+                # Tính đạo hàm riêng theo trọng số i bằng phương pháp sai phân
+                delta = 0.001  # Bước nhỏ để tính đạo hàm
+                w_plus = weights.copy()
+                w_plus[i] += delta
+                
+                # Chuẩn hóa lại
+                w_plus_sum = sum(w_plus)
+                w_plus = [w / w_plus_sum for w in w_plus]
+                
+                # Tính giá trị hàm mục tiêu với trọng số mới
+                obj_plus = calculate_total_objective(w_plus)
+                
+                # Tính gradient
+                gradient = (obj_plus - current_objective) / delta
+                gradients.append(gradient)
+            
+            # Cập nhật trọng số theo gradient
+            new_weights = []
+            for i, w in enumerate(weights):
+                # Cập nhật theo hướng giảm gradient
+                new_w = w - self.learning_rate * gradients[i]
+                # Đảm bảo trọng số không âm
+                new_weights.append(max(0.0, new_w))
+            
+            # Chuẩn hóa trọng số mới
+            total = sum(new_weights)
+            if total > 0:
+                new_weights = [w / total for w in new_weights]
+            else:
+                # Nếu tất cả trọng số đều 0, khởi tạo lại
+                new_weights = [1.0 / len(weights) for _ in range(len(weights))]
+            
+            # Tính giá trị hàm mục tiêu mới
+            new_objective = calculate_total_objective(new_weights)
+            self.objective_values.append(new_objective)
             
             # Kiểm tra hội tụ
-            if i > 0 and abs(self.objective_values[-1] - self.objective_values[-2]) < self.convergence_threshold:
+            if abs(new_objective - current_objective) < self.convergence_threshold:
+                logger.info(f"Đã hội tụ sau {iteration + 1} vòng lặp: {new_objective:.6f}")
                 break
+                
+            # Cập nhật trọng số và giá trị mục tiêu
+            weights = new_weights
+            current_objective = new_objective
+            
+            # Ghi log tiến độ
+            if (iteration + 1) % 10 == 0 or iteration == 0:
+                logger.info(f"Vòng lặp {iteration + 1}/{self.max_iterations}: {current_objective:.6f}")
         
-        # Trả về trọng số (giả lập)
+        # Kết thúc và ghi log kết quả
+        elapsed_time = time.time() - start_time
+        logger.info(f"Hoàn thành tối ưu hóa sau {elapsed_time:.2f} giây")
+        logger.info(f"Giá trị hàm mục tiêu cuối: {current_objective:.6f}")
+        logger.info(f"Trọng số cuối: {weights}")
+        
         return weights
     
     def get_objective_values(self) -> List[float]:
@@ -305,8 +458,34 @@ class PlanOptimizer:
         if self.optimized_weights is None:
             raise ValueError("Chưa thực hiện tối ưu hóa")
         
-        # TODO: Implement save results
-        pass
+        import json
+        import os
+        import datetime
+        
+        # Đảm bảo thư mục tồn tại
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        
+        # Chuyển đổi các mảng numpy thành list để có thể lưu dưới dạng JSON
+        results = {
+            "algorithm": self.algorithm,
+            "optimized_weights": self.optimized_weights,
+            "objective_values": self.objective_values,
+            "objectives": self.objectives,
+            "parameters": {
+                "learning_rate": self.learning_rate,
+                "max_iterations": self.max_iterations,
+                "convergence_threshold": self.convergence_threshold,
+                "population_size": self.population_size,
+                "max_generations": self.max_generations,
+                "mutation_rate": self.mutation_rate,
+                "crossover_rate": self.crossover_rate
+            },
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        # Lưu vào file JSON
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=4)
     
     def load_results(self, file_path: str):
         """
@@ -314,9 +493,37 @@ class PlanOptimizer:
         
         Args:
             file_path: Đường dẫn file
+            
+        Returns:
+            True nếu tải thành công, False nếu không
         """
-        # TODO: Implement load results
-        pass
+        import json
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+            
+            # Cập nhật các tham số
+            self.algorithm = results.get("algorithm", self.ALGO_GRADIENT)
+            self.optimized_weights = results.get("optimized_weights", None)
+            self.objective_values = results.get("objective_values", [])
+            self.objectives = results.get("objectives", [])
+            
+            params = results.get("parameters", {})
+            self.learning_rate = params.get("learning_rate", self.learning_rate)
+            self.max_iterations = params.get("max_iterations", self.max_iterations)
+            self.convergence_threshold = params.get("convergence_threshold", self.convergence_threshold)
+            self.population_size = params.get("population_size", self.population_size)
+            self.max_generations = params.get("max_generations", self.max_generations)
+            self.mutation_rate = params.get("mutation_rate", self.mutation_rate)
+            self.crossover_rate = params.get("crossover_rate", self.crossover_rate)
+            
+            return True
+        except Exception as error:
+            from quangstation.utils.logging import get_logger
+            logger = get_logger("Optimization")
+            logger.log_error(f"Lỗi khi tải kết quả tối ưu: {str(error)}")
+            return False
 
 # Tạo instance mặc định
 default_optimizer = PlanOptimizer()

@@ -169,7 +169,7 @@ class ImportInterface:
                             return
                     except:
                         continue
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi quét thư mục DICOM: {e}")
     
     def start_import_thread(self):
@@ -241,7 +241,7 @@ class ImportInterface:
                 try:
                     ct_volume, ct_metadata = parser.extract_image_volume('CT')
                     self.db.insert_volume(patient_id, 'CT', ct_volume, ct_metadata)
-                except Exception as e:
+                except Exception as error:
                     messagebox.showerror("Lỗi CT", f"Không thể nhập dữ liệu CT: {e}")
             
             self.progress_value = 40
@@ -252,7 +252,7 @@ class ImportInterface:
                 try:
                     mri_volume, mri_metadata = parser.extract_image_volume('MRI')
                     self.db.insert_volume(patient_id, 'MRI', mri_volume, mri_metadata)
-                except Exception as e:
+                except Exception as error:
                     messagebox.showerror("Lỗi MRI", f"Không thể nhập dữ liệu MRI: {e}")
             
             self.progress_value = 50
@@ -263,7 +263,7 @@ class ImportInterface:
                 try:
                     rt_struct_data = parser.extract_rt_struct()
                     self.db.insert_rt_struct(patient_id, rt_struct_data)
-                except Exception as e:
+                except Exception as error:
                     messagebox.showerror("Lỗi RT Structure", f"Không thể nhập dữ liệu RT Structure: {e}")
             
             self.progress_value = 60
@@ -274,7 +274,7 @@ class ImportInterface:
                 try:
                     rt_dose_data, rt_dose_metadata = parser.extract_rt_dose()
                     self.db.insert_rt_dose(patient_id, rt_dose_data, rt_dose_metadata)
-                except Exception as e:
+                except Exception as error:
                     messagebox.showerror("Lỗi RT Dose", f"Không thể nhập dữ liệu RT Dose: {e}")
             
             self.progress_value = 70
@@ -285,7 +285,7 @@ class ImportInterface:
                 try:
                     rt_plan_data = parser.extract_rt_plan()
                     self.db.insert_rt_plan(patient_id, rt_plan_data)
-                except Exception as e:
+                except Exception as error:
                     messagebox.showerror("Lỗi RT Plan", f"Không thể nhập dữ liệu RT Plan: {e}")
             
             self.progress_value = 80
@@ -301,7 +301,7 @@ class ImportInterface:
                     # Lưu vào cơ sở dữ liệu - cần mở rộng PatientDatabase để hỗ trợ RT Image
                     if hasattr(self.db, 'insert_rt_image'):
                         self.db.insert_rt_image(patient_id, rt_image_data, rt_image_metadata)
-                except Exception as e:
+                except Exception as error:
                     messagebox.showerror("Lỗi RT Image", f"Không thể nhập dữ liệu RT Image: {e}")
             
             self.progress_value = 90
@@ -324,7 +324,7 @@ class ImportInterface:
             # Đóng cửa sổ nhập dữ liệu
             self.root.after(500, self.root.destroy)
             
-        except Exception as e:
+        except Exception as error:
             messagebox.showerror("Lỗi", f"Không thể nhập dữ liệu DICOM: {e}")
         
         # Đánh dấu kết thúc quá trình nhập

@@ -359,6 +359,40 @@ class PatientDatabase:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def delete_patient(self, patient_id: str) -> bool:
+        """
+        Xóa bệnh nhân và tất cả dữ liệu liên quan
+        
+        Args:
+            patient_id: ID của bệnh nhân cần xóa
+            
+        Returns:
+            bool: True nếu xóa thành công, False nếu không
+        """
+        try:
+            cursor = self.conn.cursor()
+            # Bắt đầu transaction
+            self.conn.execute('BEGIN TRANSACTION')
+            
+            # Xóa dữ liệu từ các bảng phụ thuộc trước
+            cursor.execute('DELETE FROM contours WHERE patient_id = ?', (patient_id,))
+            cursor.execute('DELETE FROM rt_plans WHERE patient_id = ?', (patient_id,))
+            cursor.execute('DELETE FROM rt_doses WHERE patient_id = ?', (patient_id,))
+            cursor.execute('DELETE FROM rt_structs WHERE patient_id = ?', (patient_id,))
+            cursor.execute('DELETE FROM volumes WHERE patient_id = ?', (patient_id,))
+            
+            # Cuối cùng xóa bệnh nhân
+            cursor.execute('DELETE FROM patients WHERE id = ?', (patient_id,))
+            
+            # Commit transaction
+            self.conn.commit()
+            return True
+        except Exception as error:
+            # Rollback transaction khi có lỗi
+            self.conn.rollback()
+            print(f"Lỗi khi xóa bệnh nhân: {e}")
+            return False
+
     def close(self):
         """Đóng kết nối database"""
         if self.conn:
@@ -397,7 +431,7 @@ class PatientDatabase:
             self.conn.commit()
             
             return True
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi cập nhật bệnh nhân: {e}")
             return False
 
@@ -438,7 +472,7 @@ class PatientDatabase:
             # Khôi phục row_factory
             self.conn.row_factory = old_row_factory
             return result
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi lấy thông tin bệnh nhân: {e}")
             return {}
 
@@ -485,6 +519,6 @@ class PatientDatabase:
             # Khôi phục row_factory
             self.conn.row_factory = old_row_factory
             return results
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi tìm kiếm bệnh nhân: {e}")
             return []

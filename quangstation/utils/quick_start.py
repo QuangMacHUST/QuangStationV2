@@ -143,7 +143,7 @@ def load_config():
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             config = json.load(f)
         return config
-    except Exception as e:
+    except Exception as error:
         print(f"Lỗi khi đọc file cấu hình: {e}")
         return create_config()
 
@@ -191,7 +191,7 @@ def run_application():
     except ImportError:
         print("Không thể nhập module quangstation.main. Đảm bảo QuangStation đã được cài đặt đúng cách.")
         return False
-    except Exception as e:
+    except Exception as error:
         print(f"Lỗi khi khởi chạy ứng dụng: {e}")
         return False
 

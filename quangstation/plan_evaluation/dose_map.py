@@ -203,81 +203,184 @@ class DoseMap:
             return None
     
     def plot_dose_map(self, axis: str = 'axial', slice_index: int = None, 
-                     show_structures: bool = True, show_isocenter: bool = True,
-                     show_colorbar: bool = True, figsize: Tuple[int, int] = (10, 8),
-                     dose_range: Tuple[float, float] = None) -> Figure:
+                     colormap: str = 'jet', alpha: float = 0.7,
+                     show_structures: bool = True, structure_names: List[str] = None,
+                     show_isodose: bool = True, isodose_levels: List[float] = None,
+                     figsize: Tuple[int, int] = (10, 8), use_relative_dose: bool = False,
+                     add_colorbar: bool = True) -> plt.Figure:
         """
-        Vẽ bản đồ liều cho lát cắt chỉ định
+        Hiển thị bản đồ liều trên lát cắt CT.
         
         Args:
-            axis (str): Trục cắt ('axial', 'coronal', 'sagittal')
-            slice_index (int): Chỉ số lát cắt
-            show_structures (bool): Hiển thị các cấu trúc
-            show_isocenter (bool): Hiển thị tâm xạ trị
-            show_colorbar (bool): Hiển thị thanh màu
-            figsize (Tuple[int, int]): Kích thước hình (inch)
-            dose_range (Tuple[float, float]): Phạm vi liều hiển thị (min, max) Gy
-        
+            axis: Trục hiển thị ('axial', 'coronal', 'sagittal')
+            slice_index: Chỉ số lát cắt
+            colormap: Tên colormap cho phân bố liều
+            alpha: Độ trong suốt của overlay liều
+            show_structures: Hiển thị contour cấu trúc
+            structure_names: Danh sách tên cấu trúc cần hiển thị (None = tất cả)
+            show_isodose: Hiển thị các đường isodose
+            isodose_levels: Danh sách mức liều hiển thị (%)
+            figsize: Kích thước figure
+            use_relative_dose: Sử dụng liều tương đối (%) thay vì liều tuyệt đối (Gy)
+            add_colorbar: Hiển thị thanh màu bên cạnh hình
+            
         Returns:
-            Figure: Đối tượng Figure của matplotlib
+            Figure: Đối tượng matplotlib Figure
         """
-        # Lấy dữ liệu lát cắt
-        dose_slice = self.get_dose_slice(axis, slice_index)
-        if dose_slice is None:
+        if self.dose_data is None or self.ct_data is None:
+            logger.error("Không có dữ liệu liều hoặc CT")
             return None
+            
+        # Kiểm tra slice_index
+        if slice_index is None:
+            if axis == 'axial':
+                slice_index = self.dose_data.shape[0] // 2
+            elif axis == 'coronal':
+                slice_index = self.dose_data.shape[1] // 2
+            elif axis == 'sagittal':
+                slice_index = self.dose_data.shape[2] // 2
         
-        # Tạo figure
+        # Tạo figure và axes
         fig, ax = plt.subplots(figsize=figsize)
         
-        # Thiết lập phạm vi liều
-        if dose_range is None:
-            vmin = 0
-            vmax = self.prescription_dose if self.prescription_dose else dose_slice.max()
-        else:
-            vmin, vmax = dose_range
-        
-        # Vẽ bản đồ liều
-        im = ax.imshow(dose_slice.T, cmap=self.colormap, alpha=self.alpha, 
-                      vmin=vmin, vmax=vmax, origin='lower')
-        
-        # Hiển thị các cấu trúc
-        if show_structures and self.structures:
-            for name, struct_data in self.structures.items():
-                struct_slice = self.get_structure_slice(name, axis, slice_index)
-                if struct_slice is not None:
-                    # Vẽ đường viền cấu trúc
-                    from scipy import ndimage
-                    contours = ndimage.find_objects(ndimage.label(struct_slice)[0])
-                    for contour in contours:
-                        ax.contour(struct_slice.T, levels=[0.5], colors=[struct_data["color"]], 
-                                  linewidths=2, origin='lower')
-        
-        # Hiển thị tâm xạ trị
-        if show_isocenter and self.isocenter:
-            # Chuyển đổi tọa độ tâm sang chỉ số pixel
-            iso_pixel = self._convert_position_to_pixel(self.isocenter, axis)
-            if iso_pixel:
-                ax.plot(iso_pixel[0], iso_pixel[1], 'r+', markersize=10, markeredgewidth=2)
-        
-        # Hiển thị thanh màu
-        if show_colorbar:
-            cbar = fig.colorbar(im, ax=ax)
-            cbar.set_label('Liều (Gy)')
-        
-        # Thiết lập tiêu đề và nhãn
-        ax.set_title(f'Bản đồ liều - {axis.capitalize()} - Slice {slice_index}')
-        
+        # Lấy lát cắt CT
         if axis == 'axial':
-            ax.set_xlabel('X (pixel)')
-            ax.set_ylabel('Y (pixel)')
+            ct_slice = self.ct_data[slice_index, :, :]
+            dose_slice = self.dose_data[slice_index, :, :]
         elif axis == 'coronal':
-            ax.set_xlabel('X (pixel)')
-            ax.set_ylabel('Z (pixel)')
+            ct_slice = self.ct_data[:, slice_index, :]
+            dose_slice = self.dose_data[:, slice_index, :]
         elif axis == 'sagittal':
-            ax.set_xlabel('Y (pixel)')
-            ax.set_ylabel('Z (pixel)')
+            ct_slice = self.ct_data[:, :, slice_index]
+            dose_slice = self.dose_data[:, :, slice_index]
+        else:
+            logger.error(f"Trục không hợp lệ: {axis}")
+            return None
+            
+        # Chuyển đổi CT sang ảnh xám bằng cửa sổ CT mặc định
+        window_center = self.window_center or 40  # Mặc định cho soft tissue
+        window_width = self.window_width or 400
+        
+        # Chuyển đổi CT sang ảnh có giá trị 0-1
+        ct_min = window_center - window_width/2
+        ct_max = window_center + window_width/2
+        ct_display = np.clip((ct_slice - ct_min) / (ct_max - ct_min), 0, 1)
+        
+        # Hiển thị CT
+        ax.imshow(ct_display, cmap='gray', aspect='equal')
+        
+        # Chuẩn hóa liều nếu cần
+        if use_relative_dose and self.prescription_dose:
+            # Sử dụng liều tương đối (%)
+            dose_display = dose_slice * self.dose_grid_scaling / self.prescription_dose * 100
+            dose_unit = '%'
+            # Mặc định isodose levels cho liều tương đối
+            default_isodose_levels = [10, 30, 50, 70, 80, 90, 95, 100, 105, 110]
+        else:
+            # Sử dụng liều tuyệt đối (Gy)
+            dose_display = dose_slice * self.dose_grid_scaling
+            dose_unit = 'Gy'
+            # Mặc định isodose levels cho liều tuyệt đối (tính từ liều kê toa nếu có)
+            if self.prescription_dose:
+                dose_ref = self.prescription_dose
+                default_isodose_levels = [
+                    dose_ref * p / 100 for p in [10, 30, 50, 70, 80, 90, 95, 100, 105, 110]
+                ]
+            else:
+                default_isodose_levels = [0.5, 1, 2, 5, 10, 15, 20, 30, 40, 50]
+        
+        # Hiển thị dose color wash nếu có liều
+        if np.max(dose_display) > 0:
+            # Tạo mask cho liều
+            dose_mask = dose_display > 0
+            
+            # Hiển thị color wash liều
+            im = ax.imshow(np.ma.masked_where(~dose_mask, dose_display), 
+                          cmap=colormap, alpha=alpha, vmin=0, interpolation='bilinear')
+            
+            # Thêm color bar
+            if add_colorbar:
+                cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+                cbar.set_label(f'Dose ({dose_unit})', rotation=270, labelpad=15)
+            
+            # Hiển thị isodose lines
+            if show_isodose:
+                isodose_levels = isodose_levels or default_isodose_levels
+                
+                # Tạo giá trị liều tương đối từ liều tuyệt đối nếu cần
+                if not use_relative_dose and self.prescription_dose:
+                    isodose_display_vals = [f"{level:.1f} Gy" for level in isodose_levels]
+                else:
+                    isodose_display_vals = [f"{level:.1f} {dose_unit}" for level in isodose_levels]
+                
+                # Lấy biến thể colormap để có màu tương ứng
+                cmap = plt.get_cmap(colormap)
+                
+                # Lấy các mức dose tối đa và tối thiểu
+                dose_max = np.max(dose_display)
+                
+                for i, level in enumerate(isodose_levels):
+                    if level > 0 and level <= dose_max * 1.1:
+                        # Lấy màu từ colormap theo tỷ lệ với dose_max
+                        if use_relative_dose:
+                            color_val = level / 120  # chuẩn hóa màu (120% là max)
+                        else:
+                            color_val = level / (dose_max * 1.1)
+                        color = cmap(min(color_val, 1.0))
+                        
+                        # Vẽ contour
+                        contours = ax.contour(dose_display, levels=[level], colors=[color], linewidths=1.5)
+                        
+                        # Thêm nhãn
+                        fmt = {level: isodose_display_vals[i]}
+                        ax.clabel(contours, inline=True, fmt=fmt, fontsize=8)
+        
+        # Hiển thị cấu trúc
+        if show_structures and self.structures:
+            structures_to_show = structure_names or list(self.structures.keys())
+            
+            for name in structures_to_show:
+                if name in self.structures:
+                    # Lấy mask của cấu trúc
+                    struct_mask = self.structures[name]["mask"]
+                    struct_color = self.structures[name]["color"]
+                    
+                    # Lấy contour của cấu trúc trên lát cắt
+                    if axis == 'axial':
+                        struct_slice = struct_mask[slice_index, :, :]
+                    elif axis == 'coronal':
+                        struct_slice = struct_mask[:, slice_index, :]
+                    elif axis == 'sagittal':
+                        struct_slice = struct_mask[:, :, slice_index]
+                    
+                    # Vẽ contour cấu trúc
+                    if np.any(struct_slice):
+                        contours = ax.contour(struct_slice, levels=[0.5], colors=[struct_color], linewidths=2)
+                        ax.clabel(contours, inline=True, fmt={0.5: name}, fontsize=9)
+        
+        # Thiết lập trục
+        ax.set_aspect('equal')
+        ax.set_axis_off()
+        
+        # Thêm tiêu đề
+        if axis == 'axial':
+            title = f'Axial Slice {slice_index}'
+        elif axis == 'coronal':
+            title = f'Coronal Slice {slice_index}'
+        elif axis == 'sagittal':
+            title = f'Sagittal Slice {slice_index}'
+            
+        ax.set_title(title)
+        
+        # Thêm thông tin dose
+        if self.prescription_dose:
+            dose_info = f"Prescription: {self.prescription_dose:.1f} Gy"
+            if hasattr(self, 'fractions') and self.fractions:
+                dose_info += f" in {self.fractions} fractions"
+            fig.text(0.01, 0.01, dose_info, transform=ax.transAxes)
         
         plt.tight_layout()
+        
         return fig
     
     def _convert_position_to_pixel(self, position: List[float], axis: str) -> Tuple[int, int]:

@@ -1,0 +1,122 @@
+=== KẾT QUẢ KIỂM TRA 2025-03-10 02:32:01 ===
+
+Kiểm tra file: quangstation\integration.py
+  - OK
+Kiểm tra file: quangstation\main.py
+  - OK
+Kiểm tra file: quangstation\__init__.py
+  - OK
+Kiểm tra file: quangstation\contouring\auto_segmentation.py
+  - OK
+Kiểm tra file: quangstation\contouring\contour_tools.py
+  - OK
+Kiểm tra file: quangstation\contouring\organ_library.py
+  - OK
+Kiểm tra file: quangstation\contouring\__init__.py
+  - OK
+Kiểm tra file: quangstation\data_management\dicom_parser.py
+  - OK
+Kiểm tra file: quangstation\data_management\display.py
+  - OK
+Kiểm tra file: quangstation\data_management\import_interface.py
+  - OK
+Kiểm tra file: quangstation\data_management\patient_db.py
+  - OK
+Kiểm tra file: quangstation\data_management\session_management.py
+  - OK
+Kiểm tra file: quangstation\data_management\__init__.py
+  - OK
+Kiểm tra file: quangstation\dose_calculation\advanced_algorithms.py
+  - OK
+Kiểm tra file: quangstation\dose_calculation\dose_engine_wrapper.py
+  - OK
+Kiểm tra file: quangstation\dose_calculation\monte_carlo.py
+  - OK
+Kiểm tra file: quangstation\gui\main_window.py
+  - OK
+Kiểm tra file: quangstation\gui\plan_design.py
+  - OK
+Kiểm tra file: quangstation\gui\struct_panel.py
+  - OK
+Kiểm tra file: quangstation\gui\__init__.py
+  - OK
+Kiểm tra file: quangstation\gui\dialogs\dose_dialog.py
+  - OK
+Kiểm tra file: quangstation\gui\dialogs\patient_dialog.py
+  - OK
+Kiểm tra file: quangstation\gui\dialogs\__init__.py
+  - OK
+Kiểm tra file: quangstation\gui\widgets\3d_viewer.py
+  - OK
+Kiểm tra file: quangstation\gui\widgets\image_viewer.py
+  - OK
+Kiểm tra file: quangstation\gui\widgets\__init__.py
+  - OK
+Kiểm tra file: quangstation\image_processing\image_loader.py
+  - OK
+Kiểm tra file: quangstation\image_processing\segmentation.py
+  - OK
+Kiểm tra file: quangstation\image_processing\__init__.py
+  - OK
+Kiểm tra file: quangstation\optimization\optimizer_wrapper.py
+  - OK
+Kiểm tra file: quangstation\optimization\__init__.py
+  - OK
+Kiểm tra file: quangstation\planning\beam_management.py
+  - OK
+Kiểm tra file: quangstation\planning\bolus_manager.py
+  - OK
+Kiểm tra file: quangstation\planning\mlc_manager.py
+  - OK
+Kiểm tra file: quangstation\planning\plan_config.py
+  - OK
+Kiểm tra file: quangstation\planning\__init__.py
+  - OK
+Kiểm tra file: quangstation\planning\techniques\base.py
+  - OK
+Kiểm tra file: quangstation\planning\techniques\conventional.py
+  - OK
+Kiểm tra file: quangstation\planning\techniques\fif.py
+  - OK
+Kiểm tra file: quangstation\planning\techniques\imrt.py
+  - OK
+Kiểm tra file: quangstation\planning\techniques\vmat.py
+  - OK
+Kiểm tra file: quangstation\planning\techniques\__init__.py
+  - OK
+Kiểm tra file: quangstation\plan_evaluation\biological_effects.py
+  - OK
+Kiểm tra file: quangstation\plan_evaluation\biological_metrics.py
+  - OK
+Kiểm tra file: quangstation\plan_evaluation\dose_map.py
+  - OK
+Kiểm tra file: quangstation\plan_evaluation\dvh.py
+  - OK
+Kiểm tra file: quangstation\plan_evaluation\plan_comparison.py
+  - OK
+Kiểm tra file: quangstation\plan_evaluation\__init__.py
+  - OK
+Kiểm tra file: quangstation\quality_assurance\qa_tools.py
+  - OK
+Kiểm tra file: quangstation\quality_assurance\__init__.py
+  - OK
+Kiểm tra file: quangstation\reporting\pdf_report.py
+  - OK
+Kiểm tra file: quangstation\reporting\report_gen.py
+  - OK
+Kiểm tra file: quangstation\reporting\__init__.py
+  - OK
+Kiểm tra file: quangstation\utils\config.py
+  - OK
+Kiểm tra file: quangstation\utils\data_bridge.py
+  - OK
+Kiểm tra file: quangstation\utils\data_validation.py
+  - OK
+Kiểm tra file: quangstation\utils\logging.py
+  - OK
+Kiểm tra file: quangstation\utils\performance.py
+  - OK
+Kiểm tra file: quangstation\utils\quick_start.py
+  - OK
+Kiểm tra file: quangstation\utils\__init__.py
+  - OK

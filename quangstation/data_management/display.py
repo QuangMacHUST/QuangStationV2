@@ -761,7 +761,7 @@ class Display:
             
             return interpolated_dose
             
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi nội suy liều: {e}")
             return None
 
@@ -801,83 +801,121 @@ class Display:
             print(f"Đã lưu hình ảnh 3D tại: {vtk_path}")
             
             return True
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi xuất hình ảnh: {e}")
             return False
 
     def load_with_image_loader(self, directory):
-        """Tải dữ liệu sử dụng ImageLoader"""
+        """
+        Tải dữ liệu sử dụng ImageLoader cải tiến.
+        Hỗ trợ hiển thị đa phương (Axial, Coronal, Sagittal)
+        và tạo model 3D.
+        
+        Args:
+            directory: Đường dẫn đến thư mục chứa dữ liệu DICOM
+            
+        Returns:
+            bool: True nếu tải thành công, False nếu thất bại
+        """
         try:
-            # Khởi tạo ImageLoader
+            from quangstation.utils.logging import get_logger
+            logger = get_logger("Display")
+            logger.info(f"Đang tải dữ liệu từ thư mục: {directory}")
+            
+            # Khởi tạo ImageLoader cải tiến
             loader = ImageLoader()
             
-            # Tải chuỗi DICOM
-            volume_data = loader.load_dicom_series(directory)
+            # Lưu trữ reference đến ImageLoader để sử dụng sau này
+            self.image_loader = loader
+            
+            # Tải chuỗi DICOM sử dụng phương thức đã cải tiến
+            volume_data, metadata = loader.load_dicom_series(directory)
             
             if volume_data is not None:
-                self.volume, self.metadata = volume_data
+                # Lưu dữ liệu
+                self.volume = volume_data
+                self.ct_volume = volume_data  # Lưu vào ct_volume để tương thích với code cũ
+                self.metadata = metadata
+                
+                # Lưu thông tin về spacing và origin
+                self.spacing = loader.spacing
+                self.origin = loader.origin
+                self.direction = loader.direction
+                self.image_type = loader.image_type
+                
+                # Lưu DICOMParser để truy cập sau này
+                self.dicom_parser = loader.dicom_parser
+                
+                # Thiết lập slice hiện tại
                 self.current_slice = self.volume.shape[0] // 2
-
+                
+                # Cập nhật slice positions cho tất cả các slice
+                self.slice_positions = []
+                for i in range(self.volume.shape[0]):
+                    z_pos = self.origin[2] + i * self.spacing[2]
+                    self.slice_positions.append(z_pos)
+                
+                # Thiết lập cửa sổ Hounsfield
+                self.window_center = loader.window_center
+                self.window_width = loader.window_width
+                
+                # Khởi tạo ContourTools với dữ liệu mới
+                if self.volume is not None and self.spacing is not None:
+                    self.contour_tools = ContourTools(self.volume, self.spacing)
+                
                 # Cập nhật hiển thị
                 self.display_interface()
-
+                
                 # Cập nhật hiển thị 3D
                 self.update_vtk_data()
-
-                print(f"Đã tải thành công dữ liệu từ {directory}")
                 
-                # Kiểm tra và tải RT Structure nếu có
-                rt_structure_path = loader.find_rt_structure(directory)
-                if rt_structure_path:
-                    self.rt_structures = loader.load_rt_structure(rt_structure_path)
+                logger.info(f"Đã tải thành công dữ liệu từ {directory}")
+                
+                # Kiểm tra xem có RT Struct, RT Dose, RT Plan không
+                modalities = self.dicom_parser.get_modalities()
+                
+                # Tải RT Structure nếu có
+                if modalities['RTSTRUCT'] > 0:
+                    logger.info("Đang tải dữ liệu RT Structure")
+                    self.rt_structures = self.dicom_parser.extract_rt_struct()
                     if self.rt_structures:
                         self.display_rt_structures()
                 
-                # Kiểm tra và tải RT Dose nếu có
-                rt_dose_path = loader.find_rt_dose(directory)
-                if rt_dose_path:
-                    dose_data = loader.load_rt_dose(rt_dose_path)
-                    if dose_data:
-                        self.dose_volume, self.dose_metadata = dose_data
+                # Tải RT Dose nếu có
+                if modalities['RTDOSE'] > 0:
+                    logger.info("Đang tải dữ liệu RT Dose")
+                    dose_data, dose_metadata = self.dicom_parser.extract_rt_dose()
+                    if dose_data is not None:
+                        self.dose_volume = dose_data
+                        self.dose_metadata = dose_metadata
                         self.display_dose_overlay()
                 
-                # Kiểm tra và tải RT Image nếu có
-                rt_image_path = loader.find_rt_image(directory)
-                if rt_image_path:
-                    self.load_rt_image(rt_image_path)
+                # Tải RT Plan nếu có
+                if modalities['RTPLAN'] > 0:
+                    logger.info("Đang tải dữ liệu RT Plan")
+                    self.rt_plan = self.dicom_parser.extract_rt_plan()
                 
+                # Tải RT Image nếu có
+                if modalities['RTIMAGE'] > 0:
+                    logger.info("Đang tải dữ liệu RT Image")
+                    self.rt_image, self.rt_image_metadata = self.dicom_parser.extract_rt_image()
+                    if self.rt_image is not None:
+                        self.display_rt_image()
+                
+                # Cập nhật hiển thị đa phương (MPR)
+                self.update_mpr_views()
+                        
                 return True
             else:
-                print(f"Không thể tải dữ liệu từ {directory}")
+                logger.error("Không thể tải dữ liệu từ thư mục DICOM")
                 return False
-        except Exception as e:
-            print(f"Lỗi khi tải dữ liệu: {e}")
-            return False
-    
-    def load_rt_image(self, rt_image_path):
-        """Tải và hiển thị RT Image"""
-        try:
-            # Khởi tạo ImageLoader
-            loader = ImageLoader()
-            
-            # Tải RT Image
-            rt_image_data = loader.load_rt_image(rt_image_path)
-            
-            if rt_image_data is not None:
-                self.rt_image, self.rt_image_metadata = rt_image_data
                 
-                # Hiển thị RT Image
-                self.display_rt_image()
-                
-                print(f"Đã tải thành công RT Image từ {rt_image_path}")
-                return True
-            else:
-                print(f"Không thể tải RT Image từ {rt_image_path}")
-                return False
-        except Exception as e:
-            print(f"Lỗi khi tải RT Image: {e}")
+        except Exception as error:
+            import traceback
+            logger.error(f"Lỗi khi tải dữ liệu: {str(error)}")
+            logger.error(traceback.format_exc())
             return False
-    
+
     def display_rt_image(self):
         """Hiển thị RT Image"""
         if not hasattr(self, 'rt_image') or self.rt_image is None:
@@ -986,12 +1024,12 @@ class Display:
                 messagebox.showinfo("Thành công", f"Đã lưu hình ảnh tại:\n{save_path}")
                 
                 return True
-            except Exception as e:
+            except Exception as error:
                 print(f"Lỗi khi lưu RT Image: {e}")
                 
                 # Hiển thị thông báo lỗi
                 from tkinter import messagebox
-                messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh:\n{str(e)}")
+                messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh:\n{str(error)}")
                 
                 return False
         
@@ -1047,7 +1085,7 @@ class Display:
         
             print(f"Đã lưu ảnh chụp màn hình tại: {output_path} và {vtk_path}")
             return True
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi tạo ảnh chụp màn hình: {e}")
             return False
 
@@ -1136,7 +1174,7 @@ class Display:
             # Trả về dữ liệu polydata đã xử lý
             return normals.GetOutput()
         
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi tạo mô hình 3D: {e}")
             import traceback
             traceback.print_exc()
@@ -1534,3 +1572,561 @@ class Display:
                     nearest_idx = idx
         
         return nearest_idx
+
+    def update_mpr_views(self):
+        """
+        Cập nhật hiển thị đa phương (Multiplanar Reconstruction).
+        Hiển thị cả 3 hướng: Axial, Coronal, và Sagittal từ cùng một điểm.
+        """
+        if not hasattr(self, 'mpr_views_initialized'):
+            # Khởi tạo giao diện MPR nếu chưa có
+            self._initialize_mpr_interface()
+            self.mpr_views_initialized = True
+            
+        if self.volume is None or not hasattr(self, 'image_loader'):
+            from quangstation.utils.logging import get_logger
+            logger = get_logger("Display")
+            logger.warning("Không thể cập nhật MPR views: dữ liệu ảnh hoặc ImageLoader chưa được khởi tạo")
+            return
+            
+        try:
+            # Lấy chỉ số slice hiện tại cho 3 hướng
+            current_axial = self.current_slice  # Lấy từ trạng thái hiện tại
+            current_coronal = self.volume.shape[1] // 2  # Mặc định ở giữa
+            current_sagittal = self.volume.shape[2] // 2  # Mặc định ở giữa
+            
+            # Tạo dict slice indices
+            slice_indices = {
+                'axial': current_axial,
+                'coronal': current_coronal,
+                'sagittal': current_sagittal
+            }
+            
+            # Lấy dữ liệu từ ImageLoader
+            mpr_views = self.image_loader.generate_mpr_views(slice_indices)
+            
+            # Cập nhật hiển thị cho từng view
+            if 'axial' in mpr_views:
+                self._update_mpr_canvas(mpr_views['axial'], 'axial')
+                
+            if 'coronal' in mpr_views:
+                self._update_mpr_canvas(mpr_views['coronal'], 'coronal')
+                
+            if 'sagittal' in mpr_views:
+                self._update_mpr_canvas(mpr_views['sagittal'], 'sagittal')
+                
+            # Cập nhật chỉ báo vị trí
+            self._update_mpr_indicators(slice_indices)
+            
+        except Exception as error:
+            import traceback
+            from quangstation.utils.logging import get_logger
+            logger = get_logger("Display")
+            logger.error(f"Lỗi khi cập nhật MPR views: {str(error)}")
+            logger.error(traceback.format_exc())
+    
+    def _initialize_mpr_interface(self):
+        """
+        Khởi tạo giao diện MPR với 3 canvas riêng biệt cho các view khác nhau.
+        """
+        import tkinter as tk
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+        
+        # Tạo frame chứa các view MPR
+        self.mpr_frame = tk.Frame(self.root)
+        self.mpr_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        # Tạo frame cho từng view
+        self.axial_frame = tk.Frame(self.mpr_frame)
+        self.axial_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        
+        self.coronal_frame = tk.Frame(self.mpr_frame)
+        self.coronal_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+        
+        self.sagittal_frame = tk.Frame(self.mpr_frame)
+        self.sagittal_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+        
+        # Cân bằng các cột và hàng
+        self.mpr_frame.grid_rowconfigure(0, weight=1)
+        self.mpr_frame.grid_rowconfigure(1, weight=1)
+        self.mpr_frame.grid_columnconfigure(0, weight=1)
+        self.mpr_frame.grid_columnconfigure(1, weight=1)
+        
+        # Tạo các figure và canvas cho mỗi view
+        self.axial_fig = Figure(figsize=(5, 5), dpi=100)
+        self.axial_canvas = FigureCanvasTkAgg(self.axial_fig, master=self.axial_frame)
+        self.axial_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.axial_ax = self.axial_fig.add_subplot(111)
+        self.axial_ax.set_title("Axial View")
+        
+        self.coronal_fig = Figure(figsize=(5, 5), dpi=100)
+        self.coronal_canvas = FigureCanvasTkAgg(self.coronal_fig, master=self.coronal_frame)
+        self.coronal_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.coronal_ax = self.coronal_fig.add_subplot(111)
+        self.coronal_ax.set_title("Coronal View")
+        
+        self.sagittal_fig = Figure(figsize=(5, 5), dpi=100)
+        self.sagittal_canvas = FigureCanvasTkAgg(self.sagittal_fig, master=self.sagittal_frame)
+        self.sagittal_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.sagittal_ax = self.sagittal_fig.add_subplot(111)
+        self.sagittal_ax.set_title("Sagittal View")
+        
+        # Thêm các slider để điều chỉnh vị trí
+        self.axial_slider = tk.Scale(self.axial_frame, from_=0, to=self.volume.shape[0]-1, 
+                                     orient=tk.HORIZONTAL, label="Slice", 
+                                     command=lambda v: self._on_mpr_slider_change('axial', int(v)))
+        self.axial_slider.pack(side=tk.BOTTOM, fill=tk.X)
+        self.axial_slider.set(self.current_slice)
+        
+        self.coronal_slider = tk.Scale(self.coronal_frame, from_=0, to=self.volume.shape[1]-1, 
+                                       orient=tk.HORIZONTAL, label="Slice", 
+                                       command=lambda v: self._on_mpr_slider_change('coronal', int(v)))
+        self.coronal_slider.pack(side=tk.BOTTOM, fill=tk.X)
+        self.coronal_slider.set(self.volume.shape[1] // 2)
+        
+        self.sagittal_slider = tk.Scale(self.sagittal_frame, from_=0, to=self.volume.shape[2]-1, 
+                                        orient=tk.HORIZONTAL, label="Slice", 
+                                        command=lambda v: self._on_mpr_slider_change('sagittal', int(v)))
+        self.sagittal_slider.pack(side=tk.BOTTOM, fill=tk.X)
+        self.sagittal_slider.set(self.volume.shape[2] // 2)
+        
+        # Thêm panel điều khiển
+        self.mpr_control_frame = tk.Frame(self.mpr_frame)
+        self.mpr_control_frame.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
+        
+        # Thêm các nút điều khiển
+        self.mpr_preset_label = tk.Label(self.mpr_control_frame, text="Window Preset:")
+        self.mpr_preset_label.pack(pady=5)
+        
+        presets = ["Default", "Lung", "Bone", "Brain", "Soft Tissue", "Mediastinum"]
+        self.mpr_preset_var = tk.StringVar()
+        self.mpr_preset_var.set(presets[0])
+        
+        self.mpr_preset_menu = tk.OptionMenu(self.mpr_control_frame, self.mpr_preset_var, 
+                                             *presets, command=self._on_preset_change)
+        self.mpr_preset_menu.pack(pady=5, fill=tk.X)
+        
+        # Thêm nút để hiển thị/ẩn RT Structures
+        self.mpr_show_struct_var = tk.BooleanVar()
+        self.mpr_show_struct_var.set(True)
+        
+        self.mpr_show_struct_check = tk.Checkbutton(self.mpr_control_frame, 
+                                                    text="Show RT Structures", 
+                                                    variable=self.mpr_show_struct_var,
+                                                    command=self._on_show_structures_change)
+        self.mpr_show_struct_check.pack(pady=5, anchor=tk.W)
+        
+        # Thêm nút để hiển thị/ẩn Dose Overlay
+        self.mpr_show_dose_var = tk.BooleanVar()
+        self.mpr_show_dose_var.set(False)
+        
+        self.mpr_show_dose_check = tk.Checkbutton(self.mpr_control_frame, 
+                                                  text="Show Dose Overlay", 
+                                                  variable=self.mpr_show_dose_var,
+                                                  command=self._on_show_dose_change)
+        self.mpr_show_dose_check.pack(pady=5, anchor=tk.W)
+        
+        # Thêm slider điều chỉnh độ trong suốt của dose
+        self.mpr_dose_opacity_label = tk.Label(self.mpr_control_frame, text="Dose Opacity:")
+        self.mpr_dose_opacity_label.pack(pady=2, anchor=tk.W)
+        
+        self.mpr_dose_opacity_slider = tk.Scale(self.mpr_control_frame, from_=0, to=1, 
+                                                resolution=0.1, orient=tk.HORIZONTAL,
+                                                command=self._on_dose_opacity_change)
+        self.mpr_dose_opacity_slider.pack(pady=2, fill=tk.X)
+        self.mpr_dose_opacity_slider.set(0.5)
+        
+    def _update_mpr_canvas(self, slice_data, view_type):
+        """
+        Cập nhật hiển thị MPR cho một view cụ thể.
+        
+        Args:
+            slice_data: Mảng numpy chứa dữ liệu slice
+            view_type: Loại view ('axial', 'coronal', 'sagittal')
+        """
+        import numpy as np
+        import matplotlib.pyplot as plt
+        
+        if view_type == 'axial':
+            ax = self.axial_ax
+            canvas = self.axial_canvas
+        elif view_type == 'coronal':
+            ax = self.coronal_ax
+            canvas = self.coronal_canvas
+        elif view_type == 'sagittal':
+            ax = self.sagittal_ax
+            canvas = self.sagittal_canvas
+        else:
+            return
+            
+        # Xóa nội dung hiện tại
+        ax.clear()
+        
+        # Hiển thị slice mới
+        ax.imshow(slice_data, cmap='gray')
+        
+        # Thêm RT Structures nếu cần
+        if hasattr(self, 'mpr_show_struct_var') and self.mpr_show_struct_var.get():
+            self._overlay_structures_on_mpr(ax, view_type)
+            
+        # Thêm dose overlay nếu cần
+        if hasattr(self, 'mpr_show_dose_var') and self.mpr_show_dose_var.get():
+            self._overlay_dose_on_mpr(ax, view_type)
+        
+        # Thêm tiêu đề
+        ax.set_title(f"{view_type.capitalize()} View")
+        
+        # Tắt các trục
+        ax.axis('off')
+        
+        # Cập nhật canvas
+        canvas.draw()
+        
+    def _overlay_structures_on_mpr(self, ax, view_type):
+        """
+        Hiển thị RT Structures trên view MPR.
+        
+        Args:
+            ax: Matplotlib axes
+            view_type: Loại view ('axial', 'coronal', 'sagittal')
+        """
+        if self.rt_structures is None:
+            return
+            
+        # Lấy chỉ số slice hiện tại cho view
+        if view_type == 'axial':
+            slice_idx = self.axial_slider.get()
+        elif view_type == 'coronal':
+            slice_idx = self.coronal_slider.get()
+        elif view_type == 'sagittal':
+            slice_idx = self.sagittal_slider.get()
+        else:
+            return
+            
+        # Hiển thị từng cấu trúc
+        for name, structure in self.rt_structures.items():
+            # Tính mask cho cấu trúc
+            mask = self.get_structure_mask(name)
+            if mask is None:
+                continue
+                
+            # Lấy slice mask phù hợp với view
+            if view_type == 'axial':
+                if slice_idx < mask.shape[0]:
+                    structure_mask = mask[slice_idx, :, :]
+                else:
+                    continue
+            elif view_type == 'coronal':
+                if slice_idx < mask.shape[1]:
+                    structure_mask = mask[:, slice_idx, :]
+                else:
+                    continue
+            elif view_type == 'sagittal':
+                if slice_idx < mask.shape[2]:
+                    structure_mask = mask[:, :, slice_idx]
+                else:
+                    continue
+                    
+            # Lấy màu sắc cấu trúc
+            color = self.get_structure_color(name)
+            
+            # Tạo contour từ mask
+            import numpy as np
+            from skimage import measure
+            
+            # Lấy contours từ mask
+            contours = measure.find_contours(structure_mask, 0.5)
+            
+            # Vẽ contours
+            for contour in contours:
+                ax.plot(contour[:, 1], contour[:, 0], color=color, linewidth=1)
+                
+    def _overlay_dose_on_mpr(self, ax, view_type):
+        """
+        Hiển thị Dose Overlay trên view MPR.
+        
+        Args:
+            ax: Matplotlib axes
+            view_type: Loại view ('axial', 'coronal', 'sagittal')
+        """
+        if self.dose_volume is None:
+            return
+            
+        # Lấy chỉ số slice hiện tại cho view
+        if view_type == 'axial':
+            slice_idx = self.axial_slider.get()
+        elif view_type == 'coronal':
+            slice_idx = self.coronal_slider.get()
+        elif view_type == 'sagittal':
+            slice_idx = self.sagittal_slider.get()
+        else:
+            return
+            
+        # Lấy slice dose phù hợp với view
+        if view_type == 'axial':
+            if slice_idx < self.dose_volume.shape[0]:
+                dose_slice = self.dose_volume[slice_idx, :, :]
+            else:
+                return
+        elif view_type == 'coronal':
+            if slice_idx < self.dose_volume.shape[1]:
+                dose_slice = self.dose_volume[:, slice_idx, :]
+            else:
+                return
+        elif view_type == 'sagittal':
+            if slice_idx < self.dose_volume.shape[2]:
+                dose_slice = self.dose_volume[:, :, slice_idx]
+            else:
+                return
+                
+        # Lấy giá trị độ trong suốt
+        opacity = self.mpr_dose_opacity_slider.get()
+        
+        # Chuẩn hóa liều
+        import numpy as np
+        dose_min = self.dose_metadata.get('dose_min', 0)
+        dose_max = self.dose_metadata.get('dose_max', np.max(dose_slice))
+        
+        if dose_max > dose_min:
+            normalized_dose = (dose_slice - dose_min) / (dose_max - dose_min)
+        else:
+            normalized_dose = np.zeros_like(dose_slice)
+            
+        # Hiển thị dose overlay với colormap
+        import matplotlib.pyplot as plt
+        ax.imshow(normalized_dose, cmap=self.dose_colormap, alpha=opacity)
+        
+    def _update_mpr_indicators(self, slice_indices):
+        """
+        Cập nhật các đường chỉ báo vị trí trên các view MPR.
+        
+        Args:
+            slice_indices: Dict chứa chỉ số slice cho mỗi hướng
+        """
+        # Cập nhật chỉ báo trên axial view
+        axial_slice = slice_indices['axial']
+        coronal_slice = slice_indices['coronal']
+        sagittal_slice = slice_indices['sagittal']
+        
+        # Xóa các chỉ báo cũ
+        for ax in [self.axial_ax, self.coronal_ax, self.sagittal_ax]:
+            for line in ax.lines:
+                if hasattr(line, 'indicator') and line.indicator:
+                    line.remove()
+                    
+        # Kích thước ảnh
+        axial_shape = (self.volume.shape[1], self.volume.shape[2])
+        coronal_shape = (self.volume.shape[0], self.volume.shape[2])
+        sagittal_shape = (self.volume.shape[0], self.volume.shape[1])
+        
+        # Thêm chỉ báo vào axial view
+        line_h = self.axial_ax.axhline(y=coronal_slice, color='r', linestyle='--', linewidth=0.5)
+        line_h.indicator = True
+        line_v = self.axial_ax.axvline(x=sagittal_slice, color='g', linestyle='--', linewidth=0.5)
+        line_v.indicator = True
+        
+        # Thêm chỉ báo vào coronal view
+        line_h = self.coronal_ax.axhline(y=axial_slice, color='r', linestyle='--', linewidth=0.5)
+        line_h.indicator = True
+        line_v = self.coronal_ax.axvline(x=sagittal_slice, color='g', linestyle='--', linewidth=0.5)
+        line_v.indicator = True
+        
+        # Thêm chỉ báo vào sagittal view
+        line_h = self.sagittal_ax.axhline(y=axial_slice, color='r', linestyle='--', linewidth=0.5)
+        line_h.indicator = True
+        line_v = self.sagittal_ax.axvline(x=coronal_slice, color='g', linestyle='--', linewidth=0.5)
+        line_v.indicator = True
+        
+        # Cập nhật canvas
+        self.axial_canvas.draw()
+        self.coronal_canvas.draw()
+        self.sagittal_canvas.draw()
+        
+    def _on_mpr_slider_change(self, view_type, value):
+        """
+        Xử lý sự kiện khi thay đổi slider trong MPR view.
+        
+        Args:
+            view_type: Loại view ('axial', 'coronal', 'sagittal')
+            value: Giá trị mới của slider
+        """
+        # Cập nhật giá trị slice hiện tại
+        if view_type == 'axial':
+            self.current_slice = value
+        
+        # Tạo dict slice indices
+        slice_indices = {
+            'axial': self.axial_slider.get(),
+            'coronal': self.coronal_slider.get(),
+            'sagittal': self.sagittal_slider.get()
+        }
+        
+        # Lấy dữ liệu từ ImageLoader
+        mpr_views = self.image_loader.generate_mpr_views(slice_indices)
+        
+        # Cập nhật view đã thay đổi
+        if view_type in mpr_views:
+            self._update_mpr_canvas(mpr_views[view_type], view_type)
+            
+        # Cập nhật chỉ báo vị trí
+        self._update_mpr_indicators(slice_indices)
+        
+    def _on_preset_change(self, preset):
+        """
+        Xử lý sự kiện khi thay đổi preset cửa sổ.
+        
+        Args:
+            preset: Tên preset
+        """
+        # Convert to lowercase for matching
+        preset = preset.lower()
+        
+        # Áp dụng preset cho window level và width
+        if preset == "default":
+            window_center, window_width = 40, 400
+        elif preset == "lung":
+            window_center, window_width = -600, 1500
+        elif preset == "bone":
+            window_center, window_width = 400, 1800
+        elif preset == "brain":
+            window_center, window_width = 40, 80
+        elif preset == "soft tissue":
+            window_center, window_width = 50, 450
+        elif preset == "mediastinum":
+            window_center, window_width = 50, 350
+        else:
+            return
+            
+        # Cập nhật window level/width trong ImageLoader
+        if hasattr(self, 'image_loader'):
+            self.image_loader.set_window_level(window_center, window_width)
+            
+        # Cập nhật lại hiển thị
+        self.update_mpr_views()
+        
+    def _on_show_structures_change(self):
+        """Xử lý sự kiện khi bật/tắt hiển thị RT Structures"""
+        self.update_mpr_views()
+        
+    def _on_show_dose_change(self):
+        """Xử lý sự kiện khi bật/tắt hiển thị Dose Overlay"""
+        self.update_mpr_views()
+        
+    def _on_dose_opacity_change(self, value):
+        """
+        Xử lý sự kiện khi thay đổi độ trong suốt của dose.
+        
+        Args:
+            value: Giá trị mới của độ trong suốt
+        """
+        self.update_mpr_views()
+
+    def load_rt_struct(self, filepath=None):
+        """
+        Tải dữ liệu RT Structure từ file.
+        
+        Args:
+            filepath: Đường dẫn đến file DICOM RT-STRUCT
+        
+        Returns:
+            bool: True nếu thành công, False nếu thất bại
+        """
+        if not self.image_data:
+            self.logger.error("Cần tải dữ liệu hình ảnh trước khi tải RT Structure")
+            return False
+        
+        if filepath is None and self.dicom_parser and self.dicom_parser.rt_struct:
+            filepath = self.dicom_parser.rt_struct
+        
+        if not filepath or not os.path.exists(filepath):
+            self.logger.error(f"Không tìm thấy file RT Structure: {filepath}")
+            return False
+        
+        if self.contour_tools is None:
+            # Khởi tạo công cụ contour
+            self.initialize_contour_tools()
+        
+        try:
+            # Thực hiện import từ file RT-STRUCT
+            success = self.contour_tools.import_from_dicom_rtstruct(filepath)
+            
+            if success:
+                self.logger.info(f"Đã tải RT Structure từ {filepath}")
+                self.rt_struct_loaded = True
+                
+                # Cập nhật danh sách cấu trúc
+                self.structures = {}
+                for name in self.contour_tools.contours:
+                    color = self.contour_tools.get_structure_color(name)
+                    self.structures[name] = {
+                        'name': name,
+                        'color': color,
+                        'visible': True
+                    }
+                
+                # Kích hoạt chế độ contour
+                self.enable_contour_mode(True)
+                self.current_tool = 'contour'
+                
+                # Cập nhật hiển thị
+                self.update_display()
+                return True
+            else:
+                self.logger.error(f"Không thể tải RT Structure từ {filepath}")
+                return False
+        
+        except Exception as error:
+            self.logger.error(f"Lỗi khi tải RT Structure: {str(error)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return False
+            
+    def initialize_contour_tools(self):
+        """Khởi tạo công cụ contour với dữ liệu hình ảnh hiện tại."""
+        if not self.image_data:
+            self.logger.error("Không có dữ liệu hình ảnh để khởi tạo contour")
+            return
+        
+        try:
+            from quangstation.contouring.contour_tools import ContourTools
+            
+            # Lấy thông tin spacing, origin, direction từ metadata
+            spacing = getattr(self, "image_metadata", {}).get('spacing', (1.0, 1.0, 1.0))
+            origin = getattr(self, "image_metadata", {}).get('origin', (0.0, 0.0, 0.0))
+            direction = getattr(self, "image_metadata", {}).get('direction', (1,0,0,0,1,0,0,0,1))
+            
+            # Khởi tạo ContourTools
+            self.contour_tools = ContourTools(
+                self.image_data,
+                spacing=spacing,
+                origin=origin,
+                direction=direction
+            )
+            
+            # Thiết lập thông tin tham chiếu nếu có sẵn từ DICOM parser
+            if self.dicom_parser:
+                # Frame of Reference UID
+                ref_uid = getattr(self.dicom_parser, 'reference_frame_uid', None)
+                if ref_uid:
+                    # Thiết lập vị trí slice
+                    slice_positions = self.dicom_parser.reference_slice_positions
+                    if not slice_positions and hasattr(self.dicom_parser, '_extract_slice_positions'):
+                        # Trích xuất vị trí từ CT files
+                        if self.dicom_parser.ct_files:
+                            slice_positions = self.dicom_parser._extract_slice_positions(self.dicom_parser.ct_files)
+                    
+                    # Thiết lập reference data
+                    self.contour_tools.set_reference_data(ref_uid, slice_positions)
+                    
+                # Thiết lập thông tin bệnh nhân
+                patient_info = self.dicom_parser.extract_patient_info()
+                if patient_info:
+                    self.contour_tools.set_patient_info(patient_info)
+            
+            self.logger.info("Đã khởi tạo ContourTools")
+            
+        except Exception as error:
+            self.logger.error(f"Lỗi khi khởi tạo ContourTools: {str(error)}")
+            import traceback
+            self.logger.error(traceback.format_exc())

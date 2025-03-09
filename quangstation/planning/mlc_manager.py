@@ -409,7 +409,7 @@ class MLCManager:
                     "bank_b": bank_b
                 }, f, indent=2)
             return True
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi lưu mẫu MLC: {e}")
             return False
             
@@ -434,6 +434,6 @@ class MLCManager:
                 self.set_active_model(model_name)
                 
             return data["bank_a"], data["bank_b"]
-        except Exception as e:
+        except Exception as error:
             print(f"Lỗi khi tải mẫu MLC: {e}")
             return [], [] 

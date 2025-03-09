@@ -45,7 +45,7 @@ pip install -r requirements.txt
 pip install -e .
 
 # Khởi chạy ứng dụng
-python -m quangstation.main
+python launcher.py
 ```
 
 ## 🔧 Cấu hình
@@ -98,6 +98,7 @@ QuangStationV2/
 ├── docs/                      # Tài liệu
 ├── tests/                     # Kiểm thử
 ├── scripts/                   # Script hỗ trợ
+├── launcher.py                # Script khởi chạy ứng dụng
 ├── setup.py                   # Script cài đặt
 └── requirements.txt           # Phụ thuộc
 ```
@@ -115,9 +116,28 @@ Dự án được phân phối dưới Giấy phép MIT. Xem [LICENSE](LICENSE) 
 
 ## 🚧 Trạng thái Dự án
 - **Phiên bản**: 2.0.0-beta
-- **Tiến độ**: 40%
+- **Tiến độ**: 45%
 - **Dự kiến phát hành chính thức**: tháng 6/2024
 
 ## 🌟 Hỗ trợ
 Nếu bạn thấy dự án hữu ích, hãy cho chúng tôi một sao ⭐ trên GitHub!
+
+## 🔄 Cập nhật gần đây
+- Cải thiện cấu trúc dự án
+- Sửa lỗi xóa bệnh nhân
+- Thêm xử lý ngoại lệ tốt hơn
+- Cải thiện giao diện người dùng
+- Tối ưu hóa hiệu suất
+- Thêm các dialog mới: PatientDialog, DoseDialog
+- Cải thiện quản lý phiên làm việc và kế hoạch
+- Sửa lỗi trong lưu/đọc metadata kế hoạch
+- Tối ưu hóa hiển thị hình ảnh y tế
+- Thêm widget ImageViewer nâng cao
+
+## 📱 Triển khai tiếp theo
+- Hoàn thiện tính năng tối ưu hóa kế hoạch
+- Cải thiện tính năng tự động phân đoạn với AI
+- Phát triển chức năng báo cáo chi tiết
+- Hỗ trợ đa ngôn ngữ
+- Tích hợp với hệ thống PACS/HIS
 

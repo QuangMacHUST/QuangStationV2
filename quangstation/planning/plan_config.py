@@ -82,7 +82,7 @@ class PlanConfig:
         self.modified_at = datetime.now().isoformat()
         return True
     
-    def set_technique(self, technique):
+    def set_rt_technique(self, technique):
         """Thiết lập kỹ thuật xạ trị"""
         # Kiểm tra kỹ thuật hợp lệ
         valid_techniques = ["3DCRT", "IMRT", "VMAT", "SRS", "SBRT"]
@@ -127,15 +127,15 @@ class PlanConfig:
             beam_info["weight"] = 1.0
         
         # Thêm beam vào danh sách
-        self.beams.append(beam_info)
+        getattr(self, "beams", {}).append(beam_info)
         self.modified_at = datetime.now().isoformat()
         return beam_info["id"]
     
     def update_beam(self, beam_id, beam_info):
         """Cập nhật thông tin trường chiếu"""
-        for i, beam in enumerate(self.beams):
+        for i, beam in enumerate(getattr(self, "beams", {})):
             if beam["id"] == beam_id:
-                self.beams[i].update(beam_info)
+                getattr(self, "beams", {})[i].update(beam_info)
                 self.modified_at = datetime.now().isoformat()
                 return True
         
@@ -143,9 +143,9 @@ class PlanConfig:
     
     def remove_beam(self, beam_id):
         """Xóa một trường chiếu"""
-        for i, beam in enumerate(self.beams):
+        for i, beam in enumerate(getattr(self, "beams", {})):
             if beam["id"] == beam_id:
-                del self.beams[i]
+                del getattr(self, "beams", {})[i]
                 self.modified_at = datetime.now().isoformat()
                 return True
         
@@ -153,7 +153,7 @@ class PlanConfig:
     
     def add_mlc_segment(self, beam_id, mlc_positions):
         """Thêm phân đoạn MLC cho trường chiếu"""
-        for i, beam in enumerate(self.beams):
+        for i, beam in enumerate(getattr(self, "beams", {})):
             if beam["id"] == beam_id:
                 if "mlc_segments" not in beam:
                     beam["mlc_segments"] = []
@@ -166,7 +166,7 @@ class PlanConfig:
     
     def add_arc_segment(self, beam_id, start_angle, stop_angle, control_points):
         """Thêm phân đoạn cung quay cho VMAT"""
-        for i, beam in enumerate(self.beams):
+        for i, beam in enumerate(getattr(self, "beams", {})):
             if beam["id"] == beam_id:
                 if "arc_segments" not in beam:
                     beam["arc_segments"] = []
@@ -255,7 +255,7 @@ class PlanConfig:
             "patient_position": self.patient_position,
             "technique": self.technique,
             "isocenter": self.isocenter,
-            "beams": self.beams,
+            "beams": getattr(self, "beams", {}),
             "dose_algorithm": self.dose_algorithm,
             "optimization_constraints": self.optimization_constraints,
             "structure_objectives": self.structure_objectives,

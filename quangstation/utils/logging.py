@@ -53,8 +53,8 @@ class DatabaseLogHandler(logging.Handler):
             ''')
             conn.commit()
             conn.close()
-        except Exception as e:
-            sys.stderr.write(f"Lỗi khi tạo bảng log: {str(e)}\n")
+        except Exception as error:
+            sys.stderr.write(f"Lỗi khi tạo bảng log: {str(error)}\n")
     
     def emit(self, record):
         """Thêm bản ghi vào hàng đợi"""
@@ -67,8 +67,8 @@ class DatabaseLogHandler(logging.Handler):
                 record = self.queue.get()
                 self._write_to_db(record)
                 self.queue.task_done()
-            except Exception as e:
-                sys.stderr.write(f"Lỗi khi xử lý hàng đợi log: {str(e)}\n")
+            except Exception as error:
+                sys.stderr.write(f"Lỗi khi xử lý hàng đợi log: {str(error)}\n")
     
     def _write_to_db(self, record):
         """Ghi bản ghi vào cơ sở dữ liệu"""
@@ -104,8 +104,8 @@ class DatabaseLogHandler(logging.Handler):
             
             conn.commit()
             conn.close()
-        except Exception as e:
-            sys.stderr.write(f"Lỗi khi ghi log vào cơ sở dữ liệu: {str(e)}\n")
+        except Exception as error:
+            sys.stderr.write(f"Lỗi khi ghi log vào cơ sở dữ liệu: {str(error)}\n")
     
     def close(self):
         """Đóng handler"""
@@ -140,13 +140,14 @@ class QuangLogger:
     @classmethod
     def get_instance(cls, logger_name: str = "QuangStation") -> 'QuangLogger':
         """
-        Lấy instance của logger theo tên
+        Lấy instance của logger theo tên.
+        Sử dụng Singleton pattern để đảm bảo mỗi tên logger chỉ có một instance.
         
         Args:
             logger_name: Tên của logger
             
         Returns:
-            Instance của QuangLogger
+            QuangLogger: Instance của logger
         """
         with cls._lock:
             if logger_name not in cls._loggers:
@@ -242,16 +243,40 @@ class QuangLogger:
             db_handler.setFormatter(formatter)
             self.logger.addHandler(db_handler)
     
+    def debug(self, message: str, **kwargs):
+        """Ghi log ở mức debug"""
+        self.log_debug(message, **kwargs)
+    
+    def info(self, message: str, **kwargs):
+        """Ghi log ở mức info"""
+        self.log_info(message, **kwargs)
+    
+    def warning(self, message: str, **kwargs):
+        """Ghi log ở mức warning"""
+        self.log_warning(message, **kwargs)
+    
+    def error(self, message: str, include_traceback: bool = False, **kwargs):
+        """Ghi log ở mức error"""
+        self.log_error(message, include_traceback, **kwargs)
+    
+    def critical(self, message: str, include_traceback: bool = True, **kwargs):
+        """Ghi log ở mức critical"""
+        self.log_critical(message, include_traceback, **kwargs)
+    
+    def exception(self, message: str = "Có ngoại lệ xảy ra:", **kwargs):
+        """Ghi log ngoại lệ hiện tại (phải được gọi từ except block)"""
+        self.log_exception(message, **kwargs)
+    
     def log_debug(self, message: str, **kwargs):
-        """Ghi log mức DEBUG"""
+        """Ghi log ở mức debug"""
         self.logger.debug(message, **kwargs)
     
     def log_info(self, message: str, **kwargs):
-        """Ghi log mức INFO"""
+        """Ghi log ở mức info"""
         self.logger.info(message, **kwargs)
     
     def log_warning(self, message: str, **kwargs):
-        """Ghi log mức WARNING"""
+        """Ghi log ở mức warning"""
         self.logger.warning(message, **kwargs)
     
     def log_error(self, message: str, include_traceback: bool = False, **kwargs):
@@ -419,8 +444,8 @@ class QuangLogger:
             
             conn.close()
             return result
-        except Exception as e:
-            sys.stderr.write(f"Lỗi khi truy vấn log: {str(e)}\n")
+        except Exception as error:
+            sys.stderr.write(f"Lỗi khi truy vấn log: {str(error)}\n")
             return []
 
 def get_logger(module_name: str = None) -> QuangLogger:
@@ -473,8 +498,8 @@ def log_system_info():
         logger.log_info(f"Thời gian: {json.dumps(time_info, ensure_ascii=False)}")
         
         return True
-    except Exception as e:
-        logger.log_error(f"Lỗi khi ghi log thông tin hệ thống: {str(e)}", include_traceback=True)
+    except Exception as error:
+        logger.log_error(f"Lỗi khi ghi log thông tin hệ thống: {str(error)}", include_traceback=True)
         return False
 
 def setup_exception_logging():
