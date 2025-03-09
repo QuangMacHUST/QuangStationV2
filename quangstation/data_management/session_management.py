@@ -22,6 +22,9 @@ except ImportError:
     from pydicom.uid import generate_uid
 import tempfile
 
+"""
+Module này quản lý phiên làm việc, lưu và tải kế hoạch xạ trị sử dụng định dạng DICOM
+"""
 class SessionManager:
     """Quản lý phiên làm việc, lưu và tải kế hoạch xạ trị sử dụng định dạng DICOM"""
     
@@ -552,7 +555,7 @@ class SessionManager:
             
             return True
         except Exception as error:
-            print(f"Lỗi khi xóa kế hoạch: {e}")
+            print(f"Lỗi khi xóa kế hoạch: {error}")
             return False
     
     def export_plan(self, output_dir, include_screenshots=True):

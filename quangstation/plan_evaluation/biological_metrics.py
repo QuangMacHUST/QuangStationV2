@@ -20,6 +20,8 @@ class BiologicalCalculator:
     """
     
     def __init__(self):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """Khởi tạo calculator."""
         logger.debug("Khởi tạo BiologicalCalculator")
     

@@ -13,6 +13,8 @@ class MLCModel:
     """Lớp cơ sở cho các mô hình MLC khác nhau"""
     
     def __init__(self, name: str, leaf_count: int = 60, leaf_width: float = 5.0):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """
         Khởi tạo mô hình MLC
         
@@ -410,7 +412,7 @@ class MLCManager:
                 }, f, indent=2)
             return True
         except Exception as error:
-            print(f"Lỗi khi lưu mẫu MLC: {e}")
+            print(f"Lỗi khi lưu mẫu MLC: {error}")
             return False
             
     def load_mlc_pattern(self, file_path: str) -> Tuple[List[float], List[float]]:
@@ -435,5 +437,5 @@ class MLCManager:
                 
             return data["bank_a"], data["bank_b"]
         except Exception as error:
-            print(f"Lỗi khi tải mẫu MLC: {e}")
+            print(f"Lỗi khi tải mẫu MLC: {error}")
             return [], [] 

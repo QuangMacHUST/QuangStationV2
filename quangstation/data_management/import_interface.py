@@ -13,6 +13,9 @@ from quangstation.data_management.patient_db import PatientDatabase
 from quangstation.data_management.session_management import SessionManager
 from quangstation.image_processing.image_loader import ImageLoader
 
+"""
+Module này tạo giao diện nhập dữ liệu DICOM
+"""
 class ImportInterface:
     def __init__(self, root, update_callback=None):
         """Khởi tạo giao diện nhập dữ liệu DICOM
@@ -170,7 +173,7 @@ class ImportInterface:
                     except:
                         continue
         except Exception as error:
-            print(f"Lỗi khi quét thư mục DICOM: {e}")
+            print(f"Lỗi khi quét thư mục DICOM: {error}")
     
     def start_import_thread(self):
         """Bắt đầu tiến trình nhập dữ liệu trong một thread riêng"""
@@ -242,7 +245,7 @@ class ImportInterface:
                     ct_volume, ct_metadata = parser.extract_image_volume('CT')
                     self.db.insert_volume(patient_id, 'CT', ct_volume, ct_metadata)
                 except Exception as error:
-                    messagebox.showerror("Lỗi CT", f"Không thể nhập dữ liệu CT: {e}")
+                    messagebox.showerror("Lỗi CT", f"Không thể nhập dữ liệu CT: {error}")
             
             self.progress_value = 40
             
@@ -253,7 +256,7 @@ class ImportInterface:
                     mri_volume, mri_metadata = parser.extract_image_volume('MRI')
                     self.db.insert_volume(patient_id, 'MRI', mri_volume, mri_metadata)
                 except Exception as error:
-                    messagebox.showerror("Lỗi MRI", f"Không thể nhập dữ liệu MRI: {e}")
+                    messagebox.showerror("Lỗi MRI", f"Không thể nhập dữ liệu MRI: {error}")
             
             self.progress_value = 50
             
@@ -264,7 +267,7 @@ class ImportInterface:
                     rt_struct_data = parser.extract_rt_struct()
                     self.db.insert_rt_struct(patient_id, rt_struct_data)
                 except Exception as error:
-                    messagebox.showerror("Lỗi RT Structure", f"Không thể nhập dữ liệu RT Structure: {e}")
+                    messagebox.showerror("Lỗi RT Structure", f"Không thể nhập dữ liệu RT Structure: {error}")
             
             self.progress_value = 60
             
@@ -275,7 +278,7 @@ class ImportInterface:
                     rt_dose_data, rt_dose_metadata = parser.extract_rt_dose()
                     self.db.insert_rt_dose(patient_id, rt_dose_data, rt_dose_metadata)
                 except Exception as error:
-                    messagebox.showerror("Lỗi RT Dose", f"Không thể nhập dữ liệu RT Dose: {e}")
+                    messagebox.showerror("Lỗi RT Dose", f"Không thể nhập dữ liệu RT Dose: {error}")
             
             self.progress_value = 70
             
@@ -286,7 +289,7 @@ class ImportInterface:
                     rt_plan_data = parser.extract_rt_plan()
                     self.db.insert_rt_plan(patient_id, rt_plan_data)
                 except Exception as error:
-                    messagebox.showerror("Lỗi RT Plan", f"Không thể nhập dữ liệu RT Plan: {e}")
+                    messagebox.showerror("Lỗi RT Plan", f"Không thể nhập dữ liệu RT Plan: {error}")
             
             self.progress_value = 80
             
@@ -296,13 +299,13 @@ class ImportInterface:
                 try:
                     # Sử dụng image_loader để tải RT Image
                     rt_image_path = parser.rt_image
-                    rt_image_data, rt_image_metadata = self.image_loader.load_rt_image(rt_image_path)
+                    rt_image_data, rt_image_metadata = self.image_loader.load_dicom_series(rt_image_path)
                     
                     # Lưu vào cơ sở dữ liệu - cần mở rộng PatientDatabase để hỗ trợ RT Image
                     if hasattr(self.db, 'insert_rt_image'):
                         self.db.insert_rt_image(patient_id, rt_image_data, rt_image_metadata)
                 except Exception as error:
-                    messagebox.showerror("Lỗi RT Image", f"Không thể nhập dữ liệu RT Image: {e}")
+                    messagebox.showerror("Lỗi RT Image", f"Không thể nhập dữ liệu RT Image: {error}")
             
             self.progress_value = 90
             
@@ -325,7 +328,7 @@ class ImportInterface:
             self.root.after(500, self.root.destroy)
             
         except Exception as error:
-            messagebox.showerror("Lỗi", f"Không thể nhập dữ liệu DICOM: {e}")
+            messagebox.showerror("Lỗi", f"Không thể nhập dữ liệu DICOM: {error}")
         
         # Đánh dấu kết thúc quá trình nhập
         self.is_importing = False

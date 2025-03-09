@@ -46,7 +46,7 @@ class OptimizationGoal:
             volume_value: Gia tri the tich cho rang buoc DVH (%)
             weight: Trong so cua muc tieu (mac dinh: 1.0)
             priority: Uu tien cua muc tieu (1: cao nhat, 2, 3, ...)
-            is_required: Co bat buoc dap ung muc tieu nay khong
+            is_required: True neu la muc tieu bat buoc, False neu la muc tieu mong muon
         """
         self.structure_name = structure_name
         self.goal_type = goal_type
@@ -55,8 +55,10 @@ class OptimizationGoal:
         self.weight = weight
         self.priority = priority
         self.is_required = is_required
+        self.achieved = False
+        self.actual_value = None
         
-        # Xac thuc du lieu
+        # Kiểm tra tính hợp lệ của đầu vào
         self._validate_input()
         
     def _validate_input(self):
@@ -137,38 +139,55 @@ class GoalBasedOptimizer:
     ALGO_EVOLUTIONARY = "evolutionary"
     ALGO_BASIN_HOPPING = "basin_hopping"
     ALGO_HIERARCHICAL = "hierarchical"
-    
+    ALGO_PREDICTIVE = "predictive"     # Thêm thuật toán phỏng đoán
+
     def __init__(self, algorithm: str = ALGO_GRADIENT_DESCENT):
         """
-        Khoi tao bo toi uu hoa dua tren muc tieu
+        Khởi tạo bộ tối ưu hóa dựa trên mục tiêu
         
         Args:
-            algorithm: Thuat toan su dung (xem cac hang so ALGO_*)
+            algorithm: Thuật toán tối ưu hóa
         """
-        self.algorithm = algorithm
-        self.goals = []  # Danh sach cac muc tieu
-        self.structures = {}  # Dict cua cac cau truc
-        self.beam_dose_contributions = []  # Dong gop lieu cua tung chum tia
-        self.beam_weights = []  # Trong so chum tia hien tai
-        self.dose_matrix = None  # Ma tran lieu (precomputed)
-        self.voxel_sizes = None  # Kich thuoc cac voxel
+        # Lưu thuật toán
+        if algorithm not in [self.ALGO_GRADIENT_DESCENT, self.ALGO_EVOLUTIONARY, 
+                             self.ALGO_BASIN_HOPPING, self.ALGO_HIERARCHICAL,
+                             self.ALGO_PREDICTIVE]:
+            logger.warning(f"Thuật toán {algorithm} không được hỗ trợ. Sử dụng {self.ALGO_GRADIENT_DESCENT}.")
+            self.algorithm = self.ALGO_GRADIENT_DESCENT
+        else:
+            self.algorithm = algorithm
+            
+        # Dữ liệu đầu vào
+        self.structures = {}         # Tên cấu trúc -> mask
+        self.beam_dose_matrices = [] # Ma trận liều của mỗi chùm tia
+        self.goals = []              # Danh sách các mục tiêu
+        self.voxel_sizes = (0.2, 0.2, 0.2)  # Kích thước voxel (cm)
         
-        # Tham so toi uu
-        self.max_iterations = 100
-        self.tolerance = 1e-4
-        self.learning_rate = 0.1
-        self.population_size = 50  # Cho evolutionary
-        self.mutation_rate = 0.2   # Cho evolutionary
-        self.stopping_criteria = None  # Ham dieu kien dung
+        # Tham số của thuật toán
+        self.max_iterations = 200      # Số lần lặp tối đa
+        self.tolerance = 1e-5          # Ngưỡng hội tụ
+        self.learning_rate = 0.05      # Tốc độ học (cho GD)
+        self.population_size = 50      # Kích thước quần thể (cho EA)
+        self.mutation_rate = 0.1       # Tỷ lệ đột biến (cho EA)
+        self.n_temperature_steps = 50  # Số bước nhiệt độ (cho BH)
         
-        # Ket qua
-        self.optimized_weights = None
-        self.objective_values = []
-        self.convergence_history = []
-        self.optimization_time = 0
+        # Trạng thái và kết quả
+        self.optimized_weights = None  # Trọng số tối ưu
+        self.objective_values = []     # Giá trị mục tiêu qua các lần lặp
+        self.optimized_dose = None     # Ma trận liều tối ưu
+        self.goal_evaluation = {}      # Đánh giá mục tiêu
+        self.is_optimized = False      # Trạng thái tối ưu hóa
+        self.optimization_time = 0     # Thời gian tối ưu hóa
         
-        logger.info(f"Khoi tao bo toi uu hoa dua tren muc tieu voi thuat toan {algorithm}")
-    
+        # Hàm dừng tùy chỉnh
+        self.stopping_criteria = None
+        
+        # Callback để theo dõi tiến trình
+        self.progress_callback = None
+        
+        # Mô hình dự đoán cho tối ưu phỏng đoán
+        self.predictive_model = None
+        
     def add_goal(self, goal: OptimizationGoal):
         """Them mot muc tieu toi uu hoa"""
         self.goals.append(goal)
@@ -187,15 +206,7 @@ class GoalBasedOptimizer:
             beam_doses: Danh sach ma tran lieu cho moi chum tia [beam1_dose, beam2_dose, ...]
                       Moi ma tran co cung kich thuoc voi du lieu hinh anh
         """
-        self.beam_dose_contributions = beam_doses
-        self.beam_weights = [1.0] * len(beam_doses)  # Khoi tao trong so bang nhau
-        
-        # Tao ma tran lieu ban dau
-        self.dose_matrix = np.zeros_like(beam_doses[0])
-        for i, beam_dose in enumerate(beam_doses):
-            self.dose_matrix += beam_dose * self.beam_weights[i]
-        
-        logger.info(f"Da thiet lap {len(beam_doses)} ma tran dong gop lieu chum tia")
+        self.beam_dose_matrices = beam_doses
     
     def set_voxel_sizes(self, voxel_sizes: Tuple[float, float, float]):
         """Thiet lap kich thuoc voxel (mm)"""
@@ -234,6 +245,267 @@ class GoalBasedOptimizer:
         """
         self.stopping_criteria = criteria_func
     
+    def set_progress_callback(self, callback_func: Callable[[int, float, List[float]], None]):
+        """
+        Đặt callback function để theo dõi tiến trình tối ưu hóa
+        
+        Args:
+            callback_func: Hàm callback với các tham số (iteration, objective_value, current_weights)
+        """
+        self.progress_callback = callback_func
+    
+    def visualize_optimization_progress(self, output_file: str = None):
+        """
+        Trực quan hóa quá trình tối ưu hóa
+        
+        Args:
+            output_file: Đường dẫn file để lưu biểu đồ (nếu None, hiển thị biểu đồ)
+        
+        Returns:
+            Matplotlib figure nếu matplotlib được cài đặt
+        """
+        if not self.objective_values:
+            logger.warning("Không có dữ liệu tối ưu hóa để trực quan hóa")
+            return None
+            
+        try:
+            import matplotlib.pyplot as plt
+            
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+            
+            # Vẽ đường cong hội tụ
+            iterations = list(range(len(self.objective_values)))
+            ax1.plot(iterations, self.objective_values, 'b-')
+            ax1.set_xlabel('Lần lặp')
+            ax1.set_ylabel('Giá trị hàm mục tiêu')
+            ax1.set_title('Đường cong hội tụ')
+            ax1.grid(True)
+            
+            # Vẽ biểu đồ đánh giá mục tiêu
+            if self.goal_evaluation:
+                goal_names = list(self.goal_evaluation.keys())
+                goal_achieved = [self.goal_evaluation[name].get('achieved', False) for name in goal_names]
+                goal_colors = ['g' if achieved else 'r' for achieved in goal_achieved]
+                
+                y_pos = range(len(goal_names))
+                goal_values = [self.goal_evaluation[name].get('actual_value', 0) for name in goal_names]
+                goal_targets = [self.goal_evaluation[name].get('target_value', 0) for name in goal_names]
+                
+                ax2.barh(y_pos, goal_values, color=goal_colors, alpha=0.7)
+                ax2.plot(goal_targets, y_pos, 'ko', markersize=8)
+                ax2.set_yticks(y_pos)
+                ax2.set_yticklabels(goal_names)
+                ax2.set_xlabel('Giá trị')
+                ax2.set_title('Đánh giá mục tiêu')
+                ax2.grid(True)
+            
+            plt.tight_layout()
+            
+            if output_file:
+                plt.savefig(output_file, dpi=300, bbox_inches='tight')
+                logger.info(f"Đã lưu biểu đồ tối ưu hóa vào {output_file}")
+            
+            return fig
+            
+        except ImportError:
+            logger.warning("Matplotlib không được cài đặt, không thể trực quan hóa")
+            return None
+            
+    def load_model_from_file(self, file_path: str) -> bool:
+        """
+        Tải mô hình và thiết lập từ file
+        
+        Args:
+            file_path: Đường dẫn đến file mô hình (.json)
+            
+        Returns:
+            bool: True nếu tải thành công, False nếu thất bại
+        """
+        import json
+        
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+                
+            # Tải các tham số thuật toán
+            if 'algorithm' in data:
+                self.algorithm = data['algorithm']
+                
+            if 'parameters' in data:
+                params = data['parameters']
+                for key, value in params.items():
+                    if hasattr(self, key):
+                        setattr(self, key, value)
+                        
+            # Tải các mục tiêu
+            if 'goals' in data:
+                self.goals = []
+                for goal_data in data['goals']:
+                    goal = OptimizationGoal.from_dict(goal_data)
+                    self.add_goal(goal)
+                    
+            # Tải kết quả tối ưu hóa nếu có
+            if 'results' in data:
+                results = data['results']
+                if 'optimized_weights' in results:
+                    self.optimized_weights = np.array(results['optimized_weights'])
+                if 'objective_values' in results:
+                    self.objective_values = results['objective_values']
+                if 'is_optimized' in results:
+                    self.is_optimized = results['is_optimized']
+                    
+            logger.info(f"Đã tải mô hình tối ưu hóa từ {file_path}")
+            return True
+            
+        except Exception as error:
+            logger.error(f"Lỗi khi tải mô hình tối ưu hóa: {str(error)}")
+            return False
+            
+    def train_predictive_model(self, training_data: List[Dict[str, Any]]):
+        """
+        Huấn luyện mô hình dự đoán cho tối ưu hóa phỏng đoán
+        
+        Args:
+            training_data: Danh sách các kế hoạch đã tối ưu hóa trước đó
+        """
+        if self.algorithm != self.ALGO_PREDICTIVE:
+            logger.warning("Đang cố huấn luyện mô hình dự đoán nhưng thuật toán không phải là predictive")
+            
+        try:
+            from sklearn.ensemble import RandomForestRegressor
+            
+            # Chuẩn bị dữ liệu huấn luyện
+            X = []  # Đặc trưng đầu vào (thông tin mục tiêu)
+            y = []  # Kết quả (trọng số tối ưu)
+            
+            for plan in training_data:
+                features = self._extract_features_from_plan(plan)
+                weights = plan.get('optimized_weights', [])
+                
+                if features and len(weights) > 0:
+                    X.append(features)
+                    y.append(weights)
+            
+            if len(X) == 0:
+                logger.warning("Không có đủ dữ liệu để huấn luyện mô hình dự đoán")
+                return
+                
+            # Huấn luyện mô hình
+            self.predictive_model = RandomForestRegressor(n_estimators=100, random_state=42)
+            self.predictive_model.fit(X, y)
+            
+            logger.info(f"Đã huấn luyện mô hình dự đoán với {len(X)} mẫu")
+            
+        except ImportError:
+            logger.error("Sklearn không được cài đặt, không thể huấn luyện mô hình dự đoán")
+    
+    def _extract_features_from_plan(self, plan: Dict[str, Any]) -> List[float]:
+        """
+        Trích xuất đặc trưng từ kế hoạch để huấn luyện mô hình
+        
+        Args:
+            plan: Kế hoạch xạ trị đã tối ưu hóa
+            
+        Returns:
+            List[float]: Vector đặc trưng
+        """
+        features = []
+        
+        # Thêm thông tin về mục tiêu
+        for goal in plan.get('goals', []):
+            # Thêm các đặc trưng: loại mục tiêu, giá trị liều, thể tích, ưu tiên
+            goal_type_code = {
+                OptimizationGoal.TYPE_MIN_DOSE: 1,
+                OptimizationGoal.TYPE_MAX_DOSE: 2,
+                OptimizationGoal.TYPE_MEAN_DOSE: 3,
+                OptimizationGoal.TYPE_MIN_DVH: 4,
+                OptimizationGoal.TYPE_MAX_DVH: 5,
+                OptimizationGoal.TYPE_UNIFORM_DOSE: 6,
+                OptimizationGoal.TYPE_CONFORMITY: 7,
+                OptimizationGoal.TYPE_DOSE_FALL_OFF: 8
+            }.get(goal.get('goal_type', ''), 0)
+            
+            features.append(goal_type_code)
+            features.append(goal.get('dose_value', 0))
+            features.append(goal.get('volume_value', 0) if goal.get('volume_value') else 0)
+            features.append(goal.get('priority', 1))
+            features.append(1 if goal.get('is_required', False) else 0)
+        
+        # Thêm thông tin về cấu trúc
+        structures = plan.get('structures', {})
+        for struct_name, struct_data in structures.items():
+            features.append(struct_data.get('volume', 0))  # Thể tích cấu trúc
+        
+        return features
+        
+    def _optimize_predictive(self) -> Tuple[np.ndarray, List[float]]:
+        """
+        Thực hiện tối ưu hóa dự đoán dựa trên mô hình đã huấn luyện
+        
+        Returns:
+            Tuple[np.ndarray, List[float]]: (trọng số tối ưu, giá trị mục tiêu qua các lần lặp)
+        """
+        if self.predictive_model is None:
+            logger.warning("Mô hình dự đoán chưa được huấn luyện. Sử dụng tối ưu hóa gradient.")
+            return self._optimize_gradient_descent()
+            
+        try:
+            # Chuẩn bị đặc trưng từ kế hoạch hiện tại
+            current_plan = {
+                'goals': [goal.__dict__ for goal in self.goals],
+                'structures': {name: {'volume': np.sum(mask)} for name, mask in self.structures.items()}
+            }
+            features = self._extract_features_from_plan(current_plan)
+            
+            # Dự đoán trọng số tối ưu
+            predicted_weights = self.predictive_model.predict([features])[0]
+            
+            # Sử dụng trọng số dự đoán làm điểm khởi đầu cho tối ưu hóa tinh chỉnh
+            weights = np.array(predicted_weights)
+            
+            # Chuẩn bị tối ưu hóa tinh chỉnh
+            iterations = []
+            objective_values = []
+            current_value = self._objective_function(weights)
+            objective_values.append(current_value)
+            
+            logger.info(f"Giá trị mục tiêu ban đầu từ mô hình dự đoán: {current_value}")
+            
+            # Tinh chỉnh với gradient descent
+            max_iterations = min(50, self.max_iterations)  # Giảm số lần lặp vì đã có điểm khởi đầu tốt
+            learning_rate = self.learning_rate / 2  # Giảm tốc độ học
+            
+            for iteration in range(max_iterations):
+                # Tính gradient
+                gradient = self._gradient_function(weights)
+                
+                # Cập nhật trọng số
+                weights = weights - learning_rate * gradient
+                
+                # Đảm bảo trọng số không âm
+                weights = np.maximum(weights, 0.0)
+                
+                # Tính giá trị mục tiêu mới
+                current_value = self._objective_function(weights)
+                objective_values.append(current_value)
+                
+                # Gọi callback nếu có
+                if self.progress_callback:
+                    self.progress_callback(iteration, current_value, weights.tolist())
+                
+                # Kiểm tra điều kiện dừng
+                if iteration > 0:
+                    improvement = (objective_values[-2] - objective_values[-1]) / objective_values[-2]
+                    if improvement < self.tolerance:
+                        logger.info(f"Hội tụ sau {iteration} lần lặp tinh chỉnh")
+                        break
+                
+            return weights, objective_values
+            
+        except Exception as error:
+            logger.error(f"Lỗi khi thực hiện tối ưu hóa dự đoán: {str(error)}")
+            return self._optimize_gradient_descent()  # Dự phòng
+    
     def _calculate_objective_value(self, weights: np.ndarray = None) -> float:
         """
         Tinh gia tri ham muc tieu dua tren trong so chum tia
@@ -248,8 +520,8 @@ class GoalBasedOptimizer:
             weights = self.beam_weights
         
         # Tinh toan ma tran lieu voi trong so hien tai
-        dose_matrix = np.zeros_like(self.beam_dose_contributions[0])
-        for i, beam_dose in enumerate(self.beam_dose_contributions):
+        dose_matrix = np.zeros_like(self.beam_dose_matrices[0])
+        for i, beam_dose in enumerate(self.beam_dose_matrices):
             dose_matrix += beam_dose * weights[i]
         
         # Gom nhom cac muc tieu theo uu tien
@@ -595,7 +867,7 @@ class GoalBasedOptimizer:
             logger.error("Khong co muc tieu nao duoc them vao")
             return {"success": False, "message": "Khong co muc tieu nao"}
         
-        if not self.beam_dose_contributions:
+        if not self.beam_dose_matrices:
             logger.error("Khong co ma tran dong gop lieu chum tia")
             return {"success": False, "message": "Thieu ma tran dong gop lieu"}
         
@@ -618,6 +890,8 @@ class GoalBasedOptimizer:
             weights, history = self._optimize_basin_hopping()
         elif self.algorithm == self.ALGO_HIERARCHICAL:
             weights, history = self._optimize_hierarchical()
+        elif self.algorithm == self.ALGO_PREDICTIVE:
+            weights, history = self._optimize_predictive()
         else:
             logger.error(f"Thuat toan khong duoc ho tro: {self.algorithm}")
             return {"success": False, "message": f"Thuat toan khong duoc ho tro: {self.algorithm}"}
@@ -628,9 +902,9 @@ class GoalBasedOptimizer:
         self.optimization_time = time.time() - start_time
         
         # Tinh toan lai ma tran lieu voi trong so toi uu
-        self.dose_matrix = np.zeros_like(self.beam_dose_contributions[0])
-        for i, beam_dose in enumerate(self.beam_dose_contributions):
-            self.dose_matrix += beam_dose * weights[i]
+        self.optimized_dose = np.zeros_like(self.beam_dose_matrices[0])
+        for i, beam_dose in enumerate(self.beam_dose_matrices):
+            self.optimized_dose += beam_dose * weights[i]
         
         # Tinh objective value sau cung
         final_objective = self._calculate_objective_value(weights)
@@ -664,7 +938,7 @@ class GoalBasedOptimizer:
             logger.warning("Chua thuc hien toi uu hoa")
             return None
         
-        return self.dose_matrix
+        return self.optimized_dose
     
     def get_dose_for_structure(self, structure_name: str) -> np.ndarray:
         """
@@ -680,7 +954,7 @@ class GoalBasedOptimizer:
             logger.warning(f"Cau truc {structure_name} khong ton tai")
             return None
         
-        if self.dose_matrix is None:
+        if self.optimized_dose is None:
             logger.warning("Chua tinh toan ma tran lieu")
             return None
         
@@ -688,7 +962,7 @@ class GoalBasedOptimizer:
         structure_mask = self.structures[structure_name]
         
         # Ap dung mat na vao ma tran lieu
-        structure_dose = self.dose_matrix * structure_mask
+        structure_dose = self.optimized_dose * structure_mask
         
         return structure_dose
     
@@ -708,7 +982,7 @@ class GoalBasedOptimizer:
         
         for goal in self.goals:
             # Danh gia muc tieu
-            goal_value = self._evaluate_goal(goal, self.dose_matrix)
+            goal_value = self._evaluate_goal(goal, self.optimized_dose)
             is_satisfied = goal_value < 0.01  # Coi la thoa man neu gia tri < 0.01
             
             # Tao chuoi mo ta
@@ -785,6 +1059,8 @@ def create_optimizer(algorithm: str = "gradient_descent") -> GoalBasedOptimizer:
         return GoalBasedOptimizer(GoalBasedOptimizer.ALGO_BASIN_HOPPING)
     elif algorithm == "hierarchical":
         return GoalBasedOptimizer(GoalBasedOptimizer.ALGO_HIERARCHICAL)
+    elif algorithm == "predictive":
+        return GoalBasedOptimizer(GoalBasedOptimizer.ALGO_PREDICTIVE)
     else:
         logger.warning(f"Thuat toan {algorithm} khong duoc ho tro, su dung gradient_descent")
         return GoalBasedOptimizer(GoalBasedOptimizer.ALGO_GRADIENT_DESCENT) 

@@ -17,7 +17,11 @@ except ImportError:
 # Import logging module
 from quangstation.utils.logging import get_logger
 logger = get_logger("DICOMParser")
-
+    
+""" 
+    Module này nhập dữ liệu DICOM và phân loại chúng thành các loại khác nhau
+    
+    """
 class DICOMParser:
     def __init__(self, folder_path: str):
         """Khởi tạo parser với đường dẫn đến thư mục chứa file DICOM"""
@@ -400,7 +404,7 @@ class DICOMParser:
             
             return structures
         except Exception as error:
-            print(f"Lỗi trích xuất RT Structure Set: {e}")
+            print(f"Lỗi trích xuất RT Structure Set: {error}")
             return None
 
     def extract_rt_dose(self):
@@ -424,7 +428,7 @@ class DICOMParser:
             
             return dose_data, dose_metadata
         except Exception as error:
-            print(f"Lỗi trích xuất RT Dose: {e}")
+            print(f"Lỗi trích xuất RT Dose: {error}")
             return None
 
     def extract_rt_plan(self):
@@ -457,7 +461,7 @@ class DICOMParser:
             
             return plan_data
         except Exception as error:
-            print(f"Lỗi khi đọc RT Plan: {e}")
+            print(f"Lỗi khi đọc RT Plan: {error}")
             return None
 
     def extract_rt_image(self):
@@ -513,7 +517,7 @@ class DICOMParser:
             
             return rt_image_data
         except Exception as error:
-            print(f"Lỗi khi đọc RT Image: {e}")
+            print(f"Lỗi khi đọc RT Image: {error}")
             return None
 
     def _get_slice_location(self, file_path):

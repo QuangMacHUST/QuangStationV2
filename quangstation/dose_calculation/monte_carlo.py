@@ -326,7 +326,7 @@ class MonteCarlo:
             # Sử dụng phương pháp tiêu chuẩn nếu không có numba
             # ... existing code ...
         
-        return dose_grid, dose_squared_grid
+            return dose_grid, dose_squared_grid
     
     def get_dose_matrix(self) -> np.ndarray:
         """

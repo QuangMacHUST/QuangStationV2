@@ -10,7 +10,9 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 import warnings
 
 from quangstation.utils.logging import get_logger
-
+"""
+Module này chứa các thuật toán tính toán liều tiên tiến cho QuangStation V2.
+"""
 logger = get_logger(__name__)
 
 class AdvancedDoseAlgorithm:

@@ -11,6 +11,10 @@ from datetime import datetime
 from quangstation.utils.logging import get_logger
 from quangstation.contouring.contour_tools import ContourTools
 
+"""
+Module này cung cấp công cụ phân vùng tự động và thủ công cho ảnh y tế.
+Hỗ trợ nhiều thuật toán phân đoạn và tích hợp với ContourTools.
+"""
 logger = get_logger("Segmentation")
 
 class Segmentation:

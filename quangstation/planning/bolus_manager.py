@@ -14,6 +14,8 @@ class BolusModel:
     """Lớp mô phỏng và quản lý bolus trong xạ trị"""
     
     def __init__(self, name: str, density: float = 1.0, thickness_mm: float = 10.0):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """
         Khởi tạo mô hình bolus
         

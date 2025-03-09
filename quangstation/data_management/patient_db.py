@@ -5,6 +5,9 @@ import sqlite3
 from datetime import datetime
 import numpy as np
 
+"""
+Module này tạo database cho bệnh nhân
+"""
 class PatientDatabase:
     def __init__(self, db_file='patients.db'):
         self.conn = sqlite3.connect(db_file)
@@ -390,7 +393,7 @@ class PatientDatabase:
         except Exception as error:
             # Rollback transaction khi có lỗi
             self.conn.rollback()
-            print(f"Lỗi khi xóa bệnh nhân: {e}")
+            print(f"Lỗi khi xóa bệnh nhân: {error}")
             return False
 
     def close(self):
@@ -432,7 +435,7 @@ class PatientDatabase:
             
             return True
         except Exception as error:
-            print(f"Lỗi cập nhật bệnh nhân: {e}")
+            print(f"Lỗi cập nhật bệnh nhân: {error}")
             return False
 
     def get_patient_details(self, patient_id: str) -> dict:
@@ -473,7 +476,7 @@ class PatientDatabase:
             self.conn.row_factory = old_row_factory
             return result
         except Exception as error:
-            print(f"Lỗi lấy thông tin bệnh nhân: {e}")
+            print(f"Lỗi lấy thông tin bệnh nhân: {error}")
             return {}
 
     def search_patients(self, **kwargs) -> list:
@@ -520,5 +523,5 @@ class PatientDatabase:
             self.conn.row_factory = old_row_factory
             return results
         except Exception as error:
-            print(f"Lỗi tìm kiếm bệnh nhân: {e}")
+            print(f"Lỗi tìm kiếm bệnh nhân: {error}")
             return []

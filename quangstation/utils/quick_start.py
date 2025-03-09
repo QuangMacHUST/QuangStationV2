@@ -144,7 +144,7 @@ def load_config():
             config = json.load(f)
         return config
     except Exception as error:
-        print(f"Lỗi khi đọc file cấu hình: {e}")
+        print(f"Lỗi khi đọc file cấu hình: {error}")
         return create_config()
 
 def create_sample_data(workspace_dir):
@@ -192,7 +192,7 @@ def run_application():
         print("Không thể nhập module quangstation.main. Đảm bảo QuangStation đã được cài đặt đúng cách.")
         return False
     except Exception as error:
-        print(f"Lỗi khi khởi chạy ứng dụng: {e}")
+        print(f"Lỗi khi khởi chạy ứng dụng: {error}")
         return False
 
 def setup_gui():

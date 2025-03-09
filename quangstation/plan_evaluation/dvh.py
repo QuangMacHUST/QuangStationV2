@@ -28,6 +28,8 @@ class DVHCalculator:
     """
     
     def __init__(self):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """Khởi tạo DVH Calculator"""
         self.structures = {}  # Dict lưu trữ mặt nạ cấu trúc
         self.dose_data = None  # Dữ liệu liều 3D
@@ -323,7 +325,7 @@ class DVHCalculator:
                     dose_max=dose_max
                 )
             except Exception as error:
-                logger.error(f"Lỗi khi tính DVH cho {name}: {e}")
+                logger.error(f"Lỗi khi tính DVH cho {name}: {error}")
                 
         return results
     
@@ -379,7 +381,7 @@ class DVHCalculator:
             logger.info(f"Đã lưu kết quả DVH vào: {filename}")
             return True
         except Exception as error:
-            logger.error(f"Lỗi khi lưu DVH: {e}")
+            logger.error(f"Lỗi khi lưu DVH: {error}")
             return False
     
     def load_dvh_results(self, filename: str):
@@ -395,7 +397,7 @@ class DVHCalculator:
             logger.info(f"Đã tải kết quả DVH từ: {filename}")
             return True
         except Exception as error:
-            logger.error(f"Lỗi khi tải DVH: {e}")
+            logger.error(f"Lỗi khi tải DVH: {error}")
             return False
 
     def create_figure(self, figsize=(10, 6)):

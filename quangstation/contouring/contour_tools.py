@@ -10,7 +10,10 @@ from datetime import datetime
 
 # Disable pylint errors for OpenCV functions
 # pylint: disable=no-member
-
+"""
+Module này cung cấp công cụ để vẽ và chỉnh sửa contour.
+Hỗ trợ tạo và lưu DICOM RT-STRUCT.
+"""
 logger = get_logger("Contouring")
 
 class ContourTools:
@@ -62,6 +65,8 @@ class ContourTools:
         logger.info(f"ContourTools được khởi tạo với dữ liệu ảnh kích thước {image_data.shape}")
     
     def add_structure(self, name: str, color: Optional[Tuple[float, float, float]] = None):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """
         Thêm một cấu trúc mới.
         

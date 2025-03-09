@@ -22,6 +22,8 @@ class DoseMap:
     
     def __init__(self, dose_data: np.ndarray = None, dose_grid_scaling: float = 1.0, 
                  voxel_size: List[float] = None):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        dose_slice = np.zeros_like(self.volume[0])
         """
         Khởi tạo đối tượng bản đồ liều
         

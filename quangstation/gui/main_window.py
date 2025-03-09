@@ -4,7 +4,9 @@ import os
 import sys
 from datetime import datetime
 import webbrowser
-
+"""
+Module này tạo giao diện chính cho QuangStation V2
+"""
 class MainWindow:
     def __init__(self, root):
         self.root = root

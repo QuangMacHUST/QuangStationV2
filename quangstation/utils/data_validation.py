@@ -45,6 +45,8 @@ class ValidationResult:
     warnings: List[str] = None
     
     def __post_init__(self):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         if self.warnings is None:
             self.warnings = []
     

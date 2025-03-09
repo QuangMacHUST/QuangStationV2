@@ -35,11 +35,12 @@ class Viewer3D(ttk.Frame):
         
         # Khởi tạo các biến
         self.structures = {}  # Cấu trúc
-        getattr(self, "structure_colors", {}) = {}  # Màu sắc cấu trúc
+        self.structure_colors = {}  # Màu sắc cấu trúc
         self.beams = {}  # Chùm tia
         self.dose_data = None  # Dữ liệu liều
         self.image_data = None  # Dữ liệu hình ảnh
-        getattr(self, "image_metadata", {}) = {}  # Metadata hình ảnh
+        self.image_metadata = {}  # Metadata hình ảnh
+        self.dose_metadata = {}  # Metadata liều
         
         # Khởi tạo các thành phần VTK
         self.renderer = vtk.vtkRenderer()
@@ -134,14 +135,15 @@ class Viewer3D(ttk.Frame):
             colors: Dictionary chứa màu sắc của các cấu trúc
         """
         self.structures = structures
-        getattr(self, "structure_colors", {}) = colors or {}
+        if colors:
+            self.structure_colors = colors
         
         # Tạo màu mặc định cho các cấu trúc chưa có màu
         for name in structures:
-            if name not in getattr(self, "structure_colors", {}):
+            if name not in self.structure_colors:
                 # Tạo màu ngẫu nhiên
                 import random
-                getattr(self, "structure_colors", {})[name] = (random.random(), random.random(), random.random())
+                self.structure_colors[name] = (random.random(), random.random(), random.random())
         
         logger.info(f"Đã thiết lập {len(structures)} cấu trúc cho hiển thị 3D")
     
@@ -178,7 +180,7 @@ class Viewer3D(ttk.Frame):
         """
         self.image_data = image_data
         if metadata:
-            getattr(self, "image_metadata", {}) = metadata
+            self.image_metadata = metadata
         logger.info(f"Đã thiết lập dữ liệu hình ảnh cho hiển thị 3D")
     
     def show_structures(self):
@@ -193,7 +195,7 @@ class Viewer3D(ttk.Frame):
         self.structure_actors.clear()
         
         # Lấy kích thước voxel
-        voxel_size = getattr(self, "image_metadata", {}).get('voxel_size', [1.0, 1.0, 1.0])
+        voxel_size = self.image_metadata.get('voxel_size', [1.0, 1.0, 1.0])
         
         # Hiển thị từng cấu trúc
         for name, mask in self.structures.items():
@@ -209,7 +211,7 @@ class Viewer3D(ttk.Frame):
             actor.SetMapper(mapper)
             
             # Thiết lập màu sắc và độ trong suốt
-            color = getattr(self, "structure_colors", {}).get(name, (1.0, 0.0, 0.0))  # Mặc định là màu đỏ
+            color = self.structure_colors.get(name, (1.0, 0.0, 0.0))  # Mặc định là màu đỏ
             actor.GetProperty().SetColor(color)
             actor.GetProperty().SetOpacity(0.5)  # Độ trong suốt 50%
             
@@ -224,7 +226,7 @@ class Viewer3D(ttk.Frame):
     
     def show_beams(self):
         """Hiển thị các chùm tia."""
-        if not getattr(self, "beams", {}):
+        if not self.beams:
             logger.warning("Không có chùm tia để hiển thị")
             return
         
@@ -234,10 +236,10 @@ class Viewer3D(ttk.Frame):
         self.beam_actors.clear()
         
         # Lấy tâm xoay (isocenter)
-        isocenter = getattr(self, "image_metadata", {}).get('isocenter', [0, 0, 0])
+        isocenter = self.image_metadata.get('isocenter', [0, 0, 0])
         
         # Hiển thị từng chùm tia
-        for beam_id, beam in getattr(self, "beams", {}).items():
+        for beam_id, beam in self.beams.items():
             # Lấy thông tin chùm tia
             gantry_angle = beam.get('gantry_angle', 0)
             collimator_angle = beam.get('collimator_angle', 0)
@@ -253,10 +255,10 @@ class Viewer3D(ttk.Frame):
         # Cập nhật hiển thị
         self.render_window.Render()
         
-        logger.info(f"Đã hiển thị {len(getattr(self, "beams", {}))} chùm tia")
+        logger.info(f"Đã hiển thị {len(self.beams)} chùm tia")
     
     def show_dose(self):
-        """Hiển thị phân bố liều."""
+        """Hiển thị liều."""
         if self.dose_data is None:
             logger.warning("Không có dữ liệu liều để hiển thị")
             return
@@ -267,69 +269,73 @@ class Viewer3D(ttk.Frame):
         self.dose_actors.clear()
         
         # Lấy kích thước voxel
-        voxel_size = getattr(self, "image_metadata", {}).get('voxel_size', [1.0, 1.0, 1.0])
+        voxel_size = self.dose_metadata.get('voxel_size', [1.0, 1.0, 1.0])
         
-        # Lấy liều kê toa
-        prescribed_dose = 50.0  # Giá trị mặc định
+        # Tạo volume rendering cho dữ liệu liều
+        # Chuyển đổi dữ liệu liều thành VTK image data
+        vtk_data = numpy_support.numpy_to_vtk(self.dose_data.flatten(), deep=True, array_type=vtk.VTK_FLOAT)
+        image_data = vtk.vtkImageData()
+        image_data.SetDimensions(self.dose_data.shape[2], self.dose_data.shape[1], self.dose_data.shape[0])
+        image_data.SetSpacing(voxel_size)
+        image_data.SetOrigin(0, 0, 0)
+        image_data.GetPointData().SetScalars(vtk_data)
         
-        # Tạo các isodose levels (ví dụ: 95%, 80%, 50% của liều kê toa)
-        isodose_levels = [0.95, 0.8, 0.5]
-        isodose_colors = [(1.0, 0.0, 0.0), (1.0, 0.5, 0.0), (1.0, 1.0, 0.0)]  # Đỏ, Cam, Vàng
+        # Tạo các isosurface cho các mức liều
+        dose_levels = [10, 20, 30, 50, 70, 90, 95]  # Các mức liều (% của liều max)
+        dose_max = np.max(self.dose_data)
         
-        # Hiển thị từng mức liều
-        for i, (level, color) in enumerate(zip(isodose_levels, isodose_colors)):
-            # Tính giá trị ngưỡng
-            threshold = level * prescribed_dose
+        for level_idx, level_percent in enumerate(dose_levels):
+            level_value = dose_max * level_percent / 100.0
             
-            # Tạo mask cho mức liều này
-            dose_mask = (self.dose_data >= threshold).astype(np.uint8)
-            
-            # Tạo isosurface từ mask
-            surface = self._create_surface_from_mask(dose_mask, voxel_size)
+            # Tạo isosurface
+            contour = vtk.vtkMarchingCubes()
+            contour.SetInputData(image_data)
+            contour.SetValue(0, level_value)
+            contour.Update()
             
             # Tạo mapper
             mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputData(surface)
+            mapper.SetInputConnection(contour.GetOutputPort())
+            mapper.ScalarVisibilityOff()
             
             # Tạo actor
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             
             # Thiết lập màu sắc và độ trong suốt
-            actor.GetProperty().SetColor(color)
-            actor.GetProperty().SetOpacity(0.3)  # Độ trong suốt 70%
+            # Gradient màu từ xanh đến đỏ theo mức liều
+            r = level_percent / 100.0
+            g = 1.0 - level_percent / 100.0
+            b = 0.0
+            
+            actor.GetProperty().SetColor(r, g, b)
+            actor.GetProperty().SetOpacity(0.2)  # Độ trong suốt cao
             
             # Thêm actor vào renderer
             self.renderer.AddActor(actor)
-            self.dose_actors[f"isodose_{int(level*100)}"] = actor
+            self.dose_actors[f"dose_{level_percent}"] = actor
         
         # Cập nhật hiển thị
         self.render_window.Render()
         
-        logger.info(f"Đã hiển thị phân bố liều với {len(isodose_levels)} mức liều")
+        logger.info("Đã hiển thị phân bố liều")
     
     def show_all(self):
-        """Hiển thị tất cả: cấu trúc, chùm tia, và liều."""
+        """Hiển thị tất cả: cấu trúc, chùm tia và liều."""
         self.show_structures()
         self.show_beams()
         self.show_dose()
-        
-        # Đặt lại camera
-        self.reset_camera()
     
     def hide_all(self):
         """Ẩn tất cả các actor."""
-        # Xóa tất cả actor
-        for actor in self.structure_actors.values():
-            self.renderer.RemoveActor(actor)
+        # Xóa tất cả actor khỏi renderer
+        self.renderer.RemoveAllViewProps()
         
-        for actor in self.beam_actors.values():
-            self.renderer.RemoveActor(actor)
+        # Thêm lại actor trục tọa độ
+        if self.axes_actor:
+            self.renderer.AddActor(self.axes_actor)
         
-        for actor in self.dose_actors.values():
-            self.renderer.RemoveActor(actor)
-        
-        # Xóa các dictionary
+        # Xóa các tham chiếu đến actor
         self.structure_actors.clear()
         self.beam_actors.clear()
         self.dose_actors.clear()
@@ -345,65 +351,69 @@ class Viewer3D(ttk.Frame):
         self.render_window.Render()
     
     def take_screenshot(self):
-        """Chụp ảnh màn hình hiện tại."""
-        # Tạo window to image filter
+        """Chụp ảnh hiện tại và lưu vào file."""
+        from tkinter import filedialog
+        import os
+        
+        # Hiển thị hộp thoại lưu file
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("JPG files", "*.jpg"), ("All files", "*.*")],
+            title="Lưu ảnh 3D"
+        )
+        
+        if not file_path:
+            return
+        
+        # Lấy pixel từ render window
         window_to_image = vtk.vtkWindowToImageFilter()
         window_to_image.SetInput(self.render_window)
         window_to_image.SetInputBufferTypeToRGB()
         window_to_image.ReadFrontBufferOff()
         window_to_image.Update()
         
-        # Tạo writer
-        writer = vtk.vtkPNGWriter()
+        # Xác định định dạng lưu file
+        file_extension = os.path.splitext(file_path)[1].lower()
         
-        # Mở hộp thoại lưu file
-        from tkinter import filedialog
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
-            title="Lưu ảnh 3D"
-        )
+        if file_extension == ".jpg" or file_extension == ".jpeg":
+            writer = vtk.vtkJPEGWriter()
+        else:
+            writer = vtk.vtkPNGWriter()
         
-        if file_path:
-            writer.SetFileName(file_path)
-            writer.SetInputConnection(window_to_image.GetOutputPort())
-            writer.Write()
-            logger.info(f"Đã lưu ảnh 3D tại: {file_path}")
+        writer.SetFileName(file_path)
+        writer.SetInputConnection(window_to_image.GetOutputPort())
+        writer.Write()
+        
+        logger.info(f"Đã lưu ảnh 3D vào {file_path}")
     
     def _create_surface_from_mask(self, mask: np.ndarray, voxel_size: List[float]) -> vtk.vtkPolyData:
         """
-        Tạo bề mặt (surface) từ mask 3D.
+        Tạo surface (bề mặt) từ mask 3D.
         
         Args:
-            mask: Mảng 3D mask
+            mask: Mảng 3D chứa mask (0 hoặc 1)
             voxel_size: Kích thước voxel [dx, dy, dz]
-            
+        
         Returns:
-            vtkPolyData: Bề mặt đã tạo
+            vtk.vtkPolyData: Đối tượng surface
         """
-        # Chuyển đổi mask thành vtkImageData
-        vtk_image = vtk.vtkImageData()
-        vtk_image.SetDimensions(mask.shape[2], mask.shape[1], mask.shape[0])
-        vtk_image.SetSpacing(voxel_size)
-        vtk_image.SetOrigin(0, 0, 0)
+        # Chuyển đổi mask thành VTK image data
+        vtk_data = numpy_support.numpy_to_vtk(mask.flatten(), deep=True, array_type=vtk.VTK_UNSIGNED_CHAR)
+        image_data = vtk.vtkImageData()
+        image_data.SetDimensions(mask.shape[2], mask.shape[1], mask.shape[0])
+        image_data.SetSpacing(voxel_size)
+        image_data.SetOrigin(0, 0, 0)
+        image_data.GetPointData().SetScalars(vtk_data)
         
-        # Chuyển đổi numpy array thành vtk array
-        flat_mask = mask.ravel(order='F').astype(np.uint8)
-        vtk_array = numpy_support.numpy_to_vtk(flat_mask)
-        vtk_array.SetName("mask")
+        # Tạo surface từ mask bằng Marching Cubes
+        contour = vtk.vtkMarchingCubes()
+        contour.SetInputData(image_data)
+        contour.SetValue(0, 0.5)  # Giá trị ngưỡng
+        contour.Update()
         
-        # Gán dữ liệu cho vtkImageData
-        vtk_image.GetPointData().SetScalars(vtk_array)
-        
-        # Tạo isosurface bằng marching cubes
-        marching_cubes = vtk.vtkMarchingCubes()
-        marching_cubes.SetInputData(vtk_image)
-        marching_cubes.SetValue(0, 0.5)  # Ngưỡng
-        marching_cubes.Update()
-        
-        # Làm mịn bề mặt
+        # Làm mịn surface
         smoother = vtk.vtkSmoothPolyDataFilter()
-        smoother.SetInputConnection(marching_cubes.GetOutputPort())
+        smoother.SetInputConnection(contour.GetOutputPort())
         smoother.SetNumberOfIterations(15)
         smoother.SetRelaxationFactor(0.1)
         smoother.Update()
@@ -411,11 +421,11 @@ class Viewer3D(ttk.Frame):
         # Giảm số lượng tam giác
         decimator = vtk.vtkDecimatePro()
         decimator.SetInputConnection(smoother.GetOutputPort())
-        decimator.SetTargetReduction(0.5)  # Giảm 50% số tam giác
+        decimator.SetTargetReduction(0.1)  # Giảm 10% số tam giác
         decimator.PreserveTopologyOn()
         decimator.Update()
         
-        # Tính toán normal vectors
+        # Tính pháp tuyến bề mặt cho hiển thị đẹp hơn
         normals = vtk.vtkPolyDataNormals()
         normals.SetInputConnection(decimator.GetOutputPort())
         normals.SetFeatureAngle(60.0)
@@ -433,15 +443,14 @@ class Viewer3D(ttk.Frame):
             couch_angle: Góc bàn (độ)
             
         Returns:
-            vtkActor: Actor biểu diễn chùm tia
+            vtk.vtkActor: Actor biểu diễn chùm tia
         """
-        # Tạo hình nón
+        # Tạo hình nón biểu diễn chùm tia
         cone = vtk.vtkConeSource()
-        cone.SetHeight(300)  # Chiều dài chùm tia
-        cone.SetRadius(0)  # Bán kính tại đỉnh
-        cone.SetRadius2(60)  # Bán kính tại đáy
-        cone.SetResolution(20)  # Số lượng mặt
-        cone.SetDirection(0, 0, -1)  # Hướng mặc định (dọc trục Z)
+        cone.SetHeight(400)  # Chiều dài chùm tia
+        cone.SetAngle(10)    # Góc mở của chùm tia
+        cone.SetResolution(20)  # Độ chi tiết
+        cone.SetDirection(0, 0, -1)  # Hướng: theo trục Z âm
         cone.Update()
         
         # Tạo mapper
@@ -453,21 +462,21 @@ class Viewer3D(ttk.Frame):
         actor.SetMapper(mapper)
         
         # Thiết lập màu sắc và độ trong suốt
-        actor.GetProperty().SetColor(1.0, 0.0, 0.0)  # Màu đỏ
-        actor.GetProperty().SetOpacity(0.3)  # Độ trong suốt 70%
+        actor.GetProperty().SetColor(1.0, 1.0, 0.0)  # Màu vàng
+        actor.GetProperty().SetOpacity(0.3)          # Độ trong suốt
         
-        # Đặt vị trí tại isocenter
+        # Áp dụng các phép biến đổi
+        # 1. Đặt actor tại tâm xoay
         actor.SetPosition(isocenter)
         
-        # Xoay theo góc gantry và couch
-        import math
-        gantry_rad = math.radians(gantry_angle)
-        couch_rad = math.radians(couch_angle)
+        # 2. Xoay theo góc gantry
+        transform = vtk.vtkTransform()
+        transform.RotateY(gantry_angle)
         
-        # Xoay quanh trục Y (góc gantry)
-        actor.RotateY(gantry_angle)
+        # 3. Xoay theo góc bàn
+        transform.RotateZ(couch_angle)
         
-        # Xoay quanh trục Z (góc couch)
-        actor.RotateZ(couch_angle)
+        # Áp dụng biến đổi
+        actor.SetUserTransform(transform)
         
         return actor 

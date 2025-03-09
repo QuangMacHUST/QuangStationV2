@@ -732,5 +732,5 @@ class MachineQA:
             logger.info(f"Đã tạo báo cáo QA máy tại: {output_path}")
             return output_path
         except Exception as error:
-            logger.error(f"Lỗi khi tạo báo cáo QA máy: {e}")
+            logger.error(f"Lỗi khi tạo báo cáo QA máy: {error}")
             return None 

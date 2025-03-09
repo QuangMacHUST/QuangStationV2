@@ -39,6 +39,7 @@ class PlanOptimizer:
         self.structures = {}
         self.objectives = []
         self.beam_weights = None
+        self.volume = None  # Thêm khởi tạo volume để tránh lỗi
         
         # Tham số cho thuật toán gradient
         self.learning_rate = 0.01

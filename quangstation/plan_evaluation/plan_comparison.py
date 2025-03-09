@@ -25,6 +25,8 @@ class PlanComparison:
     """Lớp so sánh và đánh giá các kế hoạch xạ trị"""
     
     def __init__(self):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """Khởi tạo đối tượng so sánh kế hoạch"""
         self.logger = get_logger("PlanComparison")
         self.plans = {}

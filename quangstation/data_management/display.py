@@ -17,8 +17,15 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from quangstation.image_processing.image_loader import ImageLoader
 from quangstation.contouring.contour_tools import ContourTools
 
+"""
+Module này hiển thị ảnh 3d và các lát cắt 2d từ dữ liệu đã phân loại từ DICOM_PARSER
+    """
 class Display:
     def __init__(self, root, patient_id, db):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        dose_slice = np.zeros_like(self.volume[0])
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """Khởi tạo giao diện hiển thị"""
         self.root = root
         self.patient_id = patient_id
@@ -762,7 +769,7 @@ class Display:
             return interpolated_dose
             
         except Exception as error:
-            print(f"Lỗi khi nội suy liều: {e}")
+            print(f"Lỗi khi nội suy liều: {error}")
             return None
 
     def export_visualization(self, output_path, file_format='png', dpi=300):
@@ -802,7 +809,7 @@ class Display:
             
             return True
         except Exception as error:
-            print(f"Lỗi khi xuất hình ảnh: {e}")
+            print(f"Lỗi khi xuất hình ảnh: {error}")
             return False
 
     def load_with_image_loader(self, directory):
@@ -1025,7 +1032,7 @@ class Display:
                 
                 return True
             except Exception as error:
-                print(f"Lỗi khi lưu RT Image: {e}")
+                print(f"Lỗi khi lưu RT Image: {error}")
                 
                 # Hiển thị thông báo lỗi
                 from tkinter import messagebox
@@ -1086,7 +1093,7 @@ class Display:
             print(f"Đã lưu ảnh chụp màn hình tại: {output_path} và {vtk_path}")
             return True
         except Exception as error:
-            print(f"Lỗi khi tạo ảnh chụp màn hình: {e}")
+            print(f"Lỗi khi tạo ảnh chụp màn hình: {error}")
             return False
 
     def generate_3d_model_from_struct(self, structure_name, output_stl=None):
@@ -1175,7 +1182,7 @@ class Display:
             return normals.GetOutput()
         
         except Exception as error:
-            print(f"Lỗi khi tạo mô hình 3D: {e}")
+            print(f"Lỗi khi tạo mô hình 3D: {error}")
             import traceback
             traceback.print_exc()
             return None
@@ -1456,6 +1463,8 @@ class Display:
         return dvh_obj
     
     def plot_dvh(self, dvh_data_list):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """Vẽ biểu đồ DVH từ danh sách dữ liệu DVH"""
         if not dvh_data_list:
             return
@@ -1555,6 +1564,8 @@ class Display:
         return mask
     
     def find_nearest_slice(self, z_position):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """Tìm slice gần nhất với vị trí z cho trước"""
         if self.metadata is None or 'slices' not in self.metadata:
             return 0

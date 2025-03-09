@@ -10,7 +10,10 @@ from scipy.ndimage import zoom
 # Import module DICOMParser từ data_management
 from quangstation.data_management.dicom_parser import DICOMParser
 from quangstation.utils.logging import get_logger
-
+"""
+Module này tải và xử lý chuỗi ảnh y tế (CT/MRI/PET/SPECT).
+Hỗ trợ hiển thị theo các trục Axial, Coronal, Sagittal và dựng mô hình 3D.
+"""
 logger = get_logger("ImageLoader")
 
 class ImageLoader:

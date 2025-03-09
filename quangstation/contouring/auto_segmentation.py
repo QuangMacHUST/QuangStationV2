@@ -166,7 +166,7 @@ class UNetModel(SegmentationModel):
             pil_image = Image.fromarray(image)
             
             # Đổi kích thước về kích thước đầu vào của mô hình
-            pil_image = pil_image.resize(self.input_size, Image.BILINEAR)
+            pil_image = pil_image.resize(self.input_size, Image.BICUBIC)
             
             # Áp dụng các biến đổi
             transform = transforms.Compose([
@@ -182,7 +182,7 @@ class UNetModel(SegmentationModel):
             
             return input_tensor
             
-        except ImportError as e:
+        except ImportError as error:
             self.logger.error(f"Lỗi import thư viện khi tiền xử lý: {str(error)}")
             raise
         except Exception as error:
@@ -213,8 +213,7 @@ class AutoSegmentation:
             
         # Đường dẫn đến thư mục chứa mô hình
         from quangstation.utils.config import get_config
-        config = get_config()
-        models_dir = config.get("paths", {}).get("models_dir", "models")
+        models_dir = get_config("paths.models_dir", "models")
         
         if not os.path.exists(models_dir):
             self.logger.warning(f"Thư mục mô hình không tồn tại: {models_dir}")

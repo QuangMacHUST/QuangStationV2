@@ -87,6 +87,8 @@ class RTWorkflow:
     """
     
     def __init__(self, session_id: Optional[str] = None):
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
+        structure_mask = np.zeros_like(self.volume)
         """
         Khởi tạo một quy trình xạ trị.
         
@@ -120,7 +122,7 @@ class RTWorkflow:
         self.image_origin = None
         self.image_orientation = None
         self.structures = {}  # name -> mask
-        getattr(self, "structure_colors", {}) = {}  # name -> color
+        self.structure_colors = {}  # name -> color
         
         # Dữ liệu kế hoạch và liều
         self.plans = {}  # plan_id -> PlanConfig

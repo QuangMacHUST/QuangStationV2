@@ -279,7 +279,7 @@ class TreatmentReport:
             return output_path
         
         except Exception as error:
-            logger.error(f"Lỗi khi tạo báo cáo PDF: {e}")
+            logger.error(f"Lỗi khi tạo báo cáo PDF: {error}")
             return None
     
     def generate_docx_report(self, output_path=None):
@@ -422,7 +422,7 @@ class TreatmentReport:
             return output_path
         
         except Exception as error:
-            logger.error(f"Lỗi khi tạo báo cáo DOCX: {e}")
+            logger.error(f"Lỗi khi tạo báo cáo DOCX: {error}")
             return None
     
     def generate_html_report(self, output_path=None):
@@ -619,7 +619,7 @@ class TreatmentReport:
             return output_path
         
         except Exception as error:
-            logger.error(f"Lỗi khi tạo báo cáo HTML: {e}")
+            logger.error(f"Lỗi khi tạo báo cáo HTML: {error}")
             return None
     
     def export_json_summary(self, output_path=None):
@@ -648,7 +648,7 @@ class TreatmentReport:
             return output_path
         
         except Exception as error:
-            logger.error(f"Lỗi khi xuất báo cáo JSON: {e}")
+            logger.error(f"Lỗi khi xuất báo cáo JSON: {error}")
             return None
 
 def generate_treatment_report(patient_data, plan_data, dose_data, structures, 

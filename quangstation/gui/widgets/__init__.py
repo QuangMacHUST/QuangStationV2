@@ -8,7 +8,7 @@ __all__ = ['ImageViewer']
 
 # Thêm Viewer3D nếu VTK được cài đặt
 try:
-    from quangstation.gui.widgets.3d_viewer import Viewer3D
+    from quangstation.gui.widgets.viewer_3d import Viewer3D
     __all__.append('Viewer3D')
 except ImportError:
     pass 
