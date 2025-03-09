@@ -16,7 +16,7 @@ import os
 import json
 
 # Import utility modules
-from utils.logging import get_logger
+from quangstation.utils.logging import get_logger
 
 # Initialize logger
 logger = get_logger("DVH")
@@ -151,11 +151,20 @@ class DVHCalculator:
         dose_bins = np.linspace(0, dose_max, bins + 1)
         dvh_values = np.zeros(bins)
         
-        # Tính toán DVH tích lũy
-        hist, _ = np.histogram(doses_in_structure, bins=dose_bins)
-        for i in range(bins):
-            dvh_values[i] = np.sum(hist[i:]) / len(doses_in_structure) * 100
-            
+        # Tính histogram
+        hist, edges = np.histogram(doses_in_structure, bins=bins, range=(0, dose_max))
+        
+        # Tính DVH tích lũy
+        dvh = np.cumsum(hist[::-1])[::-1]
+        
+        # Kiểm tra trường hợp cấu trúc không có voxel nào
+        if dvh.size > 0 and dvh[0] > 0:
+            dvh = dvh / dvh[0] * 100
+        else:
+            # Trường hợp cấu trúc không có voxel hoặc tất cả voxel nằm ngoài phạm vi liều
+            dvh = np.zeros_like(dvh)
+            logger.log_warning(f"Cấu trúc {structure_name} không có dữ liệu liều hợp lệ để tính DVH")
+        
         # Tính các thông số DVH
         d_min = np.min(doses_in_structure)
         d_max = np.max(doses_in_structure)

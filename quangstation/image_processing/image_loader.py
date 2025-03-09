@@ -19,8 +19,23 @@ class ImageLoader:
     def load_dicom_series(self, directory):
         """Tải chuỗi ảnh DICOM từ thư mục"""
         reader = sitk.ImageSeriesReader()
-        dicom_names = reader.GetGDCMSeriesFileNames(directory)
-        reader.SetFileNames(dicom_names)
+        all_files = [os.path.join(directory, f) for f in os.listdir(directory)
+                      if os.path.isfile(os.path.join(directory, f))]
+        
+        # Kiểm tra từng file có phải DICOM không
+        dicom_files = []
+        for file_path in all_files:
+            try:
+                with open(file_path, 'rb') as f:
+                    # Kiểm tra DICOM magic number (DICM ở offset 128)
+                    f.seek(128)
+                    magic = f.read(4)
+                    if magic == b'DICM':
+                        dicom_files.append(file_path)
+            except:
+                continue
+        
+        reader.SetFileNames(dicom_files)
         self.image_series = reader.Execute()
         
         # Lấy thông tin không gian
@@ -29,7 +44,7 @@ class ImageLoader:
         self.direction = self.image_series.GetDirection()
         
         # Xác định loại ảnh từ metadata
-        first_dicom = pydicom.dcmread(dicom_names[0])
+        first_dicom = pydicom.dcmread(dicom_files[0])
         self.image_type = first_dicom.Modality
         
         # Trích xuất thông tin cơ bản

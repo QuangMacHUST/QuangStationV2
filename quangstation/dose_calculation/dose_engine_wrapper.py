@@ -40,6 +40,7 @@ class DoseCalculator:
         self.beam_data = []
         self.structures = {}
         self.patient_data = None
+        self.hu_to_density_file = None
         
         # Nếu có module C++, sử dụng nó
         if HAS_CPP_MODULE:
@@ -143,15 +144,20 @@ class DoseCalculator:
         for name, mask in self.structures.items():
             structures_cpp[name] = mask
         
-        # Gọi hàm tính toán liều C++
-        dose_matrix = self._algo.calculateDose(
-            image_data,
-            spacing,
-            beams,
-            structures_cpp
-        )
-        
-        return dose_matrix
+        try:
+            # Gọi hàm tính toán liều C++
+            dose_matrix = self._algo.calculateDose(
+                image_data,
+                spacing,
+                beams,
+                structures_cpp
+            )
+            self._dose_matrix = dose_matrix
+            return dose_matrix
+        except Exception as e:
+            logger.log_error(f"Lỗi khi tính toán liều bằng C++: {str(e)}")
+            logger.log_info("Chuyển sang phương pháp tính toán Python thuần túy...")
+            return self._calculate_dose_python()
     
     def _calculate_dose_python(self) -> np.ndarray:
         """
@@ -192,6 +198,7 @@ class DoseCalculator:
         if np.max(dose_matrix) > 0:
             dose_matrix = dose_matrix * (100.0 / np.max(dose_matrix))
         
+        self._dose_matrix = dose_matrix
         return dose_matrix
     
     def save_dose_matrix(self, file_path: str):
@@ -201,8 +208,34 @@ class DoseCalculator:
         Args:
             file_path: Đường dẫn file
         """
-        # TODO: Implement save dose matrix
-        pass
+        # Kiểm tra đã tính toán liều chưa
+        if not hasattr(self, '_dose_matrix'):
+            raise ValueError("Chưa tính toán liều. Hãy gọi calculate_dose() trước.")
+        
+        # Tạo thư mục nếu chưa tồn tại
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Lưu ma trận liều
+        try:
+            np.save(file_path, self._dose_matrix)
+            
+            # Lưu metadata
+            metadata = {
+                "algorithm": self.algorithm,
+                "resolution_mm": self.resolution_mm,
+                "spacing": self.patient_data["spacing"] if self.patient_data else None,
+                "time_calculated": np.datetime64('now').astype(str)
+            }
+            
+            metadata_file = os.path.splitext(file_path)[0] + "_metadata.json"
+            with open(metadata_file, 'w') as f:
+                import json
+                json.dump(metadata, f, indent=2)
+                
+            return True
+        except Exception as e:
+            logger.log_error(f"Lỗi khi lưu ma trận liều: {str(e)}")
+            return False
     
     def load_dose_matrix(self, file_path: str) -> np.ndarray:
         """
@@ -214,8 +247,30 @@ class DoseCalculator:
         Returns:
             Ma trận liều
         """
-        # TODO: Implement load dose matrix
-        pass
+        # Kiểm tra file tồn tại
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Không tìm thấy file ma trận liều: {file_path}")
+        
+        # Tải ma trận liều
+        try:
+            dose_matrix = np.load(file_path)
+            self._dose_matrix = dose_matrix
+            
+            # Tải metadata nếu có
+            metadata_file = os.path.splitext(file_path)[0] + "_metadata.json"
+            if os.path.exists(metadata_file):
+                with open(metadata_file, 'r') as f:
+                    import json
+                    metadata = json.load(f)
+                    
+                    # Cập nhật các thông số từ metadata
+                    self.algorithm = metadata.get("algorithm", self.algorithm)
+                    self.resolution_mm = metadata.get("resolution_mm", self.resolution_mm)
+                
+            return dose_matrix
+        except Exception as e:
+            logger.log_error(f"Lỗi khi tải ma trận liều: {str(e)}")
+            return None
 
 # Tạo instance mặc định
 default_calculator = DoseCalculator()

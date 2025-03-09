@@ -19,7 +19,7 @@ dose_engine_module = Extension(
         'quangstation/dose_calculation/dose_engine.cpp',
     ],
     include_dirs=[],
-    extra_compile_args=['-std=c++14'] if not is_windows else [],
+    extra_compile_args=['-std=c++14'] if not is_windows else ['/std:c++14'],
 )
 extensions.append(dose_engine_module)
 
@@ -30,7 +30,7 @@ optimizer_module = Extension(
         'quangstation/optimization/optimizer.cpp',
     ],
     include_dirs=[],
-    extra_compile_args=['-std=c++14'] if not is_windows else [],
+    extra_compile_args=['-std=c++14'] if not is_windows else ['/std:c++14'],
 )
 extensions.append(optimizer_module)
 

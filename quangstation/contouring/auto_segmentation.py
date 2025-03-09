@@ -228,6 +228,14 @@ class AutoSegmentation:
                 self.default_model = "unet_ct_general"
             elif len(self.models) > 0:
                 self.default_model = list(self.models.keys())[0]
+            
+            # Tìm các model đã lưu
+            if not os.path.exists(models_dir):
+                os.makedirs(models_dir, exist_ok=True)
+            model_dirs = [f for f in os.listdir(models_dir) if os.path.isdir(os.path.join(models_dir, f))]
+            
+            for model_dir in model_dirs:
+                # ... existing code ...
     
     def get_available_models(self) -> List[Dict[str, str]]:
         """

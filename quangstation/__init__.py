@@ -20,7 +20,6 @@ required_packages = [
     "scipy",
     "vtk",
     "opencv-python",
-    "tkinter"
 ]
 
 for package in required_packages:
@@ -29,6 +28,12 @@ for package in required_packages:
     
     if importlib.util.find_spec(pkg_name) is None:
         print(f"Cảnh báo: Không tìm thấy package {package}. Vui lòng cài đặt bằng cách chạy: pip install {package}")
+
+# Kiểm tra tkinter riêng vì là module tích hợp
+try:
+    import tkinter
+except ImportError:
+    print("Cảnh báo: Không tìm thấy module tkinter. Vui lòng cài đặt Python với tùy chọn tkinter.")
 
 # Import các module chính
 from quangstation.utils.logging import setup_exception_logging
