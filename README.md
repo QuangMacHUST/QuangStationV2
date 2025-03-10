@@ -122,7 +122,9 @@ Dự án được phân phối dưới Giấy phép MIT. Xem [LICENSE](LICENSE) 
 ## 🌟 Hỗ trợ
 Nếu bạn thấy dự án hữu ích, hãy cho chúng tôi một sao ⭐ trên GitHub!
 
-## 🔄 Cập nhật gần đây
+## �� Cập nhật gần đây
+- Triển khai tính năng tối ưu hóa dựa trên kiến thức (KBP - Knowledge-Based Planning)
+- Cải tiến tính năng tính toán liều với phương pháp Monte Carlo
 - Cải thiện cấu trúc dự án
 - Sửa lỗi xóa bệnh nhân
 - Thêm xử lý ngoại lệ tốt hơn
@@ -140,4 +142,41 @@ Nếu bạn thấy dự án hữu ích, hãy cho chúng tôi một sao ⭐ trên
 - Phát triển chức năng báo cáo chi tiết
 - Hỗ trợ đa ngôn ngữ
 - Tích hợp với hệ thống PACS/HIS
+
+## 📊 Dữ liệu chuẩn cần thiết
+Để hệ thống hoạt động tối ưu, cần các dữ liệu chuẩn sau:
+
+### 1. Dữ liệu huấn luyện cho KBP
+- Bộ dữ liệu kế hoạch xạ trị đã được phê duyệt (tối thiểu 50 kế hoạch cho mỗi vị trí điều trị)
+- Dữ liệu DVH của các cơ quan nguy cấp (OAR) và thể tích điều trị (PTV)
+- Thông tin về các ràng buộc liều đã sử dụng trong các kế hoạch chất lượng cao
+
+### 2. Dữ liệu vật lý cho tính toán liều
+- Dữ liệu đặc tính chùm tia (beam data) cho các máy gia tốc
+- Dữ liệu đo đạc phantom cho kiểm định thuật toán
+- Dữ liệu hiệu chỉnh không đồng nhất (heterogeneity correction)
+- Dữ liệu đo đạc MLC (Multi-Leaf Collimator)
+
+### 3. Dữ liệu CT và cấu trúc
+- Bộ dữ liệu CT chuẩn với các cấu trúc đã được vẽ
+- Bộ dữ liệu atlas cho phân đoạn tự động
+- Dữ liệu chuyển đổi HU sang mật độ electron và thông số vật liệu
+
+### 4. Dữ liệu đánh giá kế hoạch
+- Các ràng buộc liều chuẩn theo QUANTEC, RTOG và các hướng dẫn lâm sàng mới nhất
+- Dữ liệu tham chiếu cho các chỉ số đánh giá kế hoạch (CI, HI, GI, v.v.)
+- Dữ liệu tham chiếu cho các mô hình hiệu quả sinh học (TCP, NTCP)
+
+Các dữ liệu này có thể được thu thập từ:
+1. Cơ sở dữ liệu nội bộ của bệnh viện
+2. Cơ sở dữ liệu công khai như TCIA (The Cancer Imaging Archive)
+3. Dữ liệu từ các thử nghiệm lâm sàng
+4. Dữ liệu đo đạc commissioning của máy gia tốc
+
+## 🔬 Kiểm định và đảm bảo chất lượng
+Hệ thống cần được kiểm định theo các tiêu chuẩn:
+- AAPM TG-53: Đảm bảo chất lượng hệ thống lập kế hoạch xạ trị
+- AAPM TG-119: Kiểm định IMRT
+- IAEA TRS-430: Commissioning và QA hệ thống lập kế hoạch xạ trị
+- MPPG 5.a: Commissioning hệ thống lập kế hoạch xạ trị
 

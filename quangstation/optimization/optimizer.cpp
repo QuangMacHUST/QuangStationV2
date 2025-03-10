@@ -160,8 +160,53 @@ public:
                     // Mục tiêu: Độ tương thích cao (liều trong PTV cao, ngoài PTV thấp)
                     // Chỉ số đơn giản: tỷ lệ thể tích nhận >= 95% liều mục tiêu nằm trong PTV
                     
-                    // TODO: Triển khai chỉ số tương thích thực tế (cần thông tin về liều bên ngoài PTV)
-                    objective_value = 0.0;
+                    // Triển khai chỉ số tương thích thực tế (Paddick Conformity Index)
+                    // Paddick CI = (TV_PIV)² / (TV × PIV)
+                    // TV_PIV: thể tích đích nhận liều kê toa
+                    // TV: thể tích đích
+                    // PIV: thể tích nhận liều kê toa
+                    
+                    // Tìm tất cả các voxel nhận ít nhất liều kê toa (PIV)
+                    double prescribed_dose = objective.dose;
+                    int piv_volume = 0;  // Thể tích nhận liều kê toa
+                    int tv_volume = 0;   // Thể tích đích
+                    int tv_piv_volume = 0; // Thể tích đích nhận liều kê toa
+                    
+                    // Tính các thể tích
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                // Kiểm tra xem voxel có nằm trong PTV không
+                                bool is_in_target = mask[i][j][k] > 0;
+                                
+                                // Kiểm tra xem voxel có nhận đủ liều không
+                                bool is_in_piv = total_dose[i][j][k] >= prescribed_dose;
+                                
+                                // Cập nhật các thể tích
+                                if (is_in_target) {
+                                    tv_volume++;
+                                }
+                                
+                                if (is_in_piv) {
+                                    piv_volume++;
+                                }
+                                
+                                if (is_in_target && is_in_piv) {
+                                    tv_piv_volume++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Tính chỉ số Paddick
+                    double paddick_ci = 0.0;
+                    if (tv_volume > 0 && piv_volume > 0) {
+                        paddick_ci = std::pow(tv_piv_volume, 2) / (static_cast<double>(tv_volume) * piv_volume);
+                    }
+                    
+                    // Mục tiêu là tối đa hóa chỉ số Paddick (gần 1.0)
+                    // Chuyển thành bài toán tối thiểu hóa
+                    objective_value = std::max(0.0, 1.0 - paddick_ci);
                     break;
                 }
                 case ObjectiveFunction::HOMOGENEITY: {
@@ -392,8 +437,420 @@ public:
     
     // Chạy thuật toán tối ưu hóa
     std::vector<double> optimize() {
-        // TODO: Triển khai thuật toán di truyền
-        return std::vector<double>();
+        // Triển khai thuật toán di truyền
+        if (population.empty() || objectives.empty() || beam_dose_matrices.empty()) {
+            std::cerr << "Dữ liệu không đủ để tối ưu hóa." << std::endl;
+            return std::vector<double>();
+        }
+        
+        // Khởi tạo bộ tạo số ngẫu nhiên
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        
+        // Tính độ thích nghi cho quần thể ban đầu
+        evaluate_fitness();
+        
+        // Theo dõi cá thể tốt nhất qua các thế hệ
+        std::vector<double> best_individual;
+        double best_fitness = std::numeric_limits<double>::max();
+        
+        // Chạy qua các thế hệ
+        for (int generation = 0; generation < max_generations; ++generation) {
+            // Lưu lại cá thể tốt nhất
+            int best_idx = find_best_individual();
+            if (fitness[best_idx] < best_fitness) {
+                best_fitness = fitness[best_idx];
+                best_individual = population[best_idx];
+            }
+            
+            // In thông tin về thế hệ hiện tại
+            if (generation % 10 == 0) {
+                std::cout << "Thế hệ " << generation << ", độ thích nghi tốt nhất: " 
+                          << best_fitness << std::endl;
+            }
+            
+            // Tạo quần thể mới
+            std::vector<std::vector<double>> new_population;
+            
+            // Giữ lại một số cá thể tốt nhất (elitism)
+            int num_elites = static_cast<int>(population_size * 0.1); // 10% elites
+            std::vector<int> elite_indices = find_elite_individuals(num_elites);
+            for (int idx : elite_indices) {
+                new_population.push_back(population[idx]);
+            }
+            
+            // Tạo phần còn lại của quần thể qua chọn lọc, lai ghép và đột biến
+            while (new_population.size() < population_size) {
+                // Chọn 2 cá thể cha mẹ dựa trên độ thích nghi
+                std::vector<double> parent1 = select_individual();
+                std::vector<double> parent2 = select_individual();
+                
+                // Lai ghép nếu xác suất lai thỏa mãn
+                std::vector<double> child1 = parent1;
+                std::vector<double> child2 = parent2;
+                
+                if (std::uniform_real_distribution<double>(0.0, 1.0)(gen) < crossover_rate) {
+                    std::tie(child1, child2) = crossover(parent1, parent2);
+                }
+                
+                // Đột biến
+                mutate(child1);
+                mutate(child2);
+                
+                // Chuẩn hóa trọng số
+                normalize_weights(child1);
+                normalize_weights(child2);
+                
+                // Thêm vào quần thể mới
+                new_population.push_back(child1);
+                if (new_population.size() < population_size) {
+                    new_population.push_back(child2);
+                }
+            }
+            
+            // Thay thế quần thể cũ
+            population = std::move(new_population);
+            
+            // Tính lại độ thích nghi
+            evaluate_fitness();
+            
+            // Kiểm tra điều kiện dừng (có thể thêm logic dừng sớm nếu cần)
+            if (generation > 10 && best_fitness < 1e-4) {
+                std::cout << "Đã đạt ngưỡng hội tụ, dừng tối ưu hóa tại thế hệ " << generation << std::endl;
+                break;
+            }
+        }
+        
+        // Trả về cá thể tốt nhất
+        return best_individual.empty() ? population[find_best_individual()] : best_individual;
+    }
+
+private:
+    // Tính độ thích nghi cho tất cả các cá thể trong quần thể
+    void evaluate_fitness() {
+        for (size_t i = 0; i < population.size(); ++i) {
+            fitness[i] = calculate_fitness(population[i]);
+        }
+    }
+    
+    // Tính độ thích nghi của một cá thể (trọng số chùm tia)
+    double calculate_fitness(const std::vector<double>& weights) {
+        // Tính tổng liều dựa trên trọng số chùm tia
+        auto total_dose = calculate_total_dose(weights);
+        
+        double total_objective = 0.0;
+        
+        // Tính giá trị hàm mục tiêu
+        for (const auto& objective : objectives) {
+            // Tìm mặt nạ của cấu trúc
+            auto mask_it = structure_masks.find(objective.structure_name);
+            if (mask_it == structure_masks.end()) {
+                std::cerr << "Không tìm thấy cấu trúc " << objective.structure_name << std::endl;
+                continue;
+            }
+            
+            const auto& mask = mask_it->second;
+            double obj_value = 0.0;
+            
+            switch (objective.type) {
+                case ObjectiveFunction::MAX_DOSE: {
+                    double max_dose = 0.0;
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                if (mask[i][j][k] > 0 && total_dose[i][j][k] > max_dose) {
+                                    max_dose = total_dose[i][j][k];
+                                }
+                            }
+                        }
+                    }
+                    obj_value = std::max(0.0, max_dose - objective.dose);
+                    break;
+                }
+                case ObjectiveFunction::MIN_DOSE: {
+                    double min_dose = std::numeric_limits<double>::max();
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                if (mask[i][j][k] > 0 && total_dose[i][j][k] < min_dose) {
+                                    min_dose = total_dose[i][j][k];
+                                }
+                            }
+                        }
+                    }
+                    obj_value = std::max(0.0, objective.dose - min_dose);
+                    break;
+                }
+                case ObjectiveFunction::MEAN_DOSE: {
+                    double sum_dose = 0.0;
+                    int count = 0;
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                if (mask[i][j][k] > 0) {
+                                    sum_dose += total_dose[i][j][k];
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                    double mean_dose = count > 0 ? sum_dose / count : 0.0;
+                    obj_value = std::pow(mean_dose - objective.dose, 2);
+                    break;
+                }
+                case ObjectiveFunction::MAX_DVH: {
+                    // Tính DVH và xác định liều cho phần trăm thể tích
+                    std::vector<double> doses;
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                if (mask[i][j][k] > 0) {
+                                    doses.push_back(total_dose[i][j][k]);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!doses.empty()) {
+                        std::sort(doses.begin(), doses.end());
+                        int idx = static_cast<int>(doses.size() * (1.0 - objective.volume_percent / 100.0));
+                        idx = std::min(std::max(0, idx), static_cast<int>(doses.size() - 1));
+                        double actual_dose = doses[idx];
+                        obj_value = std::max(0.0, actual_dose - objective.dose);
+                    }
+                    break;
+                }
+                case ObjectiveFunction::MIN_DVH: {
+                    // Tính DVH và xác định liều cho phần trăm thể tích
+                    std::vector<double> doses;
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                if (mask[i][j][k] > 0) {
+                                    doses.push_back(total_dose[i][j][k]);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!doses.empty()) {
+                        std::sort(doses.begin(), doses.end());
+                        int idx = static_cast<int>(doses.size() * (objective.volume_percent / 100.0));
+                        idx = std::min(std::max(0, idx), static_cast<int>(doses.size() - 1));
+                        double actual_dose = doses[idx];
+                        obj_value = std::max(0.0, objective.dose - actual_dose);
+                    }
+                    break;
+                }
+                case ObjectiveFunction::CONFORMITY: {
+                    // Mục tiêu: Độ tương thích cao (liều trong PTV cao, ngoài PTV thấp)
+                    // Chỉ số đơn giản: tỷ lệ thể tích nhận >= 95% liều mục tiêu nằm trong PTV
+                    
+                    // Triển khai chỉ số tương thích thực tế (Paddick Conformity Index)
+                    // Paddick CI = (TV_PIV)² / (TV × PIV)
+                    // TV_PIV: thể tích đích nhận liều kê toa
+                    // TV: thể tích đích
+                    // PIV: thể tích nhận liều kê toa
+                    
+                    // Tìm tất cả các voxel nhận ít nhất liều kê toa (PIV)
+                    double prescribed_dose = objective.dose;
+                    int piv_volume = 0;  // Thể tích nhận liều kê toa
+                    int tv_volume = 0;   // Thể tích đích
+                    int tv_piv_volume = 0; // Thể tích đích nhận liều kê toa
+                    
+                    // Tính các thể tích
+                    for (size_t i = 0; i < total_dose.size(); ++i) {
+                        for (size_t j = 0; j < total_dose[i].size(); ++j) {
+                            for (size_t k = 0; k < total_dose[i][j].size(); ++k) {
+                                // Kiểm tra xem voxel có nằm trong PTV không
+                                bool is_in_target = mask[i][j][k] > 0;
+                                
+                                // Kiểm tra xem voxel có nhận đủ liều không
+                                bool is_in_piv = total_dose[i][j][k] >= prescribed_dose;
+                                
+                                // Cập nhật các thể tích
+                                if (is_in_target) {
+                                    tv_volume++;
+                                }
+                                
+                                if (is_in_piv) {
+                                    piv_volume++;
+                                }
+                                
+                                if (is_in_target && is_in_piv) {
+                                    tv_piv_volume++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Tính chỉ số Paddick
+                    double paddick_ci = 0.0;
+                    if (tv_volume > 0 && piv_volume > 0) {
+                        paddick_ci = std::pow(tv_piv_volume, 2) / (static_cast<double>(tv_volume) * piv_volume);
+                    }
+                    
+                    // Mục tiêu là tối đa hóa chỉ số Paddick (gần 1.0)
+                    // Chuyển thành bài toán tối thiểu hóa
+                    obj_value = std::max(0.0, 1.0 - paddick_ci);
+                    break;
+                }
+                default:
+                    std::cerr << "Loại mục tiêu chưa được hỗ trợ" << std::endl;
+                    break;
+            }
+            
+            total_objective += objective.weight * obj_value;
+        }
+        
+        return total_objective;
+    }
+    
+    // Tìm cá thể tốt nhất (có độ thích nghi thấp nhất)
+    int find_best_individual() {
+        int best_idx = 0;
+        double best_fitness_val = fitness[0];
+        
+        for (size_t i = 1; i < fitness.size(); ++i) {
+            if (fitness[i] < best_fitness_val) {
+                best_fitness_val = fitness[i];
+                best_idx = i;
+            }
+        }
+        
+        return best_idx;
+    }
+    
+    // Tìm n cá thể tốt nhất
+    std::vector<int> find_elite_individuals(int n) {
+        std::vector<std::pair<double, int>> fitness_with_idx;
+        for (size_t i = 0; i < fitness.size(); ++i) {
+            fitness_with_idx.push_back(std::make_pair(fitness[i], i));
+        }
+        
+        std::sort(fitness_with_idx.begin(), fitness_with_idx.end());
+        
+        std::vector<int> elite_indices;
+        for (int i = 0; i < n && i < static_cast<int>(fitness_with_idx.size()); ++i) {
+            elite_indices.push_back(fitness_with_idx[i].second);
+        }
+        
+        return elite_indices;
+    }
+    
+    // Chọn cá thể dựa trên độ thích nghi (sử dụng tournament selection)
+    std::vector<double> select_individual() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        
+        // Chọn ngẫu nhiên k cá thể và lấy cá thể tốt nhất
+        const int k = 3; // tournament size
+        std::vector<int> tournament;
+        
+        for (int i = 0; i < k; ++i) {
+            int idx = std::uniform_int_distribution<int>(0, population.size() - 1)(gen);
+            tournament.push_back(idx);
+        }
+        
+        int best_idx = tournament[0];
+        double best_fitness_val = fitness[best_idx];
+        
+        for (size_t i = 1; i < tournament.size(); ++i) {
+            int idx = tournament[i];
+            if (fitness[idx] < best_fitness_val) {
+                best_fitness_val = fitness[idx];
+                best_idx = idx;
+            }
+        }
+        
+        return population[best_idx];
+    }
+    
+    // Lai ghép hai cá thể để tạo ra hai cá thể con
+    std::pair<std::vector<double>, std::vector<double>> crossover(
+        const std::vector<double>& parent1, 
+        const std::vector<double>& parent2
+    ) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        
+        // Sử dụng lai ghép một điểm
+        int crossover_point = std::uniform_int_distribution<int>(1, parent1.size() - 2)(gen);
+        
+        std::vector<double> child1 = parent1;
+        std::vector<double> child2 = parent2;
+        
+        for (size_t i = crossover_point; i < parent1.size(); ++i) {
+            child1[i] = parent2[i];
+            child2[i] = parent1[i];
+        }
+        
+        return std::make_pair(child1, child2);
+    }
+    
+    // Đột biến cá thể
+    void mutate(std::vector<double>& individual) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<double> dis(0.0, 1.0);
+        
+        for (size_t i = 0; i < individual.size(); ++i) {
+            if (dis(gen) < mutation_rate) {
+                // Thêm một giá trị ngẫu nhiên từ -0.2 đến 0.2
+                double delta = dis(gen) * 0.4 - 0.2;
+                individual[i] = std::max(0.0, std::min(1.0, individual[i] + delta));
+            }
+        }
+    }
+    
+    // Chuẩn hóa trọng số để tổng bằng 1
+    void normalize_weights(std::vector<double>& weights) {
+        double sum = 0.0;
+        for (double w : weights) {
+            sum += w;
+        }
+        
+        if (sum > 0) {
+            for (size_t i = 0; i < weights.size(); ++i) {
+                weights[i] /= sum;
+            }
+        } else {
+            // Nếu tổng bằng 0, khởi tạo lại với trọng số đều nhau
+            double equal_weight = 1.0 / weights.size();
+            for (size_t i = 0; i < weights.size(); ++i) {
+                weights[i] = equal_weight;
+            }
+        }
+    }
+    
+    // Tính toán tổng liều dựa trên trọng số chùm tia
+    std::vector<std::vector<std::vector<double>>> calculate_total_dose(const std::vector<double>& weights) {
+        auto result = dose_matrix; // Khởi tạo với ma trận liều ban đầu (nếu có)
+        
+        // Nếu không có ma trận liều ban đầu, khởi tạo ma trận kết quả với giá trị 0
+        if (result.empty() && !beam_dose_matrices.empty()) {
+            size_t dimX = beam_dose_matrices[0].size();
+            size_t dimY = beam_dose_matrices[0][0].size();
+            size_t dimZ = beam_dose_matrices[0][0][0].size();
+            
+            result.resize(dimX, std::vector<std::vector<double>>(dimY, std::vector<double>(dimZ, 0.0)));
+        }
+        
+        // Tích hợp liều từ mỗi chùm tia theo trọng số
+        for (size_t b = 0; b < beam_dose_matrices.size() && b < weights.size(); ++b) {
+            const auto& beam_dose = beam_dose_matrices[b];
+            double weight = weights[b];
+            
+            for (size_t i = 0; i < result.size(); ++i) {
+                for (size_t j = 0; j < result[i].size(); ++j) {
+                    for (size_t k = 0; k < result[i][j].size(); ++k) {
+                        result[i][j][k] += weight * beam_dose[i][j][k];
+                    }
+                }
+            }
+        }
+        
+        return result;
     }
 };
 

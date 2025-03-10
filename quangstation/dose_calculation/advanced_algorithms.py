@@ -143,20 +143,28 @@ class GridBasedDoseCalculation(AdvancedDoseAlgorithm):
         return dose_grid
         
     def _calculate_beam_dose(self, beam: Dict[str, Any]) -> np.ndarray:
-        """Tính toán liều cho một chùm tia."""
-        image_data = self.patient_data['image']
-        spacing = self.patient_data['spacing']
+        """
+        Tính toán liều từ một chùm tia sử dụng ray tracing
         
-        # Tạo lưới liều trống cho chùm này
-        beam_dose = np.zeros_like(image_data, dtype=np.float32)
+        Args:
+            beam: Thông tin chùm tia
+            
+        Returns:
+            Mảng 3D chứa liều từ chùm tia
+        """
+        # Lấy thông tin chùm tia
+        energy = beam.get('energy', 6.0)  # MV
+        gantry_angle = beam.get('gantry_angle', 0.0)  # độ
+        collimator_angle = beam.get('collimator_angle', 0.0)  # độ
+        field_size = beam.get('field_size', [10.0, 10.0])  # cm
+        sad = beam.get('sad', 100.0)  # cm (Source-to-Axis Distance)
+        weight = beam.get('weight', 1.0)
         
-        # Lấy thông số chùm tia
-        energy = beam['energy']
-        gantry_angle = beam['gantry_angle']
-        beam_weight = beam.get('weight', 1.0)
-        
-        # Tính hướng chùm tia
+        # Chuyển đổi góc sang radian
         gantry_rad = np.radians(gantry_angle)
+        collimator_rad = np.radians(collimator_angle)
+        
+        # Xác định hướng chùm tia
         beam_dir = np.array([
             np.sin(gantry_rad),
             np.cos(gantry_rad),
@@ -164,46 +172,163 @@ class GridBasedDoseCalculation(AdvancedDoseAlgorithm):
         ])
         
         # Tính tâm khối hình ảnh
-        shape = image_data.shape
+        shape = self.patient_data['image'].shape
         center = np.array(shape) / 2
         
-        # TODO: Triển khai thuật toán ray tracing và tích phân liều
-        # Đây chỉ là triển khai mẫu, cần thay thế bằng thuật toán thực
+        # Khởi tạo mảng liều
+        dose = np.zeros_like(self.patient_data['image'], dtype=np.float32)
+        
+        # Triển khai thuật toán ray tracing và tích phân liều
+        # Bước 1: Tính toán các thông số cơ bản
+        spacing = np.array(self.patient_data['spacing'])  # mm
+        
+        # Chuyển đổi SAD từ cm sang mm
+        sad_mm = sad * 10.0
+        
+        # Tính toán vị trí nguồn (source) dựa trên SAD và hướng chùm tia
+        source_pos = center * spacing - beam_dir * sad_mm
+        
+        # Tính toán các vector vuông góc với hướng chùm tia để xác định trường chiếu
+        # Vector vuông góc thứ nhất (nằm trong mặt phẳng ngang)
+        perp1 = np.array([-beam_dir[1], beam_dir[0], 0.0])
+        if np.linalg.norm(perp1) < 1e-6:
+            perp1 = np.array([1.0, 0.0, 0.0])
+        else:
+            perp1 = perp1 / np.linalg.norm(perp1)
+            
+        # Vector vuông góc thứ hai (vuông góc với cả beam_dir và perp1)
+        perp2 = np.cross(beam_dir, perp1)
+        perp2 = perp2 / np.linalg.norm(perp2)
+        
+        # Xoay các vector vuông góc theo góc collimator
+        cos_coll = np.cos(collimator_rad)
+        sin_coll = np.sin(collimator_rad)
+        perp1_rot = cos_coll * perp1 + sin_coll * perp2
+        perp2_rot = -sin_coll * perp1 + cos_coll * perp2
+        
+        # Chuyển đổi kích thước trường từ cm sang mm
+        field_size_mm = np.array(field_size) * 10.0
         
         # Tính toán PDD (Percentage Depth Dose) và profile cơ bản
         pdd = self._calculate_pdd(energy)
         profile = self._calculate_beam_profile(energy)
         
-        # Duyệt qua tất cả các voxel
+        # Bước 2: Duyệt qua tất cả các voxel và tính liều
+        # Sử dụng vectorization để tăng tốc độ tính toán
+        z_indices, y_indices, x_indices = np.meshgrid(
+            np.arange(shape[0]), 
+            np.arange(shape[1]), 
+            np.arange(shape[2]), 
+            indexing='ij'
+        )
+        
+        # Tính tọa độ thực (mm) của mỗi voxel
+        positions = np.stack([
+            z_indices * spacing[0],
+            y_indices * spacing[1],
+            x_indices * spacing[2]
+        ], axis=-1)
+        
+        # Tính vector từ nguồn đến mỗi voxel
+        source_to_voxel = positions - source_pos
+        
+        # Tính khoảng cách từ nguồn đến mỗi voxel
+        distances = np.linalg.norm(source_to_voxel, axis=-1)
+        
+        # Chuẩn hóa vector hướng
+        directions = source_to_voxel / distances[..., np.newaxis]
+        
+        # Tính góc giữa hướng chùm tia và hướng đến voxel
+        dot_products = np.sum(directions * beam_dir, axis=-1)
+        
+        # Chỉ tính liều cho các voxel nằm trong nửa không gian theo hướng chùm tia
+        valid_voxels = dot_products > 0
+        
+        # Tính chiều dài đường đi qua mỗi voxel
+        step_size = min(spacing) / 2.0  # mm
+        
+        # Bước 3: Tính toán liều cho mỗi voxel hợp lệ
         for z in range(shape[0]):
             for y in range(shape[1]):
                 for x in range(shape[2]):
-                    # Tính vị trí tương đối so với tâm
-                    rel_pos = np.array([z, y, x]) - center
+                    if not valid_voxels[z, y, x]:
+                        continue
                     
-                    # Tính độ sâu dọc theo hướng chùm tia
-                    depth = np.dot(rel_pos, beam_dir)
+                    # Tính vị trí voxel trong không gian thực (mm)
+                    pos = np.array([z, y, x]) * spacing
                     
-                    # Tính khoảng cách vuông góc với trục chùm tia
-                    proj = rel_pos - depth * beam_dir
-                    lateral_dist = np.linalg.norm(proj)
+                    # Tính vector từ nguồn đến voxel
+                    ray = pos - source_pos
+                    ray_length = np.linalg.norm(ray)
+                    ray_dir = ray / ray_length
                     
-                    # Tính giá trị liều dựa trên PDD và profile
-                    if depth > 0:  # Chỉ tính liều phía sau nguồn
-                        depth_idx = min(int(depth / spacing[0]), len(pdd) - 1)
-                        lat_idx = min(int(lateral_dist / spacing[1]), len(profile) - 1)
+                    # Tính khoảng cách dọc theo trục chùm tia (độ sâu)
+                    depth = np.dot(ray, beam_dir)
+                    
+                    # Tính tọa độ chiếu của voxel lên mặt phẳng vuông góc với chùm tia
+                    proj1 = np.dot(ray, perp1_rot)
+                    proj2 = np.dot(ray, perp2_rot)
+                    
+                    # Tính khoảng cách từ tâm trường chiếu
+                    field_dist1 = abs(proj1)
+                    field_dist2 = abs(proj2)
+                    
+                    # Kiểm tra xem voxel có nằm trong trường chiếu không
+                    half_field1 = field_size_mm[0] / 2.0
+                    half_field2 = field_size_mm[1] / 2.0
+                    
+                    if field_dist1 > half_field1 or field_dist2 > half_field2:
+                        continue  # Voxel nằm ngoài trường chiếu
+                    
+                    # Tính hệ số suy giảm theo độ sâu (PDD)
+                    depth_idx = min(int(depth / 10.0), len(pdd) - 1)  # Chuyển đổi mm sang cm và lấy chỉ số
+                    depth_factor = pdd[depth_idx]
+                    
+                    # Tính hệ số profile theo khoảng cách từ tâm trường
+                    profile_idx1 = min(int(field_dist1 / 5.0), len(profile) - 1)  # Chuyển đổi mm sang 0.5cm và lấy chỉ số
+                    profile_idx2 = min(int(field_dist2 / 5.0), len(profile) - 1)
+                    profile_factor = profile[profile_idx1] * profile[profile_idx2]
+                    
+                    # Tính hệ số khoảng cách nghịch đảo bình phương
+                    inverse_square = (sad_mm / ray_length) ** 2
+                    
+                    # Tính hệ số suy giảm do mật độ mô
+                    attenuation = 1.0
+                    
+                    # Thực hiện ray tracing để tính suy giảm
+                    # Bắt đầu từ nguồn và di chuyển theo bước nhỏ đến voxel
+                    current_pos = source_pos.copy()
+                    total_steps = int(ray_length / step_size)
+                    
+                    for step in range(total_steps):
+                        # Di chuyển một bước nhỏ dọc theo tia
+                        current_pos += ray_dir * step_size
                         
-                        # Tính giá trị liều
-                        dose_val = pdd[depth_idx] * profile[lat_idx] * beam_weight
+                        # Tính chỉ số voxel tại vị trí hiện tại
+                        current_idx = np.round(current_pos / spacing).astype(int)
                         
-                        # Điều chỉnh theo mật độ điện tử
-                        hu_value = image_data[z, y, x]
-                        density_factor = self._hu_to_density_factor(hu_value)
-                        
-                        # Lưu vào lưới liều
-                        beam_dose[z, y, x] = dose_val * density_factor
+                        # Kiểm tra xem chỉ số có hợp lệ không
+                        if (0 <= current_idx[0] < shape[0] and 
+                            0 <= current_idx[1] < shape[1] and 
+                            0 <= current_idx[2] < shape[2]):
+                            
+                            # Lấy giá trị HU tại vị trí hiện tại
+                            hu_value = self.patient_data['image'][current_idx[0], current_idx[1], current_idx[2]]
+                            
+                            # Chuyển đổi HU sang hệ số suy giảm
+                            density_factor = self._hu_to_density_factor(hu_value)
+                            
+                            # Cập nhật hệ số suy giảm tổng
+                            attenuation *= np.exp(-density_factor * step_size / 10.0)  # Giả sử hệ số suy giảm tuyến tính
+                    
+                    # Tính liều cuối cùng
+                    dose[z, y, x] = depth_factor * profile_factor * inverse_square * attenuation * weight
         
-        return beam_dose
+        # Chuẩn hóa liều
+        if np.max(dose) > 0:
+            dose = dose / np.max(dose) * 100.0  # Chuẩn hóa về thang 100
+        
+        return dose
         
     def _calculate_pdd(self, energy: float) -> np.ndarray:
         """Tính toán đường cong PDD (Percentage Depth Dose) cho một năng lượng."""

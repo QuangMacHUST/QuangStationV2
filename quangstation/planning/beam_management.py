@@ -109,64 +109,146 @@ class MLCModel:
         Returns:
             bool: True nếu thành công, False nếu thất bại
         """
-        # TODO: Triển khai thuật toán tự động điều chỉnh MLC dựa trên contour và góc gantry
-        # Đây là một tác vụ phức tạp, cần xử lý:
-        # 1. Xoay contour theo góc gantry
-        # 2. Chiếu contour lên mặt phẳng MLC (beam's eye view)
-        # 3. Xác định biên giới contour cho mỗi lá
-        
-        logger.log_warning("Chức năng fit_to_contour chưa được triển khai đầy đủ")
-        
-        # Mã mẫu đơn giản, chỉ đặt kích thước trường hình chữ nhật bao quanh contour
         try:
-            # Tìm các vị trí không 0 trong mask
-            indices = np.where(contour_mask > 0)
+            import scipy.ndimage as ndimage
+            from skimage.measure import find_contours
+            import matplotlib.pyplot as plt
             
-            if len(indices[0]) == 0:
-                logger.log_error("Contour rỗng")
+            # Kiểm tra dữ liệu đầu vào
+            if contour_mask is None or contour_mask.ndim != 3:
+                logger.log_error("Contour mask không hợp lệ")
                 return False
                 
-            # Tính tọa độ min, max trong không gian thực (mm)
-            z_min, y_min, x_min = np.min(indices, axis=1) * pixel_spacing
-            z_max, y_max, x_max = np.max(indices, axis=1) * pixel_spacing
+            # 1. Chuẩn bị dữ liệu
+            # Chuyển đổi tọa độ isocenter từ mm sang pixel
+            iso_pixel_x = int(iso_center[0] / pixel_spacing[0])
+            iso_pixel_y = int(iso_center[1] / pixel_spacing[1])
+            iso_pixel_z = int(iso_center[2] / pixel_spacing[2])
             
-            # Tính kích thước trường theo trục x, y
-            field_width = x_max - x_min + 10  # Thêm lề 5mm mỗi bên
-            field_height = y_max - y_min + 10  # Thêm lề 5mm mỗi bên
-            
-            # Kiểm tra xem kích thước có vượt quá giới hạn không
-            if field_width > self.max_field_size_mm[0] or field_height > self.max_field_size_mm[1]:
-                logger.log_error(f"Kích thước trường ({field_width}x{field_height}) vượt quá giới hạn")
+            # Đảm bảo isocenter nằm trong phạm vi của mask
+            if (iso_pixel_x < 0 or iso_pixel_x >= contour_mask.shape[2] or
+                iso_pixel_y < 0 or iso_pixel_y >= contour_mask.shape[1] or
+                iso_pixel_z < 0 or iso_pixel_z >= contour_mask.shape[0]):
+                logger.log_error("Isocenter nằm ngoài phạm vi của contour mask")
                 return False
+            
+            # 2. Tạo beam's eye view (BEV) bằng cách chiếu contour theo góc gantry
+            # Chuyển đổi góc gantry sang radian
+            gantry_rad = np.radians(gantry_angle)
+            
+            # Tạo mảng 2D để lưu BEV
+            bev_size = max(contour_mask.shape)
+            bev = np.zeros((bev_size, bev_size), dtype=np.float32)
+            
+            # Tính toán ma trận xoay
+            cos_theta = np.cos(gantry_rad)
+            sin_theta = np.sin(gantry_rad)
+            
+            # Chiếu contour lên BEV
+            for z in range(contour_mask.shape[0]):
+                # Tính khoảng cách từ lát cắt đến isocenter theo trục Z
+                z_dist = (z - iso_pixel_z) * pixel_spacing[2]
                 
-            # Tính vị trí tâm của contour
-            center_x = (x_min + x_max) / 2
-            center_y = (y_min + y_max) / 2
-            center_z = (z_min + z_max) / 2
+                # Xoay và chiếu mỗi lát cắt
+                for y in range(contour_mask.shape[1]):
+                    for x in range(contour_mask.shape[2]):
+                        if contour_mask[z, y, x] > 0:
+                            # Tính tọa độ tương đối so với isocenter (mm)
+                            rel_x = (x - iso_pixel_x) * pixel_spacing[0]
+                            rel_y = (y - iso_pixel_y) * pixel_spacing[1]
+                            
+                            # Xoay tọa độ theo góc gantry
+                            rot_x = rel_x * cos_theta - z_dist * sin_theta
+                            rot_y = rel_y
+                            
+                            # Chuyển về tọa độ pixel trong BEV
+                            bev_x = int(rot_x / pixel_spacing[0] + bev_size // 2)
+                            bev_y = int(rot_y / pixel_spacing[1] + bev_size // 2)
+                            
+                            # Đảm bảo tọa độ nằm trong phạm vi của BEV
+                            if 0 <= bev_x < bev_size and 0 <= bev_y < bev_size:
+                                bev[bev_y, bev_x] = 1.0
             
-            # Tính offset từ iso_center
-            offset_x = center_x - iso_center[0]
-            offset_y = center_y - iso_center[1]
+            # Làm mịn BEV để lấp đầy các lỗ hổng
+            bev = ndimage.binary_dilation(bev, iterations=2)
+            bev = ndimage.binary_erosion(bev, iterations=1)
+            bev = ndimage.binary_fill_holes(bev)
             
-            # Tính vị trí lá dựa trên offset và kích thước trường
-            half_width = field_width / 2
+            # 3. Xác định biên giới contour cho mỗi lá MLC
+            # Tính toán vị trí trung tâm của BEV
+            center_x = bev_size // 2
+            center_y = bev_size // 2
             
-            # Tạo vị trí lá mới
-            new_positions = np.zeros((self.num_leaf_pairs, 2))
+            # Tính toán kích thước của mỗi lá MLC theo pixel
+            leaf_width_pixel = self.leaf_width_mm / pixel_spacing[1]
             
-            # Tính vị trí lá theo trục y
-            y_positions = np.linspace(center_y - field_height/2, center_y + field_height/2, self.num_leaf_pairs + 1)
+            # Tính toán số lượng lá cần thiết để bao phủ contour
+            num_leaves = min(self.num_leaf_pairs, int(bev.shape[0] / leaf_width_pixel))
             
-            # Đặt vị trí lá cho từng cặp
-            for i in range(self.num_leaf_pairs):
-                new_positions[i, 0] = offset_x - half_width  # Lá A (bên trái)
-                new_positions[i, 1] = offset_x + half_width  # Lá B (bên phải)
+            # Tính toán vị trí bắt đầu của lá đầu tiên
+            start_y = center_y - (num_leaves * leaf_width_pixel) / 2
             
-            # Thiết lập vị trí lá mới
-            return self.set_positions(new_positions)
+            # Khởi tạo mảng vị trí lá
+            leaf_positions = np.zeros((self.num_leaf_pairs, 2))
             
-        except Exception as error:
-            logger.log_error(f"Lỗi khi fit MLC: {str(error)}")
+            # Tìm biên giới contour cho mỗi lá
+            for i in range(num_leaves):
+                # Tính toán vị trí của lá hiện tại
+                leaf_start = int(start_y + i * leaf_width_pixel)
+                leaf_end = int(start_y + (i + 1) * leaf_width_pixel)
+                
+                # Đảm bảo vị trí nằm trong phạm vi của BEV
+                leaf_start = max(0, min(leaf_start, bev.shape[0] - 1))
+                leaf_end = max(0, min(leaf_end, bev.shape[0] - 1))
+                
+                # Lấy dải pixel tương ứng với lá MLC
+                leaf_strip = bev[leaf_start:leaf_end, :]
+                
+                # Tìm vị trí xa nhất bên trái và bên phải của contour
+                if np.any(leaf_strip):
+                    # Tìm các cột có pixel thuộc contour
+                    cols_with_contour = np.where(np.any(leaf_strip, axis=0))[0]
+                    
+                    if len(cols_with_contour) > 0:
+                        left_edge = cols_with_contour[0]
+                        right_edge = cols_with_contour[-1]
+                        
+                        # Chuyển đổi từ pixel sang mm, tương đối so với tâm
+                        left_pos = (left_edge - center_x) * pixel_spacing[0]
+                        right_pos = (right_edge - center_x) * pixel_spacing[0]
+                        
+                        # Thêm lề an toàn (5mm)
+                        left_pos -= 5.0
+                        right_pos += 5.0
+                        
+                        # Giới hạn trong phạm vi cho phép của MLC
+                        left_pos = max(-self.max_leaf_spread_mm / 2, min(left_pos, 0))
+                        right_pos = min(self.max_leaf_spread_mm / 2, max(right_pos, 0))
+                        
+                        # Lưu vị trí lá
+                        if i < self.num_leaf_pairs:
+                            leaf_positions[i, 0] = left_pos
+                            leaf_positions[i, 1] = right_pos
+            
+            # Đặt vị trí cho các lá không được sử dụng
+            for i in range(num_leaves, self.num_leaf_pairs):
+                leaf_positions[i, 0] = 0
+                leaf_positions[i, 1] = 0
+            
+            # Cập nhật vị trí lá MLC
+            success = self.set_positions(leaf_positions)
+            
+            if success:
+                logger.log_info(f"Đã điều chỉnh MLC để phù hợp với contour, góc gantry {gantry_angle}°")
+            else:
+                logger.log_warning("Không thể đặt vị trí MLC")
+                
+            return success
+            
+        except Exception as e:
+            logger.log_error(f"Lỗi khi điều chỉnh MLC: {str(e)}")
+            import traceback
+            logger.log_error(traceback.format_exc())
             return False
         
     def create_rectangular_field(self, field_size_mm: Tuple[float, float],
@@ -734,9 +816,108 @@ class Plan:
             beam.set_isocenter(position)
             
     def normalize_to_prescription(self) -> None:
-        """Chuẩn hóa liều theo kê toa"""
-        # TODO: Triển khai chuẩn hóa liều
-        logger.log_warning("Chức năng normalize_to_prescription chưa được triển khai đầy đủ")
+        """Chuẩn hóa liều theo kê toa."""
+        import numpy as np
+        from quangstation.utils.logging import get_logger
+        logger = get_logger(__name__)
+        
+        # Kiểm tra xem đã có dose matrix chưa
+        if not hasattr(self, "dose_matrix") or self.dose_matrix is None:
+            logger.warning("Chưa có ma trận liều để chuẩn hóa")
+            return
+            
+        # Kiểm tra xem đã có prescribed_dose chưa
+        if not hasattr(self, "prescribed_dose") or self.prescribed_dose <= 0:
+            logger.warning("Chưa đặt liều kê toa")
+            return
+            
+        try:
+            # Lấy reference_point hoặc target dựa trên prescription_type
+            if hasattr(self, "prescription_type"):
+                if self.prescription_type == "isocenter":
+                    # Lấy giá trị liều tại tâm điều trị
+                    if hasattr(self, "isocenter") and self.isocenter is not None:
+                        # Tính chỉ số của tâm điều trị trong ma trận liều
+                        iso_idx = [int(x) for x in self.isocenter]
+                        current_dose = self.dose_matrix[iso_idx[0], iso_idx[1], iso_idx[2]]
+                    else:
+                        # Nếu không có tâm điều trị, dùng điểm có liều lớn nhất
+                        current_dose = np.max(self.dose_matrix)
+                
+                elif self.prescription_type == "max_dose":
+                    # Dùng liều lớn nhất làm reference
+                    current_dose = np.max(self.dose_matrix)
+                
+                elif self.prescription_type == "mean_ptv":
+                    # Dùng liều trung bình trong PTV
+                    if hasattr(self, "target_name") and hasattr(self, "structure_masks"):
+                        # Lấy mask của target
+                        if self.target_name in self.structure_masks:
+                            target_mask = self.structure_masks[self.target_name]
+                            # Tính liều trung bình trong target
+                            masked_dose = self.dose_matrix[target_mask > 0]
+                            if len(masked_dose) > 0:
+                                current_dose = np.mean(masked_dose)
+                            else:
+                                current_dose = np.max(self.dose_matrix)
+                        else:
+                            logger.warning(f"Target {self.target_name} không tồn tại trong cấu trúc")
+                            current_dose = np.max(self.dose_matrix)
+                    else:
+                        logger.warning("Không tìm thấy target hoặc structure_masks")
+                        current_dose = np.max(self.dose_matrix)
+                
+                elif self.prescription_type == "dX":
+                    # Liều tại X% thể tích của PTV (ví dụ: D95, D90)
+                    if hasattr(self, "target_name") and hasattr(self, "structure_masks") and hasattr(self, "prescription_volume_pct"):
+                        if self.target_name in self.structure_masks:
+                            target_mask = self.structure_masks[self.target_name]
+                            masked_dose = self.dose_matrix[target_mask > 0]
+                            
+                            if len(masked_dose) > 0:
+                                # Sắp xếp giá trị liều
+                                sorted_dose = np.sort(masked_dose)
+                                # Lấy vị trí tương ứng với X%
+                                idx = int(len(sorted_dose) * (100 - self.prescription_volume_pct) / 100)
+                                current_dose = sorted_dose[idx]
+                            else:
+                                current_dose = np.max(self.dose_matrix)
+                        else:
+                            logger.warning(f"Target {self.target_name} không tồn tại trong cấu trúc")
+                            current_dose = np.max(self.dose_matrix)
+                    else:
+                        logger.warning("Không đủ thông tin để chuẩn hóa theo DX")
+                        current_dose = np.max(self.dose_matrix)
+                else:
+                    # Mặc định dùng liều lớn nhất
+                    current_dose = np.max(self.dose_matrix)
+            else:
+                # Mặc định dùng liều lớn nhất
+                current_dose = np.max(self.dose_matrix)
+                
+            # Tránh chia cho 0
+            if current_dose <= 0:
+                logger.warning("Liều hiện tại là 0 hoặc âm, không thể chuẩn hóa")
+                return
+                
+            # Tính hệ số chuẩn hóa
+            normalization_factor = self.prescribed_dose / current_dose
+            
+            # Chuẩn hóa ma trận liều
+            self.dose_matrix *= normalization_factor
+            
+            # Chuẩn hóa trọng số của tất cả các chùm tia
+            for beam in getattr(self, "beams", []):
+                if hasattr(beam, "weight"):
+                    beam.weight *= normalization_factor
+                
+            logger.info(f"Đã chuẩn hóa liều với hệ số {normalization_factor:.4f}")
+            
+            # Đánh dấu đã chuẩn hóa
+            self.is_normalized = True
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi chuẩn hóa liều: {str(e)}")
     
     def to_dict(self) -> Dict:
         """Chuyển đổi thành dictionary để lưu trữ"""

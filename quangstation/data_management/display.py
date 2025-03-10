@@ -1796,33 +1796,22 @@ class Display:
         
     def _overlay_structures_on_mpr(self, ax, view_type):
         """
-        Hiển thị RT Structures trên view MPR.
+        Hiển thị cấu trúc trên view MPR.
         
         Args:
             ax: Matplotlib axes
             view_type: Loại view ('axial', 'coronal', 'sagittal')
         """
-        if self.rt_structures is None:
+        if not hasattr(self, 'structures') or not self.structures:
             return
+        
+        slice_idx = self.current_slice_indices.get(view_type, 0)
+        
+        for name, mask in self.structures.items():
+            # Khởi tạo biến structure_mask trước khi sử dụng
+            structure_mask = None
             
-        # Lấy chỉ số slice hiện tại cho view
-        if view_type == 'axial':
-            slice_idx = self.axial_slider.get()
-        elif view_type == 'coronal':
-            slice_idx = self.coronal_slider.get()
-        elif view_type == 'sagittal':
-            slice_idx = self.sagittal_slider.get()
-        else:
-            return
-            
-        # Hiển thị từng cấu trúc
-        for name, structure in self.rt_structures.items():
-            # Tính mask cho cấu trúc
-            mask = self.get_structure_mask(name)
-            if mask is None:
-                continue
-                
-            # Lấy slice mask phù hợp với view
+            # Lấy mask cho lát cắt hiện tại tùy theo view
             if view_type == 'axial':
                 if slice_idx < mask.shape[0]:
                     structure_mask = mask[slice_idx, :, :]
@@ -1838,6 +1827,10 @@ class Display:
                     structure_mask = mask[:, :, slice_idx]
                 else:
                     continue
+            
+            # Kiểm tra nếu mask hợp lệ
+            if structure_mask is None:
+                continue
                     
             # Lấy màu sắc cấu trúc
             color = self.get_structure_color(name)
@@ -1852,7 +1845,7 @@ class Display:
             # Vẽ contours
             for contour in contours:
                 ax.plot(contour[:, 1], contour[:, 0], color=color, linewidth=1)
-                
+        
     def _overlay_dose_on_mpr(self, ax, view_type):
         """
         Hiển thị Dose Overlay trên view MPR.
@@ -1864,17 +1857,15 @@ class Display:
         if self.dose_volume is None:
             return
             
-        # Lấy chỉ số slice hiện tại cho view
-        if view_type == 'axial':
-            slice_idx = self.axial_slider.get()
-        elif view_type == 'coronal':
-            slice_idx = self.coronal_slider.get()
-        elif view_type == 'sagittal':
-            slice_idx = self.sagittal_slider.get()
-        else:
+        if not self.show_dose:
             return
             
-        # Lấy slice dose phù hợp với view
+        slice_idx = self.current_slice_indices.get(view_type, 0)
+        
+        # Khởi tạo biến dose_slice trước khi sử dụng
+        dose_slice = None
+        
+        # Lấy slice liều tùy theo view
         if view_type == 'axial':
             if slice_idx < self.dose_volume.shape[0]:
                 dose_slice = self.dose_volume[slice_idx, :, :]
@@ -1890,6 +1881,10 @@ class Display:
                 dose_slice = self.dose_volume[:, :, slice_idx]
             else:
                 return
+        
+        # Kiểm tra xem đã trích xuất được lát cắt liều chưa
+        if dose_slice is None:
+            return
                 
         # Lấy giá trị độ trong suốt
         opacity = self.mpr_dose_opacity_slider.get()

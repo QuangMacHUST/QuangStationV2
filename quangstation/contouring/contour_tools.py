@@ -751,4 +751,148 @@ class ContourTools:
             }
             stats[name] = structure_stats
             
-        return stats 
+        return stats
+    
+    def save_to_json(self, output_file: str) -> bool:
+        """
+        Lưu thông tin contours ra file JSON.
+        
+        Args:
+            output_file: Đường dẫn file JSON đầu ra
+            
+        Returns:
+            bool: True nếu lưu thành công, False nếu có lỗi
+        """
+        import json
+        
+        try:
+            # Chuẩn bị dữ liệu
+            data = {
+                "version": "1.0",
+                "created_time": datetime.now().isoformat(),
+                "patient_info": self.patient_info,
+                "structures": {},
+                "reference_frame_uid": self.reference_frame_uid,
+                "isocenter": self.isocenter
+            }
+            
+            # Thêm thông tin về contours
+            for name, contours in self.contours.items():
+                # Chuyển đổi contours sang định dạng có thể serialize
+                serializable_contours = {}
+                for slice_idx, points_list in contours.items():
+                    # Chuyển danh sách điểm sang danh sách có thể serialize
+                    serializable_points = []
+                    for points in points_list:
+                        serializable_points.append(points.tolist() if isinstance(points, np.ndarray) else points)
+                    serializable_contours[str(slice_idx)] = serializable_points
+                
+                # Lưu thông tin cho structure này
+                data["structures"][name] = {
+                    "contours": serializable_contours,
+                    "color": self.colors.get(name, [1.0, 0.0, 0.0])
+                }
+            
+            # Ghi file JSON
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                
+            self.logger.info(f"Đã lưu contours thành công vào file {output_file}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi lưu contours ra file JSON: {e}")
+            return False
+            
+    def load_from_json(self, input_file: str) -> bool:
+        """
+        Nạp thông tin contours từ file JSON.
+        
+        Args:
+            input_file: Đường dẫn file JSON đầu vào
+            
+        Returns:
+            bool: True nếu nạp thành công, False nếu có lỗi
+        """
+        import json
+        
+        try:
+            # Đọc file JSON
+            with open(input_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            # Kiểm tra phiên bản
+            version = data.get("version", "1.0")
+            if version != "1.0":
+                self.logger.warning(f"Phiên bản file ({version}) có thể không tương thích")
+                
+            # Nạp thông tin cơ bản
+            self.patient_info = data.get("patient_info", {})
+            self.reference_frame_uid = data.get("reference_frame_uid", None)
+            self.isocenter = data.get("isocenter", None)
+            
+            # Nạp thông tin các cấu trúc
+            structures_data = data.get("structures", {})
+            for name, struct_info in structures_data.items():
+                # Thêm cấu trúc
+                color = struct_info.get("color", [1.0, 0.0, 0.0])
+                self.add_structure(name, tuple(color))
+                
+                # Nạp các contours
+                contours_data = struct_info.get("contours", {})
+                for slice_idx_str, points_list in contours_data.items():
+                    slice_idx = int(slice_idx_str)
+                    for points in points_list:
+                        # Chuyển đổi danh sách điểm sang numpy array
+                        np_points = np.array(points)
+                        self.contours.setdefault(name, {}).setdefault(slice_idx, []).append(np_points)
+                
+            self.logger.info(f"Đã nạp contours thành công từ file {input_file}")
+            self.modified = True
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi nạp contours từ file JSON: {e}")
+            return False
+            
+    def export_to_csv(self, output_dir: str) -> bool:
+        """
+        Xuất contours ra các file CSV.
+        
+        Args:
+            output_dir: Thư mục đầu ra
+            
+        Returns:
+            bool: True nếu xuất thành công, False nếu có lỗi
+        """
+        import os
+        import csv
+        
+        try:
+            # Tạo thư mục đầu ra nếu chưa tồn tại
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Xuất từng cấu trúc ra file CSV riêng
+            for name, contours in self.contours.items():
+                # Tạo tên file an toàn
+                safe_name = "".join(c if c.isalnum() else "_" for c in name)
+                output_file = os.path.join(output_dir, f"{safe_name}.csv")
+                
+                # Ghi file CSV
+                with open(output_file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    # Ghi header
+                    writer.writerow(["SliceIndex", "PointIndex", "X", "Y"])
+                    
+                    # Ghi dữ liệu
+                    for slice_idx, points_list in contours.items():
+                        for point_set_idx, points in enumerate(points_list):
+                            for i, point in enumerate(points):
+                                writer.writerow([slice_idx, point_set_idx, point[0], point[1]])
+                                
+            self.logger.info(f"Đã xuất contours thành công vào thư mục {output_dir}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi xuất contours ra file CSV: {e}")
+            return False 

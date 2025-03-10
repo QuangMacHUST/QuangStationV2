@@ -191,142 +191,296 @@ class MonteCarlo:
         self.isocenter = isocenter
         self.logger.log_info(f"Đã đặt tâm xoay tại: {isocenter}")
     
-    def calculate_dose(self, num_particles: int = None, output_percent: bool = True) -> Tuple[np.ndarray, float]:
+    def calculate_dose(self, beams: List[Dict[str, Any]], isocenter: List[float] = None, 
+                      mask_data: np.ndarray = None, uncertainty_target: float = 0.02,
+                      max_iterations: int = 10, particles_per_iteration: int = None):
         """
         Tính toán liều bằng phương pháp Monte Carlo
         
         Args:
-            num_particles: Số hạt sử dụng trong mô phỏng (ghi đè tham số mặc định)
-            output_percent: Nếu True, chuẩn hóa kết quả về phần trăm liều
-            
+            beams: Danh sách các chùm tia, mỗi chùm tia là một dict với các thông số
+                {
+                    'gantry_angle': góc gantry (độ),
+                    'collimator_angle': góc collimator (độ),
+                    'couch_angle': góc bàn (độ),
+                    'sad': khoảng cách từ nguồn đến tâm (mm),
+                    'field_size': kích thước trường [width, height] (mm),
+                    'energy': năng lượng (MV),
+                    'weight': trọng số của chùm tia,
+                    'mlc': thông tin MLC (nếu có)
+                }
+            isocenter: Tọa độ tâm xạ trị [x, y, z] (mm)
+            mask_data: Mảng 3D chứa mặt nạ tính toán (1: tính, 0: bỏ qua)
+            uncertainty_target: Độ không đảm bảo mục tiêu (mặc định: 0.02 tức 2%)
+            max_iterations: Số lần lặp tối đa
+            particles_per_iteration: Số hạt mỗi lần lặp (nếu None, sẽ tự động tính)
+        
         Returns:
-            Ma trận liều và độ không đảm bảo
+            np.ndarray: Mảng 3D chứa phân bố liều
         """
         if self.ct_data is None or self.density_grid is None:
-            self.logger.log_error("Chưa có dữ liệu CT")
-            return None, 0
+            self.logger.error("Chưa có dữ liệu CT hoặc mật độ")
+            return None
         
-        if not getattr(self, "beams", {}):
-            self.logger.log_error("Chưa có chùm tia nào")
-            return None, 0
+        # Lưu thông tin đầu vào
+        self.beams = beams
+        if isocenter is not None:
+            self.isocenter = isocenter
+        self.mask_data = mask_data
         
-        # Số hạt sử dụng
-        if num_particles is not None:
-            self.num_particles = num_particles
-        
-        # Reset lưới liều
+        # Khởi tạo lưới liều và phương sai
         self.dose_grid = np.zeros(self.dose_grid_shape, dtype=np.float32)
         self.variance_grid = np.zeros(self.dose_grid_shape, dtype=np.float32)
         
-        # Bắt đầu mô phỏng
-        start_time = time.time()
-        self.logger.log_info(f"Bắt đầu mô phỏng Monte Carlo với {self.num_particles:,} hạt...")
-        
-        # Phân chia công việc theo số luồng
-        particles_per_thread = self.num_particles // self.num_threads
-        
-        # Tạo các tác vụ cho đa luồng
-        with ProcessPoolExecutor(max_workers=self.num_threads) as executor:
-            futures = []
+        # Tính số hạt mỗi lần lặp nếu không được chỉ định
+        if particles_per_iteration is None:
+            # Tính dựa trên kích thước vùng tính toán
+            if mask_data is not None:
+                volume_voxels = np.sum(mask_data)
+            else:
+                volume_voxels = np.prod(self.dose_grid_shape)
             
-            for i in range(self.num_threads):
-                # Đảm bảo tổng số hạt chính xác
-                particles = particles_per_thread
-                if i == self.num_threads - 1:
-                    particles = self.num_particles - (self.num_threads - 1) * particles_per_thread
+            # Ước tính số hạt cần thiết (công thức thực nghiệm)
+            particles_per_iteration = int(min(1e6, max(1e5, volume_voxels / 10)))
+        
+        self.logger.info(f"Bắt đầu tính toán Monte Carlo với {len(beams)} chùm tia")
+        self.logger.info(f"Số hạt mỗi lần lặp: {particles_per_iteration}")
+        
+        # Tính tổng trọng số của các chùm tia
+        total_weight = sum(beam.get('weight', 1.0) for beam in beams)
+        
+        # Phân bổ số hạt cho từng chùm tia theo trọng số
+        beam_particles = []
+        for beam in beams:
+            weight = beam.get('weight', 1.0)
+            n_particles = int(particles_per_iteration * weight / total_weight)
+            beam_particles.append(n_particles)
+        
+        # Lặp cho đến khi đạt độ chính xác mong muốn hoặc số lần lặp tối đa
+        current_uncertainty = float('inf')
+        iteration = 0
+        
+        while current_uncertainty > uncertainty_target and iteration < max_iterations:
+            iteration += 1
+            self.logger.info(f"Lần lặp {iteration}/{max_iterations}, độ không đảm bảo hiện tại: {current_uncertainty:.4f}")
+            
+            # Tính toán song song cho từng chùm tia
+            with ProcessPoolExecutor(max_workers=self.num_threads) as executor:
+                futures = []
                 
-                # Thêm tác vụ
-                for beam in getattr(self, "beams", {}):
-                    future = executor.submit(
-                        self._simulate_particles,
-                        particles,
-                        beam,
-                        self.density_grid,
-                        self.dose_grid_shape,
-                        self.isocenter,
-                        self.voxel_size_mm,
-                        i  # seed khác nhau cho mỗi luồng
+                for i, beam in enumerate(beams):
+                    n_particles = beam_particles[i]
+                    futures.append(
+                        executor.submit(
+                            self._simulate_beam_particles,
+                            beam,
+                            n_particles,
+                            self.isocenter,
+                            self.density_grid,
+                            self.dose_grid_shape,
+                            self.voxel_size_mm,
+                            i  # seed = beam_index để đảm bảo tính lặp lại
+                        )
                     )
-                    futures.append(future)
-            
-            # Theo dõi tiến độ
-            completed = 0
-            for future in as_completed(futures):
-                completed += 1
-                self.logger.log_info(f"Tiến độ mô phỏng: {completed}/{len(futures)}")
                 
-                # Tích lũy kết quả
-                part_dose, part_variance = future.result()
-                self.dose_grid += part_dose
-                self.variance_grid += part_variance
+                # Thu thập kết quả
+                for future in as_completed(futures):
+                    try:
+                        beam_dose, beam_variance = future.result()
+                        # Cộng dồn vào lưới liều và phương sai tổng
+                        self.dose_grid += beam_dose
+                        self.variance_grid += beam_variance
+                    except Exception as e:
+                        self.logger.error(f"Lỗi khi mô phỏng chùm tia: {str(e)}")
+            
+            # Tính độ không đảm bảo hiện tại
+            if mask_data is not None:
+                # Chỉ tính trong vùng quan tâm
+                masked_dose = self.dose_grid * mask_data
+                masked_variance = self.variance_grid * mask_data
+                # Tránh chia cho 0
+                nonzero_mask = (masked_dose > 0)
+                if np.sum(nonzero_mask) > 0:
+                    relative_uncertainty = np.sqrt(masked_variance[nonzero_mask]) / masked_dose[nonzero_mask]
+                    current_uncertainty = np.mean(relative_uncertainty)
+                else:
+                    current_uncertainty = float('inf')
+            else:
+                # Tính trên toàn bộ lưới
+                nonzero_mask = (self.dose_grid > 0)
+                if np.sum(nonzero_mask) > 0:
+                    relative_uncertainty = np.sqrt(self.variance_grid[nonzero_mask]) / self.dose_grid[nonzero_mask]
+                    current_uncertainty = np.mean(relative_uncertainty)
+                else:
+                    current_uncertainty = float('inf')
         
-        # Tính độ không đảm bảo tổng thể
-        total_uncertainty = 0
-        if np.sum(self.dose_grid) > 0:
-            non_zero_mask = self.dose_grid > 0
-            rel_uncertainty = np.zeros_like(self.dose_grid)
-            rel_uncertainty[non_zero_mask] = np.sqrt(self.variance_grid[non_zero_mask]) / self.dose_grid[non_zero_mask]
-            # Độ không đảm bảo trung bình trong vùng liều > 50%
-            high_dose_mask = self.dose_grid > 0.5 * np.max(self.dose_grid)
-            if np.any(high_dose_mask):
-                total_uncertainty = np.mean(rel_uncertainty[high_dose_mask]) * 100  # đơn vị phần trăm
+        # Chuẩn hóa liều
+        if np.max(self.dose_grid) > 0:
+            self.dose_grid = self.dose_grid / np.max(self.dose_grid) * 100.0  # Chuẩn hóa về thang 100
         
-        # Chuẩn hóa kết quả thành phần trăm nếu cần
-        if output_percent and np.max(self.dose_grid) > 0:
-            self.dose_grid = self.dose_grid / np.max(self.dose_grid) * 100
+        # Lưu độ không đảm bảo cuối cùng
+        self.uncertainty = current_uncertainty
         
-        self.uncertainty = total_uncertainty
-        elapsed_time = time.time() - start_time
-        self.logger.log_info(f"Hoàn thành mô phỏng sau {elapsed_time:.2f} giây. Độ không đảm bảo: {total_uncertainty:.2f}%")
+        self.logger.info(f"Hoàn thành tính toán Monte Carlo sau {iteration} lần lặp")
+        self.logger.info(f"Độ không đảm bảo cuối cùng: {current_uncertainty:.4f}")
         
-        return self.dose_grid, total_uncertainty
+        return self.dose_grid
     
-    def _simulate_particles(self, num_particles: int, beam: Dict, density_grid: np.ndarray, 
-                         shape: Tuple[int, int, int], isocenter: List[int], 
-                         voxel_size_mm: List[float], seed: int = 0) -> Tuple[np.ndarray, np.ndarray]:
-        """Mô phỏng các hạt trong chùm tia."""
-        # Sử dụng trình tạo ngẫu nhiên mới của numpy
-        rng = np.random.default_rng(seed)
+    def _simulate_beam_particles(self, beam: Dict[str, Any], n_particles: int, 
+                               isocenter: List[float], density_grid: np.ndarray,
+                               grid_shape: Tuple[int, int, int], voxel_size: List[float],
+                               seed: int = 0) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Mô phỏng các hạt từ một chùm tia
         
-        # Khởi tạo ma trận liều và ma trận bình phương liều (cho tính toán độ không chắc chắn)
-        dose_grid = np.zeros(shape, dtype=np.float32)
-        dose_squared_grid = np.zeros(shape, dtype=np.float32)
+        Args:
+            beam: Thông tin chùm tia
+            n_particles: Số hạt cần mô phỏng
+            isocenter: Tọa độ tâm xạ trị
+            density_grid: Lưới mật độ electron
+            grid_shape: Kích thước lưới
+            voxel_size: Kích thước voxel (mm)
+            seed: Hạt giống cho bộ sinh số ngẫu nhiên
         
-        # Tính hướng chùm tia từ góc quay
-        gantry_rad = np.radians(beam['gantry_angle'])
-        couch_rad = np.radians(beam.get('couch_angle', 0))
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: (lưới liều, lưới phương sai)
+        """
+        # Khởi tạo bộ sinh số ngẫu nhiên với hạt giống xác định
+        rng = RandomState(seed)
         
-        # Hướng chùm tia (từ nguồn đến tâm)
-        beam_dir = np.array([
-            np.sin(gantry_rad) * np.cos(couch_rad),
-            np.cos(gantry_rad) * np.cos(couch_rad),
-            np.sin(couch_rad)
+        # Khởi tạo lưới liều và phương sai cho chùm tia này
+        dose_grid = np.zeros(grid_shape, dtype=np.float32)
+        variance_grid = np.zeros(grid_shape, dtype=np.float32)
+        
+        # Lấy thông tin chùm tia
+        gantry_angle = np.radians(beam.get('gantry_angle', 0.0))
+        collimator_angle = np.radians(beam.get('collimator_angle', 0.0))
+        couch_angle = np.radians(beam.get('couch_angle', 0.0))
+        sad = beam.get('sad', 1000.0)  # mm
+        field_size = beam.get('field_size', [100.0, 100.0])  # mm
+        energy = beam.get('energy', 6.0)  # MV
+        
+        # Tính ma trận biến đổi từ hệ tọa độ chùm tia sang hệ tọa độ bệnh nhân
+        # (Đơn giản hóa, không tính đến góc collimator và couch)
+        beam_to_patient = np.array([
+            [np.cos(gantry_angle), 0, np.sin(gantry_angle)],
+            [0, 1, 0],
+            [-np.sin(gantry_angle), 0, np.cos(gantry_angle)]
         ])
-        beam_dir = beam_dir / np.linalg.norm(beam_dir)
         
-        # Kích thước trường chiếu (mm)
-        field_size_x = beam.get('field_size_x', 100.0)
-        field_size_y = beam.get('field_size_y', 100.0)
+        # Vị trí nguồn trong hệ tọa độ bệnh nhân
+        source_pos = np.array(isocenter) + np.dot(beam_to_patient, np.array([0, 0, -sad]))
         
-        # Sử dụng numba để tăng tốc tính toán nếu có thể
-        try:
-            from numba import jit, prange
+        # Mô phỏng từng hạt
+        for i in range(n_particles):
+            # Tạo vị trí ban đầu của hạt (tại nguồn)
+            particle_pos = np.array(source_pos, dtype=np.float32)
             
-            @jit(nopython=True, parallel=True)
-            def simulate_parallel(n_particles, beam_direction, field_x, field_y, iso, 
-                                  density, dose_out, dose_squared_out, shape, vx_size):
-                # ... (mã tính toán cải tiến với numba) ...
-                pass
+            # Tạo hướng ban đầu (trong hệ tọa độ chùm tia)
+            # Lấy mẫu ngẫu nhiên trong trường xạ
+            x_field = (rng.random() - 0.5) * field_size[0]
+            y_field = (rng.random() - 0.5) * field_size[1]
             
-            # Gọi hàm được tăng tốc bởi numba
-            simulate_parallel(num_particles, beam_dir, field_size_x, field_size_y, 
-                              np.array(isocenter), density_grid, dose_grid, 
-                              dose_squared_grid, np.array(shape), np.array(voxel_size_mm))
-        except ImportError:
-            # Sử dụng phương pháp tiêu chuẩn nếu không có numba
-            # ... existing code ...
+            # Điểm đích trên mặt phẳng isocenter
+            target_pos = np.array(isocenter) + np.dot(beam_to_patient, np.array([x_field, y_field, 0]))
+            
+            # Hướng từ nguồn đến đích
+            direction = target_pos - particle_pos
+            direction = direction / np.linalg.norm(direction)
+            
+            # Năng lượng ban đầu của hạt (đơn vị tùy ý, sẽ được chuẩn hóa sau)
+            energy_value = 1.0
+            
+            # Theo dõi hạt cho đến khi nó rời khỏi lưới hoặc bị hấp thụ hoàn toàn
+            while energy_value > 0.01:
+                # Chuyển đổi vị trí hạt sang chỉ số voxel
+                voxel_idx = np.array([
+                    int((particle_pos[0] - isocenter[0]) / voxel_size[0] + grid_shape[0] / 2),
+                    int((particle_pos[1] - isocenter[1]) / voxel_size[1] + grid_shape[1] / 2),
+                    int((particle_pos[2] - isocenter[2]) / voxel_size[2] + grid_shape[2] / 2)
+                ])
+                
+                # Kiểm tra xem hạt có nằm trong lưới không
+                if (voxel_idx[0] < 0 or voxel_idx[0] >= grid_shape[0] or
+                    voxel_idx[1] < 0 or voxel_idx[1] >= grid_shape[1] or
+                    voxel_idx[2] < 0 or voxel_idx[2] >= grid_shape[2]):
+                    break
+                
+                # Lấy mật độ tại voxel hiện tại
+                density = density_grid[voxel_idx[0], voxel_idx[1], voxel_idx[2]]
+                
+                # Tính hệ số suy giảm tại mật độ này
+                # Nội suy tuyến tính từ bảng
+                density_values = sorted(list(self.attenuation_coeff.keys()))
+                idx = np.searchsorted(density_values, density)
+                if idx == 0:
+                    attenuation = self.attenuation_coeff[density_values[0]]
+                elif idx == len(density_values):
+                    attenuation = self.attenuation_coeff[density_values[-1]]
+                else:
+                    d1, d2 = density_values[idx-1], density_values[idx]
+                    a1, a2 = self.attenuation_coeff[d1], self.attenuation_coeff[d2]
+                    attenuation = a1 + (a2 - a1) * (density - d1) / (d2 - d1)
+                
+                # Tính xác suất tương tác trong một bước
+                step_size = min(voxel_size) / 2.0  # mm
+                interaction_prob = 1.0 - np.exp(-attenuation * step_size / 10.0)  # Chuyển đổi từ cm^-1 sang mm^-1
+                
+                # Kiểm tra xem có tương tác không
+                if rng.random() < interaction_prob:
+                    # Tính năng lượng lắng đọng tại voxel này
+                    deposited_energy = energy_value * 0.01  # Giả sử 1% năng lượng được lắng đọng
+                    
+                    # Cập nhật lưới liều và phương sai
+                    dose_grid[voxel_idx[0], voxel_idx[1], voxel_idx[2]] += deposited_energy
+                    variance_grid[voxel_idx[0], voxel_idx[1], voxel_idx[2]] += deposited_energy**2
+                    
+                    # Giảm năng lượng hạt
+                    energy_value -= deposited_energy
+                    
+                    # Xác định loại tương tác (Compton hoặc quang điện)
+                    compton_prob = self.compton_ratio.get(density, 0.95)
+                    
+                    if rng.random() < compton_prob:
+                        # Tán xạ Compton - thay đổi hướng
+                        # Góc tán xạ (đơn giản hóa)
+                        theta = rng.random() * np.pi  # 0 đến pi
+                        phi = rng.random() * 2 * np.pi  # 0 đến 2pi
+                        
+                        # Tính hướng mới
+                        # Tạo hệ tọa độ cục bộ với trục z là hướng ban đầu
+                        z_axis = direction
+                        x_axis = np.array([1, 0, 0])
+                        if np.abs(np.dot(z_axis, x_axis)) > 0.9:
+                            x_axis = np.array([0, 1, 0])
+                        x_axis = x_axis - np.dot(x_axis, z_axis) * z_axis
+                        x_axis = x_axis / np.linalg.norm(x_axis)
+                        y_axis = np.cross(z_axis, x_axis)
+                        
+                        # Tính hướng mới trong hệ tọa độ cục bộ
+                        new_dir_local = np.array([
+                            np.sin(theta) * np.cos(phi),
+                            np.sin(theta) * np.sin(phi),
+                            np.cos(theta)
+                        ])
+                        
+                        # Chuyển về hệ tọa độ chính
+                        direction = (new_dir_local[0] * x_axis + 
+                                    new_dir_local[1] * y_axis + 
+                                    new_dir_local[2] * z_axis)
+                        direction = direction / np.linalg.norm(direction)
+                    else:
+                        # Hấp thụ quang điện - hạt bị hấp thụ hoàn toàn
+                        # Lắng đọng toàn bộ năng lượng còn lại
+                        dose_grid[voxel_idx[0], voxel_idx[1], voxel_idx[2]] += energy_value
+                        variance_grid[voxel_idx[0], voxel_idx[1], voxel_idx[2]] += energy_value**2
+                        energy_value = 0
+                        break
+                
+                # Di chuyển hạt
+                particle_pos += direction * step_size
         
-            return dose_grid, dose_squared_grid
+        return dose_grid, variance_grid
     
     def get_dose_matrix(self) -> np.ndarray:
         """

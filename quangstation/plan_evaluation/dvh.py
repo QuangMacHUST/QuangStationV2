@@ -274,7 +274,7 @@ class DVHCalculator:
     
     def calculate_volume_metrics(self, bin_centers, cum_volumes):
         """
-        Tính các chỉ số thể tích từ DVH tích lũy.
+        Tính toán các chỉ số thể tích từ DVH.
         
         Args:
             bin_centers: Mảng giá trị liều ở tâm bin
@@ -283,21 +283,54 @@ class DVHCalculator:
         Returns:
             Dict chứa các chỉ số thể tích
         """
-        # TODO: Triển khai tính V5, V10, V20, v.v.
         volume_metrics = {}
         
-        # Tính Vx
-        for dose_level in [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95]:
-            # Tìm chỉ số bin gần nhất với mức liều
-            idx = np.abs(bin_centers - dose_level).argmin()
+        # Tính Vx (thể tích nhận ít nhất x Gy)
+        standard_levels = [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95]
+        
+        for dose_level in standard_levels:
+            # Sử dụng nội suy tuyến tính để tính thể tích chính xác hơn
+            volume_metrics[f'V{dose_level}'] = self._interpolate_volume_at_dose(bin_centers, cum_volumes, dose_level)
+        
+        # Tính rVx (thể tích nhận ít nhất x% liều kê toa)
+        # Giả sử liều kê toa là giá trị lớn nhất trong bin_centers
+        if len(bin_centers) > 0:
+            prescription_dose = np.max(bin_centers)
+            relative_levels = [10, 20, 30, 50, 80, 90, 95, 98, 100, 105, 110]
             
-            # Lấy thể tích tại bin này
-            if idx < len(cum_volumes):
-                volume_metrics[f'V{dose_level}'] = cum_volumes[idx]
-            else:
-                volume_metrics[f'V{dose_level}'] = 0.0
-                
+            for rel_level in relative_levels:
+                dose_value = prescription_dose * rel_level / 100.0
+                volume_metrics[f'rV{rel_level}'] = self._interpolate_volume_at_dose(bin_centers, cum_volumes, dose_value)
+        
         return volume_metrics
+    
+    def _interpolate_volume_at_dose(self, doses, volumes, dose_level):
+        """
+        Sử dụng nội suy tuyến tính để tính thể tích tại một mức liều cụ thể.
+        
+        Args:
+            doses: Mảng giá trị liều
+            volumes: Mảng phần trăm thể tích tích lũy
+            dose_level: Mức liều cần tính thể tích
+            
+        Returns:
+            Phần trăm thể tích tại mức liều
+        """
+        # Nếu mức liều nằm ngoài phạm vi, trả về giá trị biên
+        if dose_level <= doses[0]:
+            return volumes[0]
+        if dose_level >= doses[-1]:
+            return volumes[-1]
+        
+        # Tìm hai điểm để nội suy
+        for i in range(len(doses) - 1):
+            if doses[i] <= dose_level <= doses[i + 1]:
+                # Nội suy tuyến tính
+                fraction = (dose_level - doses[i]) / (doses[i + 1] - doses[i])
+                return volumes[i] + fraction * (volumes[i + 1] - volumes[i])
+        
+        # Nếu không tìm thấy khoảng phù hợp (không nên xảy ra)
+        return 0.0
     
     def calculate_dvh_for_all(self, bins: int = 100, dose_max: float = None) -> Dict[str, Dict]:
         """

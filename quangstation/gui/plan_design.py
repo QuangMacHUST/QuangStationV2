@@ -3,7 +3,7 @@ Module giao diện người dùng cho thiết kế kế hoạch xạ trị.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Callable, Any, Union
 import os
 import json
 import threading
+from datetime import datetime
 
 from quangstation.utils.logging import get_logger
 from quangstation.planning import create_technique
@@ -149,39 +150,39 @@ class PlanDesignWindow:
     def create_toolbar(self):
         """Tạo thanh công cụ."""
         toolbar = ttk.Frame(self.window)
-        toolbar.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Nút tạo kế hoạch
-        create_btn = ttk.Button(toolbar, text="Tạo kế hoạch", command=self.create_plan)
-        create_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        toolbar.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
         
         # Nút lưu kế hoạch
         save_btn = ttk.Button(toolbar, text="Lưu kế hoạch", command=self.save_plan)
-        save_btn.pack(side=tk.LEFT, padx=2, pady=2)
-        
-        # Nút tải kế hoạch
-        load_btn = ttk.Button(toolbar, text="Tải kế hoạch", command=self.load_plan)
-        load_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        save_btn.pack(side=tk.LEFT, padx=2)
         
         # Nút tính toán liều
-        calculate_btn = ttk.Button(toolbar, text="Tính liều", command=self.calculate_dose)
-        calculate_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        calc_dose_btn = ttk.Button(toolbar, text="Tính liều", command=self.calculate_dose)
+        calc_dose_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Nút tính DVH
+        calc_dvh_btn = ttk.Button(toolbar, text="Tính DVH", command=self.calculate_dvh)
+        calc_dvh_btn.pack(side=tk.LEFT, padx=2)
         
         # Nút tối ưu hóa
         optimize_btn = ttk.Button(toolbar, text="Tối ưu hóa", command=self.optimize_plan)
-        optimize_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        optimize_btn.pack(side=tk.LEFT, padx=2)
         
-        # Nút kiểm tra QA
-        qa_btn = ttk.Button(toolbar, text="Kiểm tra QA", command=self.check_plan_qa)
-        qa_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        # Nút tối ưu hóa KBP
+        kbp_btn = ttk.Button(toolbar, text="KBP Optimize", command=self.kbp_optimize)
+        kbp_btn.pack(side=tk.LEFT, padx=2)
         
         # Nút tạo báo cáo
         report_btn = ttk.Button(toolbar, text="Tạo báo cáo", command=self.create_report)
-        report_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        report_btn.pack(side=tk.LEFT, padx=2)
         
-        # Nút xuất RT Plan
-        export_btn = ttk.Button(toolbar, text="Xuất RT Plan", command=self.export_rt_plan)
-        export_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        # Nút xuất kế hoạch
+        export_btn = ttk.Button(toolbar, text="Xuất DICOM", command=self.export_rt_plan)
+        export_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Nút đóng
+        close_btn = ttk.Button(toolbar, text="Đóng", command=self.on_close)
+        close_btn.pack(side=tk.RIGHT, padx=2)
         
     def setup_prescription_tab(self):
         """Thiết lập tab kê toa."""
@@ -737,53 +738,281 @@ class PlanDesignWindow:
             messagebox.showerror("Lỗi", f"Không thể tải kế hoạch: {str(error)}")
     
     def calculate_dose(self):
-        """Tính toán phân bố liều cho kế hoạch hiện tại."""
+        """Tính toán liều cho kế hoạch hiện tại."""
         try:
-            # Hiển thị hộp thoại với các tùy chọn tính toán
-            # TODO: Triển khai hộp thoại tùy chọn
+            # Kiểm tra xem đã có kế hoạch chưa
+            if not hasattr(self, 'plan') or self.plan is None:
+                plan_data = self.get_plan_data()
+                if not plan_data:
+                    messagebox.showwarning("Cảnh báo", "Vui lòng tạo kế hoạch trước khi tính liều")
+                    return
             
-            # Tạo đối tượng DoseCalculator
-            dose_calculator = DoseCalculator()
+            # Kiểm tra xem đã có chùm tia chưa
+            if not hasattr(self, 'beams') or not self.beams:
+                messagebox.showwarning("Cảnh báo", "Vui lòng thêm ít nhất một chùm tia trước khi tính liều")
+                return
             
-            # Lấy thông tin kế hoạch
-            plan_data = self.get_plan_data()
+            # Kiểm tra xem đã có cấu trúc chưa
+            if not hasattr(self, 'structures') or not self.structures:
+                messagebox.showwarning("Cảnh báo", "Vui lòng thêm ít nhất một cấu trúc trước khi tính liều")
+                return
             
-            # Hiển thị thanh tiến trình
-            progress_window = tk.Toplevel(self.window)
-            progress_window.title("Đang tính toán...")
-            progress_window.geometry("300x100")
-            progress_window.resizable(False, False)
+            # Tạo hộp thoại tùy chọn tính liều
+            import tkinter as tk
+            from tkinter import ttk
             
-            progress_label = ttk.Label(progress_window, text="Đang tính toán phân bố liều...")
-            progress_label.pack(pady=10)
+            dose_dialog = tk.Toplevel(self.window)
+            dose_dialog.title("Tùy chọn tính liều")
+            dose_dialog.geometry("500x400")
+            dose_dialog.resizable(False, False)
+            dose_dialog.transient(self.window)
+            dose_dialog.grab_set()
             
-            progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
-            progress_bar.pack(fill=tk.X, padx=20, pady=10)
-            progress_bar.start()
+            # Tạo các frame chính
+            main_frame = ttk.Frame(dose_dialog, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
             
-            # Thực hiện tính toán trong một luồng riêng
-            def run_calculation():
-                try:
-                    # Thực hiện tính toán
-                    dose_result = dose_calculator.calculate_dose(
-                        technique=plan_data.get('technique', '3DCRT'),
-                        structures=self.structures
-                    )
+            # Tiêu đề
+            ttk.Label(main_frame, text="Tùy chọn tính toán liều", font=("Arial", 12, "bold")).pack(pady=5)
+            
+            # Frame thuật toán
+            algorithm_frame = ttk.LabelFrame(main_frame, text="Thuật toán tính liều", padding=10)
+            algorithm_frame.pack(fill=tk.X, pady=5)
+            
+            # Tùy chọn thuật toán
+            algorithm_var = tk.StringVar(value="CCC")
+            ttk.Radiobutton(algorithm_frame, text="Collapsed Cone Convolution (CCC)", variable=algorithm_var, value="CCC").pack(anchor=tk.W)
+            ttk.Radiobutton(algorithm_frame, text="Pencil Beam Convolution (PBC)", variable=algorithm_var, value="PBC").pack(anchor=tk.W)
+            ttk.Radiobutton(algorithm_frame, text="Monte Carlo", variable=algorithm_var, value="MC").pack(anchor=tk.W)
+            
+            # Frame tùy chọn Monte Carlo
+            mc_frame = ttk.LabelFrame(main_frame, text="Tùy chọn Monte Carlo", padding=10)
+            mc_frame.pack(fill=tk.X, pady=5)
+            
+            # Số hạt
+            ttk.Label(mc_frame, text="Số hạt mỗi lần lặp:").grid(row=0, column=0, sticky=tk.W, pady=5)
+            particles_var = tk.StringVar(value="100000")
+            ttk.Entry(mc_frame, textvariable=particles_var, width=10).grid(row=0, column=1, sticky=tk.W, pady=5)
+            
+            # Độ không đảm bảo mục tiêu
+            ttk.Label(mc_frame, text="Độ không đảm bảo mục tiêu (%):").grid(row=1, column=0, sticky=tk.W, pady=5)
+            uncertainty_var = tk.StringVar(value="2.0")
+            ttk.Entry(mc_frame, textvariable=uncertainty_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=5)
+            
+            # Số lần lặp tối đa
+            ttk.Label(mc_frame, text="Số lần lặp tối đa:").grid(row=2, column=0, sticky=tk.W, pady=5)
+            iterations_var = tk.StringVar(value="10")
+            ttk.Entry(mc_frame, textvariable=iterations_var, width=10).grid(row=2, column=1, sticky=tk.W, pady=5)
+            
+            # Frame tùy chọn chung
+            options_frame = ttk.LabelFrame(main_frame, text="Tùy chọn chung", padding=10)
+            options_frame.pack(fill=tk.X, pady=5)
+            
+            # Độ phân giải
+            ttk.Label(options_frame, text="Độ phân giải lưới liều (mm):").grid(row=0, column=0, sticky=tk.W, pady=5)
+            resolution_var = tk.StringVar(value="2.5")
+            ttk.Entry(options_frame, textvariable=resolution_var, width=10).grid(row=0, column=1, sticky=tk.W, pady=5)
+            
+            # Hiển thị tiến trình
+            show_progress_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(options_frame, text="Hiển thị tiến trình tính toán", variable=show_progress_var).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=5)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=15)
+            
+            def start_dose_calculation():
+                # Lấy các tùy chọn
+                algorithm = algorithm_var.get()
+                resolution = float(resolution_var.get())
+                show_progress = show_progress_var.get()
+                
+                # Tùy chọn Monte Carlo
+                particles = int(particles_var.get()) if algorithm == "MC" else None
+                uncertainty = float(uncertainty_var.get()) / 100.0 if algorithm == "MC" else None
+                iterations = int(iterations_var.get()) if algorithm == "MC" else None
+                
+                # Đóng hộp thoại
+                dose_dialog.destroy()
+                
+                # Hiển thị thông báo đang xử lý
+                self.window.config(cursor="wait")
+                
+                if show_progress:
+                    progress_window = tk.Toplevel(self.window)
+                    progress_window.title("Đang tính toán liều")
+                    progress_window.geometry("300x100")
+                    progress_window.resizable(False, False)
+                    progress_window.transient(self.window)
+                    progress_window.grab_set()
                     
-                    # Khi hoàn thành, cập nhật giao diện
-                    self.window.after(0, lambda: self.update_dose_display(dose_result))
-                    self.window.after(0, progress_window.destroy)
-                except Exception as exc:
-                    error_msg = str(exc)
-                    self.window.after(0, lambda: messagebox.showerror("Lỗi", f"Lỗi tính toán: {error_msg}"))
-                    self.window.after(0, progress_window.destroy)
-                    logger.error(f"Lỗi tính toán liều: {error_msg}")
+                    ttk.Label(progress_window, text=f"Đang tính toán liều với thuật toán {algorithm}...", font=("Arial", 10)).pack(pady=10)
+                    progress = ttk.Progressbar(progress_window, mode="indeterminate")
+                    progress.pack(fill=tk.X, padx=20, pady=10)
+                    progress.start()
+                else:
+                    progress_window = None
+                
+                # Thực hiện tính toán trong một luồng riêng
+                def calculation_thread():
+                    try:
+                        # Chuẩn bị dữ liệu đầu vào
+                        beams_data = []
+                        for beam in self.beams:
+                            beam_data = {
+                                'gantry_angle': beam.get('gantry_angle', 0),
+                                'collimator_angle': beam.get('collimator_angle', 0),
+                                'couch_angle': beam.get('couch_angle', 0),
+                                'sad': beam.get('sad', 1000),
+                                'field_size': beam.get('field_size', [100, 100]),
+                                'energy': beam.get('energy', 6),
+                                'weight': beam.get('weight', 1.0),
+                                'mlc': beam.get('mlc', None)
+                            }
+                            beams_data.append(beam_data)
+                        
+                        # Lấy dữ liệu CT và cấu trúc
+                        if hasattr(self, 'ct_data') and self.ct_data is not None:
+                            ct_data = self.ct_data
+                        else:
+                            # Tạo CT giả nếu không có
+                            ct_data = np.zeros((100, 100, 100), dtype=np.float32)
+                        
+                        # Tạo mặt nạ tính toán từ cấu trúc
+                        mask_data = None
+                        if hasattr(self, 'structures') and self.structures:
+                            # Tạo mặt nạ từ tất cả các cấu trúc
+                            mask_data = np.zeros_like(ct_data, dtype=np.bool_)
+                            for name, struct in self.structures.items():
+                                if struct is not None:
+                                    mask_data = np.logical_or(mask_data, struct > 0)
+                        
+                        # Lấy tâm xạ trị
+                        isocenter = [
+                            float(self.iso_x_var.get()) if hasattr(self, 'iso_x_var') else 0,
+                            float(self.iso_y_var.get()) if hasattr(self, 'iso_y_var') else 0,
+                            float(self.iso_z_var.get()) if hasattr(self, 'iso_z_var') else 0
+                        ]
+                        
+                        # Tính toán liều dựa trên thuật toán đã chọn
+                        if algorithm == "MC":
+                            # Sử dụng Monte Carlo
+                            from quangstation.dose_calculation.monte_carlo import MonteCarlo
+                            
+                            # Khởi tạo engine Monte Carlo
+                            mc_engine = MonteCarlo(voxel_size_mm=[resolution, resolution, resolution])
+                            
+                            # Đặt dữ liệu CT
+                            mc_engine.set_ct_data(ct_data)
+                            
+                            # Tính toán liều
+                            dose_data = mc_engine.calculate_dose(
+                                beams=beams_data,
+                                isocenter=isocenter,
+                                mask_data=mask_data,
+                                uncertainty_target=uncertainty,
+                                max_iterations=iterations,
+                                particles_per_iteration=particles
+                            )
+                            
+                            # Lưu thông tin độ không đảm bảo
+                            self.dose_uncertainty = mc_engine.uncertainty
+                            
+                        else:
+                            # Sử dụng thuật toán thông thường (CCC hoặc PBC)
+                            from quangstation.dose_calculation.dose_engine_wrapper import DoseCalculator
+                            
+                            # Khởi tạo bộ tính liều
+                            dose_calculator = DoseCalculator(algorithm=algorithm)
+                            
+                            # Đặt dữ liệu CT
+                            dose_calculator.set_ct_data(ct_data)
+                            
+                            # Đặt thông tin chùm tia
+                            for beam_data in beams_data:
+                                dose_calculator.add_beam(beam_data)
+                            
+                            # Đặt tâm xạ trị
+                            dose_calculator.set_isocenter(isocenter)
+                            
+                            # Tính toán liều
+                            dose_data = dose_calculator.calculate_dose(
+                                grid_resolution=resolution,
+                                mask=mask_data
+                            )
+                        
+                        # Lưu kết quả
+                        self.dose_data = dose_data
+                        self.dose_algorithm = algorithm
+                        
+                        # Cập nhật UI trong luồng chính
+                        self.window.after(0, lambda: self._update_after_dose_calculation(progress_window))
+                        
+                    except Exception as e:
+                        self.logger.error(f"Lỗi khi tính toán liều: {str(e)}")
+                        self.window.after(0, lambda: self._handle_dose_calculation_error(str(e), progress_window))
+                
+                # Khởi chạy luồng
+                import threading
+                thread = threading.Thread(target=calculation_thread)
+                thread.daemon = True
+                thread.start()
             
-            # Khởi động luồng tính toán
-            threading.Thread(target=run_calculation, daemon=True).start()
-        except Exception as error:
-            logger.error(f"Lỗi khi khởi tạo tính toán liều: {str(error)}")
-            messagebox.showerror("Lỗi", f"Không thể tính toán liều: {str(error)}")
+            ttk.Button(button_frame, text="Tính toán", command=start_dose_calculation).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Hủy", command=dose_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        
+        except Exception as e:
+            self.logger.error(f"Lỗi khi mở hộp thoại tính liều: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi mở hộp thoại tính liều: {str(e)}")
+
+    def _update_after_dose_calculation(self, progress_window):
+        """Cập nhật UI sau khi tính toán liều hoàn tất."""
+        try:
+            # Đóng cửa sổ tiến trình nếu có
+            if progress_window:
+                progress_window.destroy()
+            
+            # Khôi phục con trỏ
+            self.window.config(cursor="")
+            
+            # Hiển thị thông báo thành công
+            algorithm_name = {
+                "CCC": "Collapsed Cone Convolution",
+                "PBC": "Pencil Beam Convolution",
+                "MC": "Monte Carlo"
+            }.get(self.dose_algorithm, self.dose_algorithm)
+            
+            success_message = f"Đã tính toán liều thành công với thuật toán {algorithm_name}."
+            
+            # Thêm thông tin độ không đảm bảo nếu là Monte Carlo
+            if self.dose_algorithm == "MC" and hasattr(self, 'dose_uncertainty'):
+                success_message += f"\nĐộ không đảm bảo: {self.dose_uncertainty * 100:.2f}%"
+            
+            messagebox.showinfo("Thành công", success_message)
+            
+            # Cập nhật hiển thị liều
+            if hasattr(self, 'update_dose_display'):
+                self.update_dose_display()
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi cập nhật sau tính toán liều: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi cập nhật sau tính toán liều: {str(e)}")
+
+    def _handle_dose_calculation_error(self, error_message, progress_window):
+        """Xử lý lỗi trong quá trình tính toán liều."""
+        try:
+            # Đóng cửa sổ tiến trình nếu có
+            if progress_window:
+                progress_window.destroy()
+            
+            # Khôi phục con trỏ
+            self.window.config(cursor="")
+            
+            # Hiển thị thông báo lỗi
+            messagebox.showerror("Lỗi", f"Lỗi khi tính toán liều: {error_message}")
+            
+        except:
+            pass
     
     def optimize_plan(self):
         """Tối ưu hóa kế hoạch xạ trị."""
@@ -1050,18 +1279,653 @@ class PlanDesignWindow:
     
     def create_report(self):
         """Tạo báo cáo cho kế hoạch xạ trị."""
-        messagebox.showinfo("Thông báo", "Tính năng tạo báo cáo đang được phát triển")
-        logger.info("Đã kích hoạt tính năng tạo báo cáo (chưa triển khai)")
+        try:
+            # Kiểm tra xem đã tính toán DVH chưa
+            if not hasattr(self, 'dvh_data') or not self.dvh_data:
+                # Tính DVH nếu có dữ liệu liều
+                if hasattr(self, 'dose_data') and self.dose_data is not None:
+                    self.calculate_dvh()
+                else:
+                    messagebox.showwarning("Cảnh báo", "Chưa có dữ liệu liều để tạo báo cáo. Vui lòng tính toán liều trước.")
+                    return
+            
+            # Tạo hộp thoại để chọn định dạng và cấu hình báo cáo
+            import tkinter as tk
+            from tkinter import ttk
+            
+            report_dialog = tk.Toplevel(self.window)
+            report_dialog.title("Tạo báo cáo kế hoạch xạ trị")
+            report_dialog.geometry("500x600")
+            report_dialog.resizable(False, False)
+            report_dialog.transient(self.window)
+            report_dialog.grab_set()
+            
+            # Tạo các frame chính
+            main_frame = ttk.Frame(report_dialog, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Frame chọn định dạng báo cáo
+            format_frame = ttk.LabelFrame(main_frame, text="Định dạng báo cáo", padding=10)
+            format_frame.pack(fill=tk.X, pady=5)
+            
+            format_var = tk.StringVar(value="pdf")
+            ttk.Radiobutton(format_frame, text="PDF", variable=format_var, value="pdf").pack(anchor=tk.W)
+            ttk.Radiobutton(format_frame, text="Microsoft Word (DOCX)", variable=format_var, value="docx").pack(anchor=tk.W)
+            ttk.Radiobutton(format_frame, text="HTML", variable=format_var, value="html").pack(anchor=tk.W)
+            ttk.Radiobutton(format_frame, text="JSON (Dữ liệu thô)", variable=format_var, value="json").pack(anchor=tk.W)
+            
+            # Frame chọn các phần báo cáo
+            sections_frame = ttk.LabelFrame(main_frame, text="Nội dung báo cáo", padding=10)
+            sections_frame.pack(fill=tk.X, pady=5)
+            
+            sections = {
+                "patient_info": tk.BooleanVar(value=True),
+                "plan_info": tk.BooleanVar(value=True),
+                "dose_metrics": tk.BooleanVar(value=True),
+                "dvh": tk.BooleanVar(value=True),
+                "conformity_indices": tk.BooleanVar(value=True),
+                "beam_info": tk.BooleanVar(value=True),
+                "dose_images": tk.BooleanVar(value=True),
+                "qa_metrics": tk.BooleanVar(value=True)
+            }
+            
+            ttk.Checkbutton(sections_frame, text="Thông tin bệnh nhân", variable=sections["patient_info"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Thông tin kế hoạch", variable=sections["plan_info"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Chỉ số liều", variable=sections["dose_metrics"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Biểu đồ DVH", variable=sections["dvh"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Chỉ số tuân thủ", variable=sections["conformity_indices"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Thông tin chùm tia", variable=sections["beam_info"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Hình ảnh phân bố liều", variable=sections["dose_images"]).pack(anchor=tk.W)
+            ttk.Checkbutton(sections_frame, text="Chỉ số QA", variable=sections["qa_metrics"]).pack(anchor=tk.W)
+            
+            # Frame cấu hình báo cáo
+            config_frame = ttk.LabelFrame(main_frame, text="Cấu hình báo cáo", padding=10)
+            config_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(config_frame, text="Tiêu đề báo cáo:").grid(row=0, column=0, sticky=tk.W, pady=5)
+            title_var = tk.StringVar(value=f"Báo cáo kế hoạch xạ trị - {datetime.now().strftime('%d/%m/%Y')}")
+            ttk.Entry(config_frame, textvariable=title_var, width=40).grid(row=0, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(config_frame, text="Người phê duyệt:").grid(row=1, column=0, sticky=tk.W, pady=5)
+            approver_var = tk.StringVar()
+            ttk.Entry(config_frame, textvariable=approver_var, width=40).grid(row=1, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(config_frame, text="Người kiểm tra:").grid(row=2, column=0, sticky=tk.W, pady=5)
+            checker_var = tk.StringVar()
+            ttk.Entry(config_frame, textvariable=checker_var, width=40).grid(row=2, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(config_frame, text="Ghi chú:").grid(row=3, column=0, sticky=tk.W, pady=5)
+            notes_var = tk.StringVar()
+            ttk.Entry(config_frame, textvariable=notes_var, width=40).grid(row=3, column=1, sticky=tk.W, pady=5)
+            
+            # Frame chọn vị trí lưu báo cáo
+            output_frame = ttk.LabelFrame(main_frame, text="Vị trí lưu báo cáo", padding=10)
+            output_frame.pack(fill=tk.X, pady=5)
+            
+            output_path_var = tk.StringVar()
+            ttk.Entry(output_frame, textvariable=output_path_var, width=50).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+            
+            def browse_output():
+                file_type = format_var.get()
+                file_extensions = {
+                    "pdf": [("PDF Files", "*.pdf")],
+                    "docx": [("Word Files", "*.docx")],
+                    "html": [("HTML Files", "*.html")],
+                    "json": [("JSON Files", "*.json")]
+                }
+                
+                output_file = filedialog.asksaveasfilename(
+                    parent=report_dialog,
+                    title="Chọn vị trí lưu báo cáo",
+                    filetypes=file_extensions[file_type],
+                    defaultextension=f".{file_type}"
+                )
+                
+                if output_file:
+                    output_path_var.set(output_file)
+            
+            ttk.Button(output_frame, text="Duyệt...", command=browse_output).pack(side=tk.RIGHT, padx=5)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=15)
+            
+            def generate_report():
+                # Kiểm tra xem đã chọn vị trí lưu chưa
+                output_path = output_path_var.get()
+                if not output_path:
+                    messagebox.showwarning("Cảnh báo", "Vui lòng chọn vị trí lưu báo cáo")
+                    return
+                
+                # Thu thập cấu hình báo cáo
+                report_format = format_var.get()
+                included_sections = [s for s, v in sections.items() if v.get()]
+                title = title_var.get()
+                approver = approver_var.get()
+                checker = checker_var.get()
+                notes = notes_var.get()
+                
+                # Thu thập dữ liệu báo cáo
+                patient_info = {}
+                if hasattr(self, 'patient_info'):
+                    patient_info = self.patient_info
+                elif hasattr(self, 'plan') and hasattr(self.plan, 'patient_info'):
+                    patient_info = self.plan.patient_info
+                
+                plan_info = self.get_plan_data()
+                
+                # Thu thập dữ liệu hình ảnh
+                try:
+                    # Tạo thư mục tạm để lưu các hình ảnh
+                    import tempfile
+                    import os
+                    
+                    temp_dir = tempfile.mkdtemp()
+                    image_paths = []
+                    image_captions = []
+                    
+                    # Lưu hình ảnh DVH
+                    if "dvh" in included_sections and hasattr(self, 'dvh_data'):
+                        dvh_path = os.path.join(temp_dir, "dvh.png")
+                        if hasattr(self, 'dvh_figure'):
+                            self.dvh_figure.savefig(dvh_path, dpi=150, bbox_inches='tight')
+                            image_paths.append(dvh_path)
+                            image_captions.append("Biểu đồ Dose-Volume Histogram (DVH)")
+                    
+                    # Lưu hình ảnh phân bố liều
+                    if "dose_images" in included_sections and hasattr(self, 'dose_data') and self.dose_data is not None:
+                        from quangstation.plan_evaluation.dose_map import DoseMap
+                        
+                        # Tạo hình ảnh phân bố liều
+                        structures = {}
+                        if hasattr(self, 'contour_tools'):
+                            for name in self.contour_tools.contours.keys():
+                                structures[name] = self.contour_tools.get_structure_mask(name)
+                        
+                        dose_map = DoseMap(self.dose_data)
+                        for name, mask in structures.items():
+                            color = self.contour_tools.get_structure_color(name)
+                            dose_map.add_structure(name, mask, color)
+                        
+                        # Tạo hình ảnh phân bố liều theo các trục
+                        for axis in ['axial', 'coronal', 'sagittal']:
+                            slice_index = dose_map.dose_data.shape[0] // 2 if axis == 'axial' else dose_map.dose_data.shape[1] // 2
+                            fig = dose_map.plot_dose_map(axis=axis, slice_index=slice_index, show_structures=True, show_isodose=True)
+                            
+                            dose_path = os.path.join(temp_dir, f"dose_{axis}.png")
+                            fig.savefig(dose_path, dpi=150, bbox_inches='tight')
+                            image_paths.append(dose_path)
+                            image_captions.append(f"Phân bố liều - Mặt phẳng {axis}")
+                    
+                    # Tính toán các chỉ số đánh giá kế hoạch
+                    if "conformity_indices" in included_sections:
+                        from quangstation.plan_evaluation.plan_metrics import PlanQualityMetrics
+                        
+                        # Xác định cấu trúc đích (PTV)
+                        target_name = None
+                        for name in structures.keys():
+                            if name.startswith('PTV'):
+                                target_name = name
+                                break
+                        
+                        if target_name and hasattr(self, 'dose_data') and self.dose_data is not None:
+                            # Lấy liều kê toa
+                            prescribed_dose = 0
+                            if hasattr(self, 'plan') and hasattr(self.plan, 'prescribed_dose'):
+                                prescribed_dose = self.plan.prescribed_dose
+                            elif plan_info and 'total_dose' in plan_info:
+                                prescribed_dose = float(plan_info['total_dose'])
+                            
+                            # Tính các chỉ số chất lượng kế hoạch
+                            metrics = PlanQualityMetrics(self.dose_data, structures, prescribed_dose, target_name)
+                            conformity_indices = metrics.calculate_all_metrics()
+                            
+                            # Tạo và lưu biểu đồ radar chất lượng kế hoạch
+                            radar_fig = metrics.plot_quality_radar()
+                            radar_path = os.path.join(temp_dir, "quality_radar.png")
+                            radar_fig.savefig(radar_path, dpi=150, bbox_inches='tight')
+                            image_paths.append(radar_path)
+                            image_captions.append("Biểu đồ radar đánh giá chất lượng kế hoạch")
+                    else:
+                        conformity_indices = {}
+                    
+                    # Lấy thông tin chùm tia
+                    beams = []
+                    if hasattr(self, 'plan') and hasattr(self.plan, 'beams'):
+                        for beam in self.plan.beams:
+                            beam_dict = beam.to_dict() if hasattr(beam, 'to_dict') else {}
+                            beams.append(beam_dict)
+                    
+                    # Tạo báo cáo dựa trên định dạng đã chọn
+                    from quangstation.reporting.enhanced_report import EnhancedReport
+                    
+                    # Chuẩn bị dữ liệu cần thiết
+                    report_data = {
+                        'patient_info': patient_info,
+                        'plan_info': plan_info,
+                        'dvh_data': self.dvh_data if hasattr(self, 'dvh_data') else {},
+                        'dose_metrics': self.dvh_calculator.calculate_dose_metrics() if hasattr(self, 'dvh_calculator') else {},
+                        'conformity_indices': conformity_indices,
+                        'beams': beams,
+                        'image_paths': image_paths,
+                        'image_captions': image_captions,
+                        'title': title,
+                        'approved_by': approver,
+                        'checked_by': checker,
+                        'notes': notes
+                    }
+                    
+                    # Tạo báo cáo
+                    created_file = None
+                    if report_format == "pdf":
+                        from quangstation.reporting.pdf_report import create_plan_report
+                        created_file = create_plan_report(**report_data, output_path=output_path)
+                    elif report_format == "docx":
+                        from quangstation.reporting.docx_report import create_plan_report
+                        created_file = create_plan_report(**report_data, output_path=output_path)
+                    elif report_format == "html":
+                        from quangstation.reporting.html_report import create_plan_report
+                        created_file = create_plan_report(**report_data, output_path=output_path)
+                    elif report_format == "json":
+                        from quangstation.reporting.report_gen import TreatmentReport
+                        report = TreatmentReport(
+                            patient_data=patient_info,
+                            plan_data=plan_info,
+                            dose_data=self.dose_data if hasattr(self, 'dose_data') else None,
+                            structures=structures
+                        )
+                        created_file = report.export_json_summary(output_path)
+                    
+                    if created_file:
+                        messagebox.showinfo("Thành công", f"Đã tạo báo cáo tại: {created_file}")
+                        # Đóng dialog
+                        report_dialog.destroy()
+                    else:
+                        messagebox.showerror("Lỗi", "Không thể tạo báo cáo")
+                    
+                    # Xóa thư mục tạm khi đã hoàn thành
+                    try:
+                        import shutil
+                        shutil.rmtree(temp_dir)
+                    except:
+                        pass
+                    
+                except Exception as e:
+                    logger.error(f"Lỗi khi tạo báo cáo: {str(e)}")
+                    messagebox.showerror("Lỗi", f"Lỗi khi tạo báo cáo: {str(e)}")
+            
+            ttk.Button(button_frame, text="Tạo báo cáo", command=generate_report).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Hủy", command=report_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        
+        except Exception as e:
+            logger.error(f"Lỗi khi mở hộp thoại tạo báo cáo: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi mở hộp thoại tạo báo cáo: {str(e)}")
     
     def export_rt_plan(self):
         """Xuất kế hoạch xạ trị sang định dạng DICOM RT Plan."""
-        messagebox.showinfo("Thông báo", "Tính năng xuất RT Plan đang được phát triển")
-        logger.info("Đã kích hoạt tính năng xuất RT Plan (chưa triển khai)")
+        try:
+            # Kiểm tra xem có kế hoạch hiện tại không
+            if not hasattr(self, 'plan') or self.plan is None:
+                plan_data = self.get_plan_data()
+                if not plan_data:
+                    messagebox.showwarning("Cảnh báo", "Không có kế hoạch xạ trị để xuất")
+                    return
+            
+            # Tạo hộp thoại chọn thư mục xuất
+            export_dir = filedialog.askdirectory(
+                title="Chọn thư mục xuất DICOM RT Plan",
+                mustexist=True
+            )
+            
+            if not export_dir:
+                return
+            
+            # Tạo hộp thoại cấu hình xuất
+            import tkinter as tk
+            from tkinter import ttk
+            
+            export_dialog = tk.Toplevel(self.window)
+            export_dialog.title("Xuất kế hoạch xạ trị DICOM")
+            export_dialog.geometry("450x550")
+            export_dialog.resizable(False, False)
+            export_dialog.transient(self.window)
+            export_dialog.grab_set()
+            
+            # Tạo các frame chính
+            main_frame = ttk.Frame(export_dialog, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Frame cấu hình xuất
+            config_frame = ttk.LabelFrame(main_frame, text="Cấu hình xuất DICOM", padding=10)
+            config_frame.pack(fill=tk.X, pady=5)
+            
+            # Các loại DICOM RT
+            types_frame = ttk.Frame(config_frame)
+            types_frame.pack(fill=tk.X, pady=5)
+            
+            export_types = {
+                "rt_plan": tk.BooleanVar(value=True),
+                "rt_struct": tk.BooleanVar(value=True),
+                "rt_dose": tk.BooleanVar(value=True),
+                "ct_images": tk.BooleanVar(value=False)
+            }
+            
+            ttk.Checkbutton(types_frame, text="RT Plan", variable=export_types["rt_plan"]).grid(row=0, column=0, sticky=tk.W, padx=10)
+            ttk.Checkbutton(types_frame, text="RT Structure Set", variable=export_types["rt_struct"]).grid(row=0, column=1, sticky=tk.W, padx=10)
+            ttk.Checkbutton(types_frame, text="RT Dose", variable=export_types["rt_dose"]).grid(row=1, column=0, sticky=tk.W, padx=10)
+            ttk.Checkbutton(types_frame, text="CT Images", variable=export_types["ct_images"]).grid(row=1, column=1, sticky=tk.W, padx=10)
+            
+            # Thông tin DICOM
+            info_frame = ttk.Frame(config_frame)
+            info_frame.pack(fill=tk.X, pady=10)
+            
+            ttk.Label(info_frame, text="Institution Name:").grid(row=0, column=0, sticky=tk.W, pady=5)
+            institution_var = tk.StringVar(value="QuangStation RT Department")
+            ttk.Entry(info_frame, textvariable=institution_var, width=30).grid(row=0, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(info_frame, text="Physician Name:").grid(row=1, column=0, sticky=tk.W, pady=5)
+            physician_var = tk.StringVar()
+            ttk.Entry(info_frame, textvariable=physician_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(info_frame, text="Device Serial Number:").grid(row=2, column=0, sticky=tk.W, pady=5)
+            device_var = tk.StringVar(value="QS001")
+            ttk.Entry(info_frame, textvariable=device_var, width=30).grid(row=2, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(info_frame, text="Description:").grid(row=3, column=0, sticky=tk.W, pady=5)
+            description_var = tk.StringVar()
+            ttk.Entry(info_frame, textvariable=description_var, width=30).grid(row=3, column=1, sticky=tk.W, pady=5)
+            
+            # Frame cấu hình nâng cao
+            advanced_frame = ttk.LabelFrame(main_frame, text="Cấu hình nâng cao", padding=10)
+            advanced_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(advanced_frame, text="Anonymize Patient:").grid(row=0, column=0, sticky=tk.W, pady=5)
+            anonymize_var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(advanced_frame, variable=anonymize_var).grid(row=0, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(advanced_frame, text="Transfer Syntax:").grid(row=1, column=0, sticky=tk.W, pady=5)
+            transfer_syntax_var = tk.StringVar(value="Implicit VR Little Endian")
+            transfer_syntax_combo = ttk.Combobox(advanced_frame, textvariable=transfer_syntax_var, width=30, state="readonly")
+            transfer_syntax_combo['values'] = (
+                "Implicit VR Little Endian", 
+                "Explicit VR Little Endian", 
+                "Explicit VR Big Endian",
+                "JPEG Baseline"
+            )
+            transfer_syntax_combo.grid(row=1, column=1, sticky=tk.W, pady=5)
+            
+            ttk.Label(advanced_frame, text="Include Private Tags:").grid(row=2, column=0, sticky=tk.W, pady=5)
+            private_tags_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(advanced_frame, variable=private_tags_var).grid(row=2, column=1, sticky=tk.W, pady=5)
+            
+            # Frame thông tin tiến trình
+            progress_frame = ttk.LabelFrame(main_frame, text="Tiến trình", padding=10)
+            progress_frame.pack(fill=tk.X, pady=5)
+            
+            progress_var = tk.DoubleVar(value=0.0)
+            progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, maximum=100)
+            progress_bar.pack(fill=tk.X, pady=5)
+            
+            status_var = tk.StringVar(value="Sẵn sàng xuất...")
+            status_label = ttk.Label(progress_frame, textvariable=status_var)
+            status_label.pack(anchor=tk.W, pady=5)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=15)
+            
+            def export_dicom():
+                try:
+                    # Thu thập cấu hình xuất
+                    export_opts = {
+                        "rt_plan": export_types["rt_plan"].get(),
+                        "rt_struct": export_types["rt_struct"].get(),
+                        "rt_dose": export_types["rt_dose"].get(),
+                        "ct_images": export_types["ct_images"].get(),
+                        "institution_name": institution_var.get(),
+                        "physician_name": physician_var.get(),
+                        "device_serial_number": device_var.get(),
+                        "description": description_var.get(),
+                        "anonymize": anonymize_var.get(),
+                        "transfer_syntax": transfer_syntax_var.get(),
+                        "include_private_tags": private_tags_var.get()
+                    }
+                    
+                    # Kiểm tra xem có ít nhất một loại DICOM được chọn không
+                    if not any([export_opts["rt_plan"], export_opts["rt_struct"], export_opts["rt_dose"], export_opts["ct_images"]]):
+                        messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất một loại DICOM để xuất")
+                        return
+                    
+                    # Cập nhật trạng thái
+                    status_var.set("Đang chuẩn bị xuất...")
+                    progress_var.set(5)
+                    
+                    # Sử dụng SessionManager để xuất
+                    from quangstation.data_management.session_management import SessionManager
+                    
+                    # Lấy patient_id
+                    patient_id = None
+                    if hasattr(self, 'plan') and hasattr(self.plan, 'patient_id'):
+                        patient_id = self.plan.patient_id
+                    elif hasattr(self, 'patient_id'):
+                        patient_id = self.patient_id
+                    else:
+                        # Tìm trong plan_data
+                        plan_data = self.get_plan_data()
+                        if plan_data and 'patient_id' in plan_data:
+                            patient_id = plan_data['patient_id']
+                        else:
+                            # Hỏi người dùng
+                            from tkinter import simpledialog
+                            patient_id = simpledialog.askstring(
+                                "Patient ID", 
+                                "Nhập ID bệnh nhân:", 
+                                parent=export_dialog
+                            )
+                            if not patient_id:
+                                status_var.set("Đã hủy xuất")
+                                return
+                    
+                    # Lấy plan_id
+                    plan_id = None
+                    if hasattr(self, 'plan') and hasattr(self.plan, 'id'):
+                        plan_id = self.plan.id
+                    elif hasattr(self, 'plan_id'):
+                        plan_id = self.plan_id
+                    else:
+                        # Tìm trong plan_data
+                        plan_data = self.get_plan_data()
+                        if plan_data and 'plan_id' in plan_data:
+                            plan_id = plan_data['plan_id']
+                        elif plan_data and 'plan_name' in plan_data:
+                            plan_id = plan_data['plan_name']
+                        else:
+                            # Hỏi người dùng
+                            from tkinter import simpledialog
+                            plan_id = simpledialog.askstring(
+                                "Plan ID", 
+                                "Nhập ID kế hoạch:", 
+                                parent=export_dialog
+                            )
+                            if not plan_id:
+                                status_var.set("Đã hủy xuất")
+                                return
+                    
+                    # Cập nhật tiến trình
+                    status_var.set("Đang xuất kế hoạch...")
+                    progress_var.set(20)
+                    
+                    # Xử lý trong luồng riêng để không block UI
+                    def export_thread():
+                        try:
+                            # Khởi tạo SessionManager
+                            session_manager = SessionManager()
+                            
+                            # Khi xuất đồng thời nhiều loại DICOM, bắt buộc phải load session
+                            session_manager.load_session(patient_id, plan_id)
+                            
+                            # Cập nhật metadata cho DICOM nếu cần
+                            metadata = {
+                                "institution_name": export_opts["institution_name"],
+                                "physician_name": export_opts["physician_name"],
+                                "device_serial_number": export_opts["device_serial_number"],
+                                "description": export_opts["description"],
+                                "anonymize": export_opts["anonymize"]
+                            }
+                            
+                            # Cập nhật trạng thái
+                            status_var.set("Đang xuất RT Plan...")
+                            progress_var.set(40)
+                            
+                            # Thực hiện xuất
+                            export_info = session_manager.export_plan(
+                                output_dir=export_dir,
+                                patient_id=patient_id,
+                                plan_id=plan_id,
+                                export_rt_plan=export_opts["rt_plan"],
+                                export_rt_struct=export_opts["rt_struct"],
+                                export_rt_dose=export_opts["rt_dose"],
+                                export_ct=export_opts["ct_images"],
+                                metadata=metadata,
+                                include_private_tags=export_opts["include_private_tags"]
+                            )
+                            
+                            # Cập nhật trạng thái
+                            status_var.set("Hoàn tất xuất DICOM!")
+                            progress_var.set(100)
+                            
+                            # Thông báo kết quả ở luồng chính
+                            export_dialog.after(100, lambda: show_results(export_info))
+                            
+                        except Exception as e:
+                            logger.error(f"Lỗi khi xuất kế hoạch: {str(e)}")
+                            export_dialog.after(100, lambda: show_error(str(e)))
+                    
+                    def show_results(export_info):
+                        result_message = f"Đã xuất thành công kế hoạch xạ trị sang thư mục:\n{export_dir}\n\n"
+                        
+                        if export_opts["rt_plan"] and export_info.get("rt_plan"):
+                            result_message += f"- RT Plan: {export_info['rt_plan']}\n"
+                        if export_opts["rt_struct"] and export_info.get("rt_struct"):
+                            result_message += f"- RT Structure: {export_info['rt_struct']}\n"
+                        if export_opts["rt_dose"] and export_info.get("rt_dose"):
+                            result_message += f"- RT Dose: {export_info['rt_dose']}\n"
+                        if export_opts["ct_images"] and export_info.get("ct_images"):
+                            result_message += f"- CT Images: {export_info['ct_images']} files\n"
+                        
+                        messagebox.showinfo("Xuất thành công", result_message)
+                        export_dialog.destroy()
+                    
+                    def show_error(error_msg):
+                        status_var.set(f"Lỗi: {error_msg}")
+                        messagebox.showerror("Lỗi khi xuất kế hoạch", f"Không thể xuất kế hoạch: {error_msg}")
+                    
+                    # Khởi chạy luồng xuất
+                    threading.Thread(target=export_thread, daemon=True).start()
+                    
+                except Exception as e:
+                    logger.error(f"Lỗi khi xuất kế hoạch: {str(e)}")
+                    status_var.set(f"Lỗi: {str(e)}")
+                    messagebox.showerror("Lỗi", f"Lỗi khi xuất kế hoạch xạ trị: {str(e)}")
+            
+            ttk.Button(button_frame, text="Xuất DICOM", command=export_dicom).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Hủy", command=export_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi mở hộp thoại xuất RT Plan: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi mở hộp thoại xuất RT Plan: {str(e)}")
     
     def find_isocenter(self):
         """Tự động tìm tâm điều trị dựa trên cấu trúc đích."""
-        messagebox.showinfo("Thông báo", "Tính năng tìm tâm tự động đang được phát triển")
-        logger.info("Đã kích hoạt tính năng tìm tâm tự động (chưa triển khai)")
+        try:
+            # Kiểm tra xem có cấu trúc nào được chọn không
+            if not hasattr(self, 'structures_listbox') or not self.structures_listbox.curselection():
+                # Hỏi người dùng chọn cấu trúc đích
+                structures = []
+                if hasattr(self, 'structures_listbox'):
+                    for i in range(self.structures_listbox.size()):
+                        structures.append(self.structures_listbox.get(i))
+                
+                # Lọc các cấu trúc có tiền tố PTV hoặc GTV
+                target_candidates = [s for s in structures if s.startswith(('PTV', 'GTV', 'CTV'))]
+                
+                if not target_candidates:
+                    if not structures:
+                        messagebox.showwarning("Cảnh báo", "Không tìm thấy cấu trúc nào. Vui lòng tạo cấu trúc trước.")
+                    else:
+                        messagebox.showwarning("Cảnh báo", "Không tìm thấy cấu trúc mục tiêu (PTV/GTV/CTV). Vui lòng chọn cấu trúc mục tiêu.")
+                    return
+                
+                # Hiển thị dialog để chọn cấu trúc đích
+                import tkinter as tk
+                from tkinter import simpledialog
+                
+                target_structure = simpledialog.askstring(
+                    "Chọn cấu trúc đích",
+                    "Chọn cấu trúc đích để xác định tâm điều trị:",
+                    initialvalue=target_candidates[0] if target_candidates else structures[0]
+                )
+                
+                if not target_structure or target_structure not in structures:
+                    messagebox.showwarning("Cảnh báo", "Không có cấu trúc đích được chọn.")
+                    return
+            else:
+                # Lấy cấu trúc đã chọn từ danh sách
+                selected_idx = self.structures_listbox.curselection()[0]
+                target_structure = self.structures_listbox.get(selected_idx)
+            
+            # Lấy mask của cấu trúc đích
+            target_mask = None
+            
+            # Kiểm tra xem có thể truy cập mask từ contour_tools hoặc từ thuộc tính khác không
+            if hasattr(self, 'contour_tools'):
+                target_mask = self.contour_tools.get_structure_mask(target_structure)
+            elif hasattr(self, 'structure_masks') and target_structure in self.structure_masks:
+                target_mask = self.structure_masks[target_structure]
+            
+            if target_mask is None or not isinstance(target_mask, np.ndarray):
+                messagebox.showwarning("Cảnh báo", f"Không thể lấy mask cho cấu trúc {target_structure}.")
+                return
+            
+            # Kiểm tra xem mask có dữ liệu không
+            if not np.any(target_mask):
+                messagebox.showwarning("Cảnh báo", f"Mask của cấu trúc {target_structure} không có dữ liệu.")
+                return
+            
+            # Lấy thông tin khoảng cách voxel (spacing)
+            spacing = [1.0, 1.0, 1.0]  # Giá trị mặc định
+            
+            if hasattr(self, 'image_data') and hasattr(self.image_data, 'spacing'):
+                spacing = self.image_data.spacing
+            elif hasattr(self, 'spacing'):
+                spacing = self.spacing
+            
+            # Sử dụng hàm calculate_isocenter từ utils/geometry
+            from quangstation.utils.geometry import calculate_isocenter
+            isocenter = calculate_isocenter(target_mask, spacing)
+            
+            logger.info(f"Đã tính tâm điều trị tự động tại {isocenter} dựa trên cấu trúc {target_structure}")
+            
+            # Cập nhật tâm điều trị trong giao diện
+            if hasattr(self, 'iso_x_var') and hasattr(self, 'iso_y_var') and hasattr(self, 'iso_z_var'):
+                self.iso_x_var.set(f"{isocenter[0]:.2f}")
+                self.iso_y_var.set(f"{isocenter[1]:.2f}")
+                self.iso_z_var.set(f"{isocenter[2]:.2f}")
+                
+                # Hiển thị thông báo thành công
+                messagebox.showinfo("Thành công", f"Đã xác định tâm điều trị tại ({isocenter[0]:.2f}, {isocenter[1]:.2f}, {isocenter[2]:.2f}) mm dựa trên cấu trúc {target_structure}")
+                
+                # Nếu có kế hoạch hiện tại, cập nhật kế hoạch
+                if hasattr(self, 'plan') and self.plan is not None:
+                    self.plan.set_isocenter(isocenter)
+                    logger.info("Đã cập nhật tâm điều trị vào kế hoạch")
+            else:
+                messagebox.showinfo("Thông tin", f"Tâm điều trị được xác định tại ({isocenter[0]:.2f}, {isocenter[1]:.2f}, {isocenter[2]:.2f}) mm")
+                logger.warning("Không thể cập nhật giao diện do không tìm thấy các biến iso_x_var, iso_y_var, iso_z_var")
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi xác định tâm điều trị tự động: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi xác định tâm điều trị tự động: {str(e)}")
     
     def on_beam_select(self, event):
         """Xử lý sự kiện khi chọn chùm tia."""
@@ -1730,9 +2594,24 @@ class PlanDesignWindow:
     def update_dose_display(self, dose_data):
         """Cập nhật hiển thị phân bố liều."""
         self.dose_data = dose_data
-        messagebox.showinfo("Thành công", "Đã tính toán phân bố liều")
-        logger.info("Đã cập nhật hiển thị phân bố liều")
-        # TODO: Cập nhật hiển thị phân bố liều trên giao diện
+        
+        # Cập nhật hiển thị phân bố liều trên giao diện
+        if hasattr(self, 'dvh_tab') and hasattr(self, 'dvh_frame'):
+            # Tính và hiển thị DVH
+            self.calculate_dvh()
+            
+        # Cập nhật hiển thị 3D nếu tab 3D view đang mở
+        if hasattr(self, '3d_view_tab'):
+            self.show_dose_3d()
+            
+        # Cập nhật hiển thị liều trên các view MPR
+        if hasattr(self, 'beam_view_tab'):
+            # Hiển thị liều theo phương thẳng đứng (Beam's Eye View)
+            self._update_beam_view_with_dose()
+            
+        # Thông báo và log
+        messagebox.showinfo("Thành công", "Đã tính toán và hiển thị phân bố liều")
+        logger.info("Đã cập nhật hiển thị phân bố liều trên tất cả các view")
 
     def check_plan_qa(self):
         """Kiểm tra chất lượng kế hoạch xạ trị."""
@@ -2033,3 +2912,404 @@ class PlanDesignWindow:
         except Exception as error:
             logger.error(f"Lỗi khi mở cửa sổ kiểm tra QA: {str(error)}")
             messagebox.showerror("Lỗi", f"Không thể mở cửa sổ kiểm tra QA: {str(error)}")
+
+    def _update_beam_view_with_dose(self):
+        """Cập nhật hiển thị liều trên Beam's Eye View."""
+        if not hasattr(self, 'dose_data') or self.dose_data is None:
+            logger.warning("Không có dữ liệu liều để hiển thị")
+            return
+            
+        if not hasattr(self, 'beam_view_canvas'):
+            logger.warning("Chưa khởi tạo canvas hiển thị Beam's Eye View")
+            return
+            
+        try:
+            # Lấy chùm tia đang được chọn
+            selected_beam = None
+            if hasattr(self, 'beam_listbox') and self.beam_listbox.curselection():
+                beam_idx = self.beam_listbox.curselection()[0]
+                beam_id = self.beam_listbox.get(beam_idx)
+                
+                # Lấy thông tin chùm tia
+                for beam in self.beams:
+                    if beam.id == beam_id:
+                        selected_beam = beam
+                        break
+            
+            if selected_beam is None:
+                return
+                
+            # Lấy thông tin góc của chùm tia
+            gantry_angle = selected_beam.gantry_angle
+            couch_angle = selected_beam.couch_angle
+            
+            # Tính toán mặt phẳng hiển thị dựa trên góc chùm tia
+            from quangstation.utils.geometry import calculate_beam_plane
+            beam_plane = calculate_beam_plane(self.dose_data, 
+                                             gantry_angle, 
+                                             couch_angle, 
+                                             selected_beam.isocenter)
+            
+            # Áp dụng colormap cho hiển thị liều
+            import matplotlib.pyplot as plt
+            from matplotlib import cm
+            import numpy as np
+            
+            # Chuẩn hóa liều
+            dose_min = np.min(self.dose_data)
+            dose_max = np.max(self.dose_data)
+            normalized_dose = (beam_plane - dose_min) / (dose_max - dose_min + 1e-10)
+            
+            # Áp dụng colormap
+            colored_dose = cm.jet(normalized_dose)
+            
+            # Chuyển đổi sang dạng hình ảnh
+            from PIL import Image, ImageTk
+            
+            # Chuyển sang uint8 để hiển thị
+            rgba_img = (colored_dose * 255).astype(np.uint8)
+            
+            # Thêm alpha channel dựa trên giá trị liều
+            # Những vùng liều thấp sẽ trong suốt hơn
+            alpha_scale = 0.7  # Điều chỉnh độ trong suốt tối đa
+            rgba_img[:, :, 3] = (normalized_dose * 255 * alpha_scale).astype(np.uint8)
+            
+            # Tạo hình ảnh PIL
+            pil_img = Image.fromarray(rgba_img)
+            
+            # Điều chỉnh kích thước để vừa với canvas
+            canvas_width = self.beam_view_canvas.winfo_width()
+            canvas_height = self.beam_view_canvas.winfo_height()
+            
+            if canvas_width > 1 and canvas_height > 1:
+                pil_img = pil_img.resize((canvas_width, canvas_height), Image.LANCZOS)
+                
+                # Chuyển thành PhotoImage
+                dose_image = ImageTk.PhotoImage(pil_img)
+                
+                # Hiển thị trên canvas
+                self.beam_view_canvas.create_image(0, 0, anchor="nw", image=dose_image)
+                
+                # Lưu tham chiếu để tránh garbage collection
+                self.beam_view_dose_image = dose_image
+                
+                # Thêm chú thích thang màu
+                self._add_dose_colorbar(self.beam_view_canvas, 
+                                      dose_min, 
+                                      dose_max,
+                                      canvas_width, 
+                                      canvas_height)
+                
+                logger.info(f"Đã cập nhật hiển thị liều trên Beam's Eye View cho chùm tia {beam_id}")
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật hiển thị liều trên Beam's Eye View: {str(e)}")
+            
+    def _add_dose_colorbar(self, canvas, min_val, max_val, canvas_width, canvas_height):
+        """Thêm thang màu cho hiển thị liều."""
+        # Vị trí và kích thước của colorbar
+        bar_height = 20
+        bar_width = 150
+        x_offset = canvas_width - bar_width - 10
+        y_offset = canvas_height - bar_height - 10
+        
+        # Vẽ nền cho colorbar
+        canvas.create_rectangle(x_offset, y_offset, 
+                             x_offset + bar_width, y_offset + bar_height,
+                             fill="white", outline="black")
+        
+        # Tạo gradient màu
+        import matplotlib.pyplot as plt
+        from matplotlib import cm
+        import numpy as np
+        
+        # Tạo gradient
+        gradient = np.linspace(0, 1, bar_width)
+        gradient = np.vstack((gradient, gradient))
+        
+        # Áp dụng colormap
+        colored_gradient = (cm.jet(gradient) * 255).astype(np.uint8)
+        
+        # Chuyển thành hình ảnh
+        from PIL import Image, ImageTk
+        gradient_img = Image.fromarray(colored_gradient)
+        gradient_photo = ImageTk.PhotoImage(gradient_img)
+        
+        # Hiển thị gradient
+        canvas.create_image(x_offset, y_offset, anchor="nw", image=gradient_photo)
+        
+        # Lưu tham chiếu
+        self.gradient_photo = gradient_photo
+        
+        # Thêm giá trị min/max
+        canvas.create_text(x_offset, y_offset + bar_height + 5, 
+                        text=f"{min_val:.1f}", anchor="nw")
+        canvas.create_text(x_offset + bar_width, y_offset + bar_height + 5, 
+                        text=f"{max_val:.1f}", anchor="ne")
+        
+        # Tiêu đề
+        canvas.create_text(x_offset + bar_width/2, y_offset - 5, 
+                        text="Liều (Gy)", anchor="s")
+
+    def kbp_optimize(self):
+        """Tối ưu hóa kế hoạch dựa trên kiến thức (KBP)."""
+        try:
+            # Kiểm tra xem đã có cấu trúc và kế hoạch chưa
+            if not hasattr(self, 'structures') or not self.structures:
+                messagebox.showwarning("Cảnh báo", "Chưa có dữ liệu cấu trúc. Vui lòng tạo hoặc nhập cấu trúc trước.")
+                return
+            
+            # Lấy dữ liệu kế hoạch
+            plan_data = self.get_plan_data()
+            if not plan_data or 'total_dose' not in plan_data or not plan_data['total_dose']:
+                messagebox.showwarning("Cảnh báo", "Vui lòng nhập liều kê toa và số phân liều trước khi tối ưu hóa.")
+                return
+            
+            # Tạo hộp thoại xác nhận
+            import tkinter as tk
+            from tkinter import ttk
+            
+            confirm_dialog = tk.Toplevel(self.window)
+            confirm_dialog.title("Tối ưu hóa dựa trên kiến thức (KBP)")
+            confirm_dialog.geometry("500x400")
+            confirm_dialog.resizable(False, False)
+            confirm_dialog.transient(self.window)
+            confirm_dialog.grab_set()
+            
+            # Tạo các frame chính
+            main_frame = ttk.Frame(confirm_dialog, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Thông tin giới thiệu
+            ttk.Label(main_frame, text="Tối ưu hóa dựa trên kiến thức (KBP)", font=("Arial", 12, "bold")).pack(pady=5)
+            ttk.Label(main_frame, text="Hệ thống sẽ đề xuất các ràng buộc tối ưu dựa trên dữ liệu lịch sử", wraplength=450).pack(pady=5)
+            
+            # Frame chọn cơ quan
+            organs_frame = ttk.LabelFrame(main_frame, text="Chọn cơ quan để tối ưu", padding=10)
+            organs_frame.pack(fill=tk.X, pady=5)
+            
+            # Lấy danh sách cơ quan
+            organs = [name for name in self.structures.keys() 
+                     if not (name.startswith('PTV') or name.startswith('CTV') or name.startswith('GTV'))]
+            
+            # Tạo biến lưu trạng thái chọn
+            organ_vars = {}
+            for organ in organs:
+                var = tk.BooleanVar(value=True)
+                organ_vars[organ] = var
+                ttk.Checkbutton(organs_frame, text=organ, variable=var).pack(anchor=tk.W)
+            
+            # Frame tùy chọn
+            options_frame = ttk.LabelFrame(main_frame, text="Tùy chọn tối ưu hóa", padding=10)
+            options_frame.pack(fill=tk.X, pady=5)
+            
+            # Tùy chọn tự động áp dụng
+            auto_apply_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(options_frame, text="Tự động áp dụng các ràng buộc đề xuất", variable=auto_apply_var).pack(anchor=tk.W)
+            
+            # Tùy chọn hiển thị chi tiết
+            show_details_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(options_frame, text="Hiển thị chi tiết các ràng buộc đề xuất", variable=show_details_var).pack(anchor=tk.W)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=15)
+            
+            def run_kbp_optimization():
+                # Lấy danh sách cơ quan đã chọn
+                selected_organs = [organ for organ, var in organ_vars.items() if var.get()]
+                
+                if not selected_organs:
+                    messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất một cơ quan để tối ưu hóa.")
+                    return
+                
+                # Đóng hộp thoại
+                confirm_dialog.destroy()
+                
+                # Hiển thị thông báo đang xử lý
+                self.window.config(cursor="wait")
+                progress_window = tk.Toplevel(self.window)
+                progress_window.title("Đang xử lý")
+                progress_window.geometry("300x100")
+                progress_window.resizable(False, False)
+                progress_window.transient(self.window)
+                progress_window.grab_set()
+                
+                ttk.Label(progress_window, text="Đang tối ưu hóa kế hoạch...", font=("Arial", 10)).pack(pady=10)
+                progress = ttk.Progressbar(progress_window, mode="indeterminate")
+                progress.pack(fill=tk.X, padx=20, pady=10)
+                progress.start()
+                
+                # Thực hiện tối ưu hóa trong một luồng riêng
+                def optimization_thread():
+                    try:
+                        # Khởi tạo KBP Optimizer
+                        from quangstation.optimization.kbp_optimizer import KnowledgeBasedPlanningOptimizer
+                        kbp_optimizer = KnowledgeBasedPlanningOptimizer()
+                        
+                        # Lấy đề xuất tối ưu hóa
+                        optimization_goals = kbp_optimizer.suggest_optimization_goals(self.structures, plan_data)
+                        
+                        # Lọc theo cơ quan đã chọn
+                        filtered_goals = [goal for goal in optimization_goals 
+                                         if goal.structure_name in selected_organs or goal.structure_name.startswith('PTV')]
+                        
+                        # Cập nhật UI trong luồng chính
+                        self.window.after(0, lambda: self._apply_kbp_results(
+                            filtered_goals, 
+                            show_details_var.get(), 
+                            auto_apply_var.get(),
+                            progress_window
+                        ))
+                        
+                    except Exception as e:
+                        self.logger.error(f"Lỗi khi thực hiện tối ưu hóa KBP: {str(e)}")
+                        self.window.after(0, lambda: self._handle_kbp_error(str(e), progress_window))
+                
+                # Khởi chạy luồng
+                import threading
+                thread = threading.Thread(target=optimization_thread)
+                thread.daemon = True
+                thread.start()
+            
+            ttk.Button(button_frame, text="Tối ưu hóa", command=run_kbp_optimization).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Hủy", command=confirm_dialog.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi mở hộp thoại tối ưu hóa KBP: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi mở hộp thoại tối ưu hóa KBP: {str(e)}")
+
+    def _apply_kbp_results(self, optimization_goals, show_details, auto_apply, progress_window):
+        """Áp dụng kết quả tối ưu hóa KBP."""
+        try:
+            # Đóng cửa sổ tiến trình
+            progress_window.destroy()
+            self.window.config(cursor="")
+            
+            if not optimization_goals:
+                messagebox.showinfo("Thông báo", "Không có đề xuất tối ưu hóa nào được tạo.")
+                return
+            
+            # Nếu hiển thị chi tiết
+            if show_details:
+                # Tạo cửa sổ hiển thị kết quả
+                result_window = tk.Toplevel(self.window)
+                result_window.title("Kết quả tối ưu hóa KBP")
+                result_window.geometry("700x500")
+                result_window.transient(self.window)
+                result_window.grab_set()
+                
+                # Tạo frame chính
+                main_frame = ttk.Frame(result_window, padding=10)
+                main_frame.pack(fill=tk.BOTH, expand=True)
+                
+                # Tiêu đề
+                ttk.Label(main_frame, text="Các ràng buộc tối ưu hóa được đề xuất", font=("Arial", 12, "bold")).pack(pady=5)
+                
+                # Tạo frame danh sách
+                list_frame = ttk.Frame(main_frame)
+                list_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+                
+                # Tạo scrollbar
+                scrollbar = ttk.Scrollbar(list_frame)
+                scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                
+                # Tạo treeview
+                columns = ("structure", "type", "dose", "volume", "priority", "weight")
+                tree = ttk.Treeview(list_frame, columns=columns, show="headings", yscrollcommand=scrollbar.set)
+                
+                # Thiết lập các cột
+                tree.heading("structure", text="Cấu trúc")
+                tree.heading("type", text="Loại ràng buộc")
+                tree.heading("dose", text="Liều (Gy)")
+                tree.heading("volume", text="Thể tích (%)")
+                tree.heading("priority", text="Ưu tiên")
+                tree.heading("weight", text="Trọng số")
+                
+                tree.column("structure", width=150)
+                tree.column("type", width=150)
+                tree.column("dose", width=80)
+                tree.column("volume", width=80)
+                tree.column("priority", width=80)
+                tree.column("weight", width=80)
+                
+                # Thêm dữ liệu
+                for goal in optimization_goals:
+                    # Chuyển đổi loại ràng buộc sang text
+                    goal_type_text = {
+                        "min_dose": "Liều tối thiểu",
+                        "max_dose": "Liều tối đa",
+                        "mean_dose": "Liều trung bình",
+                        "min_dvh": "DVH tối thiểu",
+                        "max_dvh": "DVH tối đa",
+                        "uniform": "Liều đồng đều",
+                        "conformity": "Độ tuân thủ",
+                        "falloff": "Độ dốc liều"
+                    }.get(goal.goal_type, goal.goal_type)
+                    
+                    tree.insert("", tk.END, values=(
+                        goal.structure_name,
+                        goal_type_text,
+                        f"{goal.dose_value:.2f}",
+                        f"{goal.volume_value:.1f}" if goal.volume_value is not None else "-",
+                        goal.priority,
+                        f"{goal.weight:.1f}"
+                    ))
+                
+                tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                scrollbar.config(command=tree.yview)
+                
+                # Frame nút điều khiển
+                button_frame = ttk.Frame(main_frame)
+                button_frame.pack(fill=tk.X, pady=10)
+                
+                def apply_goals():
+                    result_window.destroy()
+                    self._add_kbp_goals_to_optimizer(optimization_goals)
+                
+                ttk.Button(button_frame, text="Áp dụng", command=apply_goals).pack(side=tk.RIGHT, padx=5)
+                ttk.Button(button_frame, text="Hủy", command=result_window.destroy).pack(side=tk.RIGHT, padx=5)
+                
+                # Nếu tự động áp dụng
+                if auto_apply:
+                    self._add_kbp_goals_to_optimizer(optimization_goals)
+            else:
+                # Nếu không hiển thị chi tiết và tự động áp dụng
+                if auto_apply:
+                    self._add_kbp_goals_to_optimizer(optimization_goals)
+                    messagebox.showinfo("Thông báo", f"Đã áp dụng {len(optimization_goals)} ràng buộc tối ưu hóa từ KBP.")
+        
+        except Exception as e:
+            self.logger.error(f"Lỗi khi áp dụng kết quả KBP: {str(e)}")
+            messagebox.showerror("Lỗi", f"Lỗi khi áp dụng kết quả KBP: {str(e)}")
+
+    def _handle_kbp_error(self, error_message, progress_window):
+        """Xử lý lỗi trong quá trình tối ưu hóa KBP."""
+        try:
+            progress_window.destroy()
+            self.window.config(cursor="")
+            messagebox.showerror("Lỗi", f"Lỗi khi thực hiện tối ưu hóa KBP: {error_message}")
+        except:
+            pass
+
+    def _add_kbp_goals_to_optimizer(self, optimization_goals):
+        """Thêm các mục tiêu KBP vào bộ tối ưu hóa."""
+        try:
+            # Kiểm tra xem đã khởi tạo bộ tối ưu hóa chưa
+            if not hasattr(self, 'optimizer') or self.optimizer is None:
+                from quangstation.optimization.goal_optimizer import GoalBasedOptimizer
+                self.optimizer = GoalBasedOptimizer()
+            
+            # Thêm các mục tiêu vào bộ tối ưu hóa
+            for goal in optimization_goals:
+                self.optimizer.add_goal(goal)
+            
+            # Cập nhật giao diện nếu có
+            if hasattr(self, 'update_optimization_ui'):
+                self.update_optimization_ui()
+            
+            self.logger.info(f"Đã thêm {len(optimization_goals)} mục tiêu tối ưu hóa từ KBP")
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi thêm mục tiêu KBP vào bộ tối ưu hóa: {str(e)}")
+            raise
