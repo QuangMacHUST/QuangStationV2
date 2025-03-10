@@ -55,6 +55,7 @@ class DoseCalculator:
         self.options = {}
         self.advanced_algorithm = None
         self.logger = get_logger(__name__)
+        self.use_cpp = True  # Mặc định sẽ cố gắng sử dụng module C++ nếu có
         
         self.logger.info(f"Khởi tạo bộ tính toán liều với thuật toán {algorithm}, "
                         f"độ phân giải {resolution_mm} mm")
@@ -300,7 +301,7 @@ class DoseCalculator:
             self.logger.info(f"Đã tìm thấy extension C++ cho thuật toán {self.algorithm}")
             return True
         except (ImportError, AttributeError) as e:
-            self.logger.info(f"Không tìm thấy extension C++ cho thuật toán {self.algorithm}: {str(error)}")
+            self.logger.info(f"Không tìm thấy extension C++ cho thuật toán {self.algorithm}: {str(e)}")
             
             # Nếu ta đã cấu hình sử dụng C++ nhưng không tìm thấy, ghi log cảnh báo
             if self.use_cpp:
@@ -344,7 +345,7 @@ class DoseCalculator:
                 module = importlib.import_module(module_name)
                 algorithm_class = getattr(module, class_name)
             except (ImportError, AttributeError) as e:
-                self.logger.warning(f"Không thể import module C++ {module_name}.{class_name}: {str(error)}")
+                self.logger.warning(f"Không thể import module C++ {module_name}.{class_name}: {str(e)}")
                 self.logger.info("Chuyển sang bản Python thuần túy")
                 return self._calculate_dose_python()
             
@@ -891,9 +892,9 @@ class DoseCalculator:
             self.logger.info(f"Đã khởi tạo thuật toán tiên tiến: {self.algorithm}")
             
         except ImportError as e:
-            self.logger.warning(f"Không thể khởi tạo thuật toán tiên tiến: {str(error)}")
+            self.logger.warning(f"Không thể khởi tạo thuật toán tiên tiến: {str(e)}")
         except Exception as error:
-            self.logger.error(f"Lỗi khi khởi tạo thuật toán tiên tiến: {str(error)}")
+            self.logger.error(f"Lỗi khi khởi tạo thuật toán tiên tiến: {str(e)}")
 
     def _calculate_with_advanced_algorithm(self) -> np.ndarray:
         """Tính toán liều với thuật toán tiên tiến."""

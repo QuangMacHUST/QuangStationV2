@@ -9,7 +9,7 @@ import glob
 import pydicom
 
 from quangstation.data_management.dicom_parser import DICOMParser
-from quangstation.data_management.patient_db import PatientDatabase
+from quangstation.data_management.patient_db import PatientDatabase, Patient
 from quangstation.data_management.session_management import SessionManager
 from quangstation.image_processing.image_loader import ImageLoader
 
@@ -230,8 +230,23 @@ class ImportInterface:
             if 'study_date' not in patient_info or not patient_info['study_date']:
                 patient_info['study_date'] = datetime.now().strftime("%Y%m%d")
             
+            # Tạo đối tượng Patient từ thông tin
+            patient = Patient(patient_id=patient_info['patient_id'])
+            
+            # Cập nhật thông tin từ patient_info
+            patient.demographics.update({
+                'name': patient_info.get('patient_name', ''),
+                'birth_date': patient_info.get('birth_date', ''),
+                'gender': patient_info.get('patient_sex', '')
+            })
+            
+            patient.clinical_info.update({
+                'diagnosis': patient_info.get('study_description', ''),
+                'diagnosis_date': patient_info.get('study_date', '')
+            })
+            
             # Lưu thông tin bệnh nhân vào cơ sở dữ liệu
-            self.db.insert_patient(patient_info)
+            self.db.add_patient(patient)
             
             patient_id = patient_info['patient_id']
             

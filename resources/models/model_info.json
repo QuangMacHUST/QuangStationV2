@@ -1,0 +1,91 @@
+{
+    "version": "1.0.0",
+    "creation_date": "2025-03-10",
+    "feature_columns": [
+        "ptv_volume",
+        "total_dose",
+        "fractions",
+        "organ_volume",
+        "ptv_overlap_percent",
+        "distance_to_ptv"
+    ],
+    "target_columns": [
+        "D_mean", 
+        "D_max", 
+        "D1cc", 
+        "D2cc", 
+        "D5cc", 
+        "V5Gy", 
+        "V10Gy", 
+        "V15Gy", 
+        "V20Gy", 
+        "V30Gy", 
+        "V40Gy"
+    ],
+    "models": {
+        "SpinalCord": {
+            "description": "Mô hình dự đoán liều cho tủy sống",
+            "constraints": {
+                "D_max": {"limit": 45, "priority": 1},
+                "D2cc": {"limit": 40, "priority": 1}
+            }
+        },
+        "Brainstem": {
+            "description": "Mô hình dự đoán liều cho thân não",
+            "constraints": {
+                "D_max": {"limit": 54, "priority": 1},
+                "D2cc": {"limit": 50, "priority": 1}
+            }
+        },
+        "ParotidLeft": {
+            "description": "Mô hình dự đoán liều cho tuyến mang tai trái",
+            "constraints": {
+                "D_mean": {"limit": 26, "priority": 2}
+            }
+        },
+        "ParotidRight": {
+            "description": "Mô hình dự đoán liều cho tuyến mang tai phải",
+            "constraints": {
+                "D_mean": {"limit": 26, "priority": 2}
+            }
+        },
+        "Larynx": {
+            "description": "Mô hình dự đoán liều cho thanh quản",
+            "constraints": {
+                "D_mean": {"limit": 40, "priority": 2}
+            }
+        },
+        "Lung": {
+            "description": "Mô hình dự đoán liều cho phổi",
+            "constraints": {
+                "V20Gy": {"limit": 30, "priority": 2, "unit": "%"},
+                "D_mean": {"limit": 15, "priority": 2}
+            }
+        },
+        "Heart": {
+            "description": "Mô hình dự đoán liều cho tim",
+            "constraints": {
+                "D_mean": {"limit": 15, "priority": 2},
+                "V30Gy": {"limit": 35, "priority": 2, "unit": "%"}
+            }
+        },
+        "Esophagus": {
+            "description": "Mô hình dự đoán liều cho thực quản",
+            "constraints": {
+                "D_mean": {"limit": 34, "priority": 3}
+            }
+        },
+        "Liver": {
+            "description": "Mô hình dự đoán liều cho gan",
+            "constraints": {
+                "D_mean": {"limit": 30, "priority": 3}
+            }
+        },
+        "Kidney": {
+            "description": "Mô hình dự đoán liều cho thận",
+            "constraints": {
+                "D_mean": {"limit": 18, "priority": 3}
+            }
+        }
+    }
+} 

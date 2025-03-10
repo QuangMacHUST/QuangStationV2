@@ -867,4 +867,94 @@ extern "C" {
     ) {
         // TODO: Chuyển đổi dữ liệu từ Python sang C++ rồi chạy tối ưu hóa
     }
+
+    // Hàm chuyển đổi dữ liệu từ Python sang C++
+    void* convert_python_data(void* py_dose_matrix, void* py_structure_masks, 
+                             void* py_objectives, void* py_settings) {
+        try {
+            // Chuyển đổi ma trận liều
+            // Giả sử py_dose_matrix là mảng numpy 3D
+            // Cần sử dụng Python C API để truy cập dữ liệu
+            
+            // Tạo ma trận liều C++
+            std::vector<std::vector<std::vector<double>>> dose_matrix;
+            
+            // Chuyển đổi mặt nạ cấu trúc
+            std::map<std::string, std::vector<std::vector<std::vector<int>>>> structure_masks;
+            
+            // Chuyển đổi mục tiêu
+            std::vector<ObjectiveFunction> objectives;
+            
+            // Chuyển đổi thông số
+            double learning_rate = 0.01;
+            int max_iterations = 100;
+            double convergence_threshold = 1e-4;
+            
+            // Đọc thông số từ py_settings
+            // ...
+            
+            // Tạo đối tượng tối ưu hóa
+            GradientOptimizer* optimizer = new GradientOptimizer(
+                dose_matrix, structure_masks, learning_rate, max_iterations, convergence_threshold
+            );
+            
+            // Thêm các mục tiêu
+            for (const auto& obj : objectives) {
+                optimizer->add_objective(obj);
+            }
+            
+            // Khởi tạo trọng số chùm tia
+            optimizer->initialize_beam_weights();
+            
+            return static_cast<void*>(optimizer);
+        } catch (const std::exception& e) {
+            std::cerr << "Lỗi khi chuyển đổi dữ liệu Python sang C++: " << e.what() << std::endl;
+            return nullptr;
+        }
+    }
+    
+    /**
+     * Giải phóng bộ nhớ của đối tượng tối ưu hóa
+     * 
+     * @param optimizer Con trỏ đến đối tượng GradientOptimizer
+     */
+    void free_optimizer(void* optimizer) {
+        if (optimizer) {
+            delete static_cast<GradientOptimizer*>(optimizer);
+        }
+    }
+    
+    /**
+     * Thực hiện tối ưu hóa
+     * 
+     * @param optimizer Con trỏ đến đối tượng GradientOptimizer
+     * @param py_result Con trỏ đến đối tượng Python để lưu kết quả
+     * @return 1 nếu thành công, 0 nếu thất bại
+     */
+    int run_optimization(void* optimizer, void* py_result) {
+        try {
+            if (!optimizer) {
+                return 0;
+            }
+            
+            GradientOptimizer* opt = static_cast<GradientOptimizer*>(optimizer);
+            
+            // Tính giá trị mục tiêu ban đầu
+            double initial_objective = opt->calculate_objective_function();
+            
+            // Thực hiện tối ưu hóa
+            std::vector<double> weights = opt->optimize();
+            
+            // Tính giá trị mục tiêu sau tối ưu
+            double final_objective = opt->calculate_objective_function();
+            
+            // Chuyển kết quả về Python
+            // Cần sử dụng Python C API để cập nhật py_result
+            
+            return 1;
+        } catch (const std::exception& e) {
+            std::cerr << "Lỗi khi thực hiện tối ưu hóa: " << e.what() << std::endl;
+            return 0;
+        }
+    }
 }

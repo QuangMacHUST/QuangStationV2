@@ -24,7 +24,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 
 from quangstation.utils.logging import get_logger
-from quangstation.utils.config import get_config
+from quangstation.utils.config import config, get_config
 from quangstation.data_management.patient_db import PatientDatabase
 from quangstation.optimization.goal_optimizer import OptimizationGoal
 
@@ -43,8 +43,8 @@ class KnowledgeBasedPlanningOptimizer:
         Args:
             model_path: Đường dẫn đến mô hình đã huấn luyện (nếu có)
         """
-        self.config = get_config()
         self.logger = get_logger("KBP_Optimizer")
+        self.config = config
         self.model_path = model_path
         self.models = {}  # Mô hình cho từng loại cơ quan
         self.scalers = {}  # Scalers cho từng loại cơ quan
@@ -55,10 +55,8 @@ class KnowledgeBasedPlanningOptimizer:
         
         # Thiết lập đường dẫn lưu mô hình mặc định
         if not model_path:
-            self.model_path = os.path.join(
-                self.config.get("app_data_dir", os.path.expanduser("~/.quangstation")),
-                "models"
-            )
+            self.model_path = get_config("optimization.kbp_models_dir", 
+                               os.path.join(get_config("workspace.root_dir"), "models", "kbp"))
             os.makedirs(self.model_path, exist_ok=True)
         
         # Tải danh sách mô hình có sẵn
@@ -99,22 +97,34 @@ class KnowledgeBasedPlanningOptimizer:
             bool: True nếu tải thành công, False nếu không
         """
         try:
-            model_file = os.path.join(self.model_path, f"{organ_name}.pkl")
-            if not os.path.exists(model_file):
-                self.logger.warning(f"Không tìm thấy mô hình cho {organ_name}")
-                return False
+            # Chuẩn hóa tên cơ quan
+            organ_name = organ_name.lower().replace(" ", "_")
             
-            with open(model_file, 'rb') as f:
-                model_data = pickle.load(f)
-                self.models[organ_name] = model_data['model']
-                self.scalers[organ_name] = model_data['scaler']
-                if 'feature_columns' in model_data:
-                    self.feature_columns = model_data['feature_columns']
-                if 'target_columns' in model_data:
-                    self.target_columns = model_data['target_columns']
+            # Kiểm tra xem mô hình đã được tải chưa
+            if organ_name in self.models:
+                self.logger.info(f"Mô hình cho {organ_name} đã được tải trước đó")
+                return True
             
-            self.logger.info(f"Đã tải mô hình KBP cho {organ_name}")
-            return True
+            # Tìm file mô hình
+            model_file = os.path.join(self.model_path, f"{organ_name}_model.pkl")
+            
+            if os.path.exists(model_file):
+                with open(model_file, 'rb') as f:
+                    self.models[organ_name] = pickle.load(f)
+                self.logger.info(f"Đã tải mô hình cho {organ_name}")
+                return True
+            else:
+                # Tìm mô hình tương tự
+                similar_model = self._find_similar_model(organ_name)
+                if similar_model:
+                    self.logger.info(f"Sử dụng mô hình {similar_model} cho {organ_name}")
+                    with open(os.path.join(self.model_path, f"{similar_model}_model.pkl"), 'rb') as f:
+                        self.models[organ_name] = pickle.load(f)
+                    return True
+                else:
+                    self.logger.warning(f"Không tìm thấy mô hình cho {organ_name}")
+                    return False
+                
         except Exception as e:
             self.logger.error(f"Lỗi khi tải mô hình {organ_name}: {str(e)}")
             return False
@@ -235,11 +245,34 @@ class KnowledgeBasedPlanningOptimizer:
             return result
     
     def _find_similar_model(self, organ_name: str) -> Optional[str]:
-        """Tìm mô hình tương tự cho một cơ quan nếu không có mô hình chính xác."""
+        """
+        Tìm mô hình tương tự cho một cơ quan nếu không có mô hình chính xác.
+        
+        Args:
+            organ_name: Tên cơ quan cần tìm mô hình tương tự
+            
+        Returns:
+            Optional[str]: Tên mô hình tương tự nếu tìm thấy, None nếu không
+        """
         # Chuẩn hóa tên cơ quan
         organ_lower = organ_name.lower()
         
-        # Danh sách từ khóa liên quan
+        # Tải danh sách mô hình từ file cấu hình
+        model_info_path = os.path.join(self.model_path, "model_info.json")
+        if os.path.exists(model_info_path):
+            try:
+                with open(model_info_path, 'r') as f:
+                    model_info = json.load(f)
+                if 'models' in model_info:
+                    # Tìm kiếm trong danh sách mô hình đã định nghĩa
+                    for model_name in model_info['models'].keys():
+                        if model_name.lower() in organ_lower or organ_lower in model_name.lower():
+                            self.logger.info(f"Tìm thấy mô hình tương tự {model_name} cho {organ_name}")
+                            return model_name
+            except Exception as e:
+                self.logger.error(f"Lỗi khi tải model_info.json: {str(e)}")
+        
+        # Danh sách từ khóa liên quan (dự phòng nếu không có model_info.json)
         keywords = {
             'parotid': ['parotid', 'tuyến mang tai'],
             'spinal_cord': ['spinal', 'cord', 'tủy sống'],
@@ -248,19 +281,52 @@ class KnowledgeBasedPlanningOptimizer:
             'heart': ['heart', 'tim'],
             'liver': ['liver', 'gan'],
             'kidney': ['kidney', 'thận'],
-            'lens': ['lens', 'thủy tinh thể'],
-            'optic_nerve': ['optic', 'nerve', 'thần kinh thị giác']
+            'esophagus': ['esophagus', 'thực quản'],
+            'larynx': ['larynx', 'thanh quản'],
+            'mandible': ['mandible', 'xương hàm'],
+            'oral_cavity': ['oral', 'cavity', 'khoang miệng'],
+            'eye': ['eye', 'mắt', 'globe'],
+            'optic_nerve': ['optic', 'nerve', 'thần kinh thị giác'],
+            'chiasm': ['chiasm', 'giao thoa'],
+            'rectum': ['rectum', 'trực tràng'],
+            'bladder': ['bladder', 'bàng quang'],
+            'bowel': ['bowel', 'ruột'],
+            'femoral_head': ['femoral', 'head', 'chỏm xương đùi'],
+            'thyroid': ['thyroid', 'tuyến giáp']
         }
         
-        for model in self.available_models:
-            model_lower = model.lower()
-            
-            # Nếu có từ khóa trùng khớp
-            for key, words in keywords.items():
-                if any(word in organ_lower for word in words) and any(word in model_lower for word in words):
-                    self.logger.info(f"Đã tìm thấy mô hình tương tự '{model}' cho cơ quan '{organ_name}'")
-                    return model
+        # Tìm kiếm dựa trên từ khóa
+        max_similarity = 0
+        best_match = None
         
+        # Hàm đánh giá độ tương đồng giữa chuỗi
+        def similarity_score(str1, str2):
+            from difflib import SequenceMatcher
+            return SequenceMatcher(None, str1, str2).ratio()
+        
+        # Kiểm tra từng từ khóa
+        for model_key, related_keywords in keywords.items():
+            for keyword in related_keywords:
+                if keyword in organ_lower:
+                    # Tìm mô hình có sẵn phù hợp với từ khóa
+                    for available_model in self.available_models:
+                        if model_key in available_model.lower():
+                            self.logger.info(f"Tìm thấy mô hình {available_model} cho từ khóa {keyword}")
+                            return available_model
+        
+        # Nếu không tìm thấy từ khóa, so sánh theo độ tương đồng chuỗi
+        for available_model in self.available_models:
+            score = similarity_score(organ_lower, available_model.lower())
+            if score > max_similarity:
+                max_similarity = score
+                best_match = available_model
+        
+        # Chỉ trả về kết quả nếu đủ tương đồng (>= 60%)
+        if max_similarity >= 0.6:
+            self.logger.info(f"Tìm thấy mô hình {best_match} cho {organ_name} với độ tương đồng {max_similarity:.2f}")
+            return best_match
+            
+        self.logger.warning(f"Không tìm thấy mô hình tương tự cho {organ_name}")
         return None
     
     def suggest_optimization_goals(self, structures: Dict[str, Any], plan_data: Dict[str, Any]) -> List[OptimizationGoal]:
@@ -277,14 +343,28 @@ class KnowledgeBasedPlanningOptimizer:
         optimization_goals = []
         
         try:
+            # Tải thông tin từ model_info.json
+            model_constraints = {}
+            model_info_path = os.path.join(self.model_path, "model_info.json")
+            if os.path.exists(model_info_path):
+                try:
+                    with open(model_info_path, 'r') as f:
+                        model_info = json.load(f)
+                    if 'models' in model_info:
+                        for model_name, info in model_info['models'].items():
+                            if 'constraints' in info:
+                                model_constraints[model_name] = info['constraints']
+                except Exception as e:
+                    self.logger.error(f"Lỗi khi tải model_info.json: {str(e)}")
+            
             # Trích xuất đặc trưng
             features = self.extract_features(structures, plan_data)
             if features.empty:
                 self.logger.warning("Không thể trích xuất đặc trưng")
                 return optimization_goals
             
-            # Danh sách ưu tiên cơ quan
-            oar_priority = {
+            # Mặc định ưu tiên cơ quan nếu không có trong model_info
+            default_oar_priority = {
                 'SpinalCord': 1,
                 'Brainstem': 1,
                 'OpticChiasm': 1,
@@ -296,116 +376,187 @@ class KnowledgeBasedPlanningOptimizer:
                 'OralCavity': 3,
                 'Esophagus': 3,
                 'Thyroid': 4,
-                'Lips': 4
+                'Lips': 4,
+                'Heart': 2,
+                'Lung': 2,
+                'Liver': 3,
+                'Kidney': 3,
+                'Bladder': 3,
+                'Rectum': 3
             }
             
-            # Danh sách cơ quan trong kế hoạch
+            # Thêm mục tiêu cho PTV (mục tiêu điều trị)
+            for struct_name in structures.keys():
+                if struct_name.startswith('PTV'):
+                    if 'total_dose' in plan_data and plan_data['total_dose']:
+                        prescription_dose = float(plan_data['total_dose'])
+                        
+                        # Mục tiêu liều tối thiểu cho PTV
+                        optimization_goals.append(
+                            OptimizationGoal(
+                                structure_name=struct_name,
+                                goal_type=OptimizationGoal.TYPE_MIN_DOSE,
+                                dose_value=prescription_dose * 0.95,  # 95% của liều kê toa
+                                weight=100.0,
+                                priority=1,
+                                is_required=True
+                            )
+                        )
+                        
+                        # Mục tiêu liều đồng đều cho PTV
+                        optimization_goals.append(
+                            OptimizationGoal(
+                                structure_name=struct_name,
+                                goal_type=OptimizationGoal.TYPE_UNIFORM_DOSE,
+                                dose_value=prescription_dose,
+                                weight=80.0,
+                                priority=1,
+                                is_required=True
+                            )
+                        )
+                        
+                        # Mục tiêu liều tối đa cho PTV
+                        optimization_goals.append(
+                            OptimizationGoal(
+                                structure_name=struct_name,
+                                goal_type=OptimizationGoal.TYPE_MAX_DOSE,
+                                dose_value=prescription_dose * 1.07,  # 107% của liều kê toa
+                                weight=100.0,
+                                priority=1,
+                                is_required=True
+                            )
+                        )
+                        
+                        self.logger.info(f"Đã thêm mục tiêu cho {struct_name} với liều kê toa {prescription_dose} Gy")
+            
+            # Danh sách cơ quan trong kế hoạch (không bao gồm PTV, CTV, GTV)
             organs = [name for name in structures.keys() 
                       if not (name.startswith('PTV') or name.startswith('CTV') or name.startswith('GTV'))]
             
             for organ in organs:
-                # Dự đoán chỉ số liều
-                dose_metrics = self.predict_dose_metrics(features, organ)
-                if not dose_metrics:
-                    continue
+                # Tìm mô hình tương ứng
+                model_name = None
                 
-                # Xác định ưu tiên cho cơ quan
-                priority = 5  # Mặc định
-                for key, pri in oar_priority.items():
-                    if key.lower() in organ.lower():
-                        priority = pri
+                # Tìm khớp chính xác trong model_constraints
+                for key in model_constraints.keys():
+                    if key.lower() == organ.lower() or key.lower() in organ.lower() or organ.lower() in key.lower():
+                        model_name = key
                         break
                 
-                # Tạo mục tiêu tối ưu hóa từ dự đoán
-                if 'D_mean' in dose_metrics:
-                    optimization_goals.append(OptimizationGoal(
-                        structure_name=organ,
-                        goal_type=OptimizationGoal.TYPE_MEAN_DOSE,
-                        dose_value=dose_metrics['D_mean'],
-                        weight=1.0,
-                        priority=priority
-                    ))
+                # Nếu không có khớp chính xác, tìm mô hình tương tự
+                if model_name is None:
+                    model_name = self._find_similar_model(organ)
                 
-                if 'D_max' in dose_metrics:
-                    optimization_goals.append(OptimizationGoal(
-                        structure_name=organ,
-                        goal_type=OptimizationGoal.TYPE_MAX_DOSE,
-                        dose_value=dose_metrics['D_max'],
-                        weight=1.0,
-                        priority=priority
-                    ))
-                
-                # Thêm ràng buộc DVH nếu có
-                for key, value in dose_metrics.items():
-                    if key.startswith('D'):
-                        try:
-                            # Trích xuất giá trị phần trăm từ D<X>
-                            volume_value = float(key.split('_')[1].replace('D', ''))
-                            if 0 <= volume_value <= 100:
-                                optimization_goals.append(OptimizationGoal(
+                # Nếu có mô hình, sử dụng ràng buộc từ model_info
+                if model_name is not None and model_name in model_constraints:
+                    constraints = model_constraints[model_name]
+                    
+                    for metric_type, constraint_info in constraints.items():
+                        limit = constraint_info.get('limit', 0)
+                        priority = constraint_info.get('priority', 3)
+                        weight = constraint_info.get('weight', 1.0)
+                        
+                        # Tạo mục tiêu dựa trên loại metric
+                        if metric_type == 'D_mean':
+                            optimization_goals.append(
+                                OptimizationGoal(
+                                    structure_name=organ,
+                                    goal_type=OptimizationGoal.TYPE_MEAN_DOSE,
+                                    dose_value=limit,
+                                    weight=weight,
+                                    priority=priority
+                                )
+                            )
+                        elif metric_type == 'D_max':
+                            optimization_goals.append(
+                                OptimizationGoal(
+                                    structure_name=organ,
+                                    goal_type=OptimizationGoal.TYPE_MAX_DOSE,
+                                    dose_value=limit,
+                                    weight=weight,
+                                    priority=priority
+                                )
+                            )
+                        elif metric_type.startswith('V') and 'Gy' in metric_type:
+                            # Xử lý các metric dạng V20Gy, V30Gy
+                            dose_level = float(metric_type.replace('V', '').replace('Gy', ''))
+                            volume_value = limit
+                            
+                            optimization_goals.append(
+                                OptimizationGoal(
                                     structure_name=organ,
                                     goal_type=OptimizationGoal.TYPE_MAX_DVH,
-                                    dose_value=value,
+                                    dose_value=dose_level,
                                     volume_value=volume_value,
-                                    weight=1.0,
+                                    weight=weight,
                                     priority=priority
-                                ))
-                        except:
-                            pass
+                                )
+                            )
+                        elif metric_type.startswith('D') and 'cc' in metric_type:
+                            # Xử lý các metric dạng D1cc, D2cc
+                            volume_cc = float(metric_type.replace('D', '').replace('cc', ''))
+                            
+                            # Tính thể tích tương đối dựa trên thể tích cơ quan
+                            organ_mask = structures[organ]
+                            voxel_size = plan_data.get('voxel_size', [1.0, 1.0, 1.0])  # mm
+                            voxel_volume_cc = np.prod(voxel_size) / 1000  # mm³ -> cc
+                            organ_volume_cc = np.sum(organ_mask) * voxel_volume_cc
+                            
+                            if organ_volume_cc > 0:
+                                volume_percent = (volume_cc / organ_volume_cc) * 100
+                                
+                                optimization_goals.append(
+                                    OptimizationGoal(
+                                        structure_name=organ,
+                                        goal_type=OptimizationGoal.TYPE_MAX_DVH,
+                                        dose_value=limit,
+                                        volume_value=volume_percent,
+                                        weight=weight,
+                                        priority=priority
+                                    )
+                                )
                     
-                    if key.startswith('V'):
-                        try:
-                            # Trích xuất giá trị liều từ V<X>
-                            dose_value = float(key.split('_')[1].replace('V', ''))
-                            optimization_goals.append(OptimizationGoal(
-                                structure_name=organ,
-                                goal_type=OptimizationGoal.TYPE_MIN_DVH,
-                                dose_value=dose_value,
-                                volume_value=value,
-                                weight=1.0,
-                                priority=priority
-                            ))
-                        except:
-                            pass
-            
-            # Thêm mục tiêu cho PTV
-            for name in structures.keys():
-                if name.startswith('PTV'):
-                    prescribed_dose = plan_data.get('total_dose', 0)
-                    if prescribed_dose > 0:
-                        # Mục tiêu liều tối thiểu
+                    self.logger.info(f"Đã thêm ràng buộc từ model_info cho {organ} dựa trên mô hình {model_name}")
+                else:
+                    # Nếu không có mô hình, sử dụng dự đoán
+                    dose_metrics = self.predict_dose_metrics(features, organ)
+                    if not dose_metrics:
+                        continue
+                    
+                    # Xác định ưu tiên cho cơ quan
+                    priority = 5  # Mặc định
+                    for key, pri in default_oar_priority.items():
+                        if key.lower() in organ.lower():
+                            priority = pri
+                            break
+                    
+                    # Tạo mục tiêu tối ưu hóa từ dự đoán
+                    if 'D_mean' in dose_metrics:
                         optimization_goals.append(OptimizationGoal(
-                            structure_name=name,
-                            goal_type=OptimizationGoal.TYPE_MIN_DOSE,
-                            dose_value=prescribed_dose * 0.95,  # 95% liều kê toa
-                            weight=10.0,
-                            priority=1,
-                            is_required=True
+                            structure_name=organ,
+                            goal_type=OptimizationGoal.TYPE_MEAN_DOSE,
+                            dose_value=dose_metrics['D_mean'],
+                            weight=1.0,
+                            priority=priority
                         ))
-                        
-                        # Mục tiêu liều tối đa
+                    
+                    if 'D_max' in dose_metrics:
                         optimization_goals.append(OptimizationGoal(
-                            structure_name=name,
+                            structure_name=organ,
                             goal_type=OptimizationGoal.TYPE_MAX_DOSE,
-                            dose_value=prescribed_dose * 1.07,  # 107% liều kê toa
-                            weight=8.0,
-                            priority=1,
-                            is_required=True
+                            dose_value=dose_metrics['D_max'],
+                            weight=1.0,
+                            priority=priority
                         ))
-                        
-                        # Mục tiêu liều đồng đều
-                        optimization_goals.append(OptimizationGoal(
-                            structure_name=name,
-                            goal_type=OptimizationGoal.TYPE_UNIFORM_DOSE,
-                            dose_value=prescribed_dose,
-                            weight=5.0,
-                            priority=2
-                        ))
+                    
+                    self.logger.info(f"Đã thêm ràng buộc dựa trên dự đoán cho {organ}")
             
             return optimization_goals
             
         except Exception as e:
+            import traceback
             self.logger.error(f"Lỗi khi đề xuất mục tiêu tối ưu hóa: {str(e)}")
+            self.logger.error(traceback.format_exc())
             return optimization_goals
     
     def train_model(self, dataset: pd.DataFrame, organ_name: str, 
@@ -471,13 +622,13 @@ class KnowledgeBasedPlanningOptimizer:
                 }
                 
                 os.makedirs(self.model_path, exist_ok=True)
-                model_file = os.path.join(self.model_path, f"{organ_name}.pkl")
+                model_file = os.path.join(self.model_path, f"{organ_name}_model.pkl")
                 
                 with open(model_file, 'wb') as f:
                     pickle.dump(model_data, f)
                 
                 # Cập nhật thông tin mô hình
-                info_path = os.path.join(self.model_path, "model_info.json")
+                info_path = os.path.join(self.model_path, f"{organ_name}_info.json")
                 model_info = {}
                 if os.path.exists(info_path):
                     with open(info_path, 'r') as f:
@@ -515,40 +666,50 @@ class KnowledgeBasedPlanningOptimizer:
             DataFrame chứa dữ liệu huấn luyện
         """
         try:
-            # Lấy danh sách bệnh nhân có kế hoạch xạ trị
-            patients = self.db.get_all_patients()
-            
             training_data = []
             
-            for patient in patients:
-                patient_id = patient.get('id')
-                plans = self.db.get_patient_plans(patient_id)
+            # Lấy danh sách bệnh nhân
+            patients = self.db.get_all_patients()
+            if not patients:
+                self.logger.warning("Không tìm thấy bệnh nhân nào trong cơ sở dữ liệu")
+                return pd.DataFrame()
+            
+            for patient_info in patients:
+                patient_id = patient_info.get('patient_id')
+                if not patient_id:
+                    continue
                 
-                for plan in plans:
-                    plan_id = plan.get('id')
-                    
+                # Tải thông tin chi tiết của bệnh nhân
+                patient = self.db.get_patient(patient_id)
+                if not patient:
+                    continue
+                
+                # Lấy danh sách kế hoạch của bệnh nhân
+                for plan_id, plan_data in patient.plans.items():
                     # Kiểm tra xem kế hoạch có dữ liệu DVH không
-                    if not plan.get('dvh_data'):
+                    if not plan_data.get('dvh_data'):
                         continue
                     
                     # Lấy thông tin kế hoạch
-                    plan_data = {
+                    plan_info = {
                         'patient_id': patient_id,
                         'plan_id': plan_id,
-                        'total_dose': plan.get('total_dose', 0),
-                        'fraction_count': plan.get('fraction_count', 0),
-                        'technique': plan.get('technique', 'VMAT')
+                        'total_dose': plan_data.get('total_dose', 0),
+                        'fraction_count': plan_data.get('fraction_count', 0),
+                        'technique': plan_data.get('technique', 'VMAT')
                     }
                     
-                    # Lấy dữ liệu cấu trúc và đặc trưng
-                    structures = self.db.get_plan_structures(plan_id)
-                    features = self.extract_features(structures, plan_data)
+                    # Lấy dữ liệu cấu trúc
+                    structures = patient.structures
+                    
+                    # Trích xuất đặc trưng từ cấu trúc và kế hoạch
+                    features = self.extract_features(structures, plan_info)
                     
                     if features.empty:
                         continue
                     
                     # Lấy dữ liệu DVH
-                    dvh_data = plan.get('dvh_data', {})
+                    dvh_data = plan_data.get('dvh_data', {})
                     
                     # Kết hợp dữ liệu
                     for organ_name, dvh in dvh_data.items():
@@ -556,47 +717,44 @@ class KnowledgeBasedPlanningOptimizer:
                             continue
                         
                         # Trích xuất các chỉ số liều từ DVH
-                        organ_data = {**plan_data}
+                        dose_metrics = dvh.get('dose_metrics', {})
+                        volume_metrics = dvh.get('volume_metrics', {})
                         
-                        if 'mean' in dvh:
-                            organ_data[f'{organ_name}_D_mean'] = dvh['mean']
+                        if not dose_metrics and not volume_metrics:
+                            continue
                         
-                        if 'max' in dvh:
-                            organ_data[f'{organ_name}_D_max'] = dvh['max']
+                        # Tạo bản ghi dữ liệu huấn luyện
+                        data_record = {
+                            'patient_id': patient_id,
+                            'plan_id': plan_id,
+                            'organ_name': organ_name,
+                            'total_dose': plan_info.get('total_dose', 0),
+                            'fraction_count': plan_info.get('fraction_count', 0),
+                            'technique': plan_info.get('technique', 'VMAT')
+                        }
                         
-                        if 'min' in dvh:
-                            organ_data[f'{organ_name}_D_min'] = dvh['min']
+                        # Bổ sung các đặc trưng khác
+                        for feature_col in features.columns:
+                            data_record[feature_col] = features.iloc[0][feature_col]
                         
-                        # Thêm các giá trị D<x> và V<x>
-                        if 'cum_dvh' in dvh:
-                            cum_dvh = dvh['cum_dvh']
-                            doses = cum_dvh['doses']
-                            volumes = cum_dvh['volumes']
-                            
-                            for vol_percent in [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 98]:
-                                # Tính D<vol_percent>
-                                try:
-                                    idx = next(i for i, v in enumerate(volumes) if v <= vol_percent)
-                                    organ_data[f'{organ_name}_D_{vol_percent}'] = doses[idx]
-                                except:
-                                    pass
-                            
-                            for dose_percent in [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 98]:
-                                # Tính V<dose_percent>
-                                prescribed_dose = plan.get('total_dose', 0)
-                                if prescribed_dose > 0:
-                                    dose_val = prescribed_dose * dose_percent / 100
-                                    try:
-                                        idx = next(i for i, d in enumerate(doses) if d >= dose_val)
-                                        organ_data[f'{organ_name}_V_{dose_percent}'] = volumes[idx]
-                                    except:
-                                        pass
+                        # Bổ sung dữ liệu liều
+                        for metric, value in dose_metrics.items():
+                            data_record[metric] = value
                         
-                        # Kết hợp với đặc trưng
-                        combined_data = {**organ_data, **features.iloc[0].to_dict()}
-                        training_data.append(combined_data)
+                        # Bổ sung dữ liệu thể tích
+                        for metric, value in volume_metrics.items():
+                            data_record[metric] = value
+                        
+                        training_data.append(data_record)
             
-            return pd.DataFrame(training_data)
+            # Tạo DataFrame từ dữ liệu đã thu thập
+            if not training_data:
+                self.logger.warning("Không tìm thấy dữ liệu huấn luyện phù hợp")
+                return pd.DataFrame()
+            
+            df = pd.DataFrame(training_data)
+            self.logger.info(f"Đã trích xuất {len(df)} bản ghi dữ liệu huấn luyện")
+            return df
             
         except Exception as e:
             self.logger.error(f"Lỗi khi trích xuất dữ liệu huấn luyện: {str(e)}")

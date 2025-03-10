@@ -14,6 +14,8 @@ import argparse
 import importlib
 import logging
 import time
+import tkinter as tk
+from threading import Thread
 from datetime import datetime
 
 # Thiết lập logging cơ bản
@@ -98,54 +100,61 @@ def check_system_config():
     # Kiểm tra GPU (nếu có)
     try:
         import torch
-        logger.info(f"CUDA khả dụng: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
-            logger.info(f"Số lượng GPU: {torch.cuda.device_count()}")
-    except ImportError:
-        logger.info("Không thể kiểm tra thông tin GPU (torch không được cài đặt)")
+        gpu_available = torch.cuda.is_available()
+        if gpu_available:
+            gpu_count = torch.cuda.device_count()
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"GPU: {gpu_name} (x{gpu_count})")
+        else:
+            logger.info("GPU: Không có")
+    except:
+        logger.info("Không thể kiểm tra thông tin GPU (PyTorch không được cài đặt hoặc không hoạt động)")
     
     return True
 
 def setup_logging(args):
     """
-    Thiết lập logging dựa trên các tham số dòng lệnh
+    Thiết lập hệ thống logging
     
     Args:
-        args: Các tham số dòng lệnh
+        args: Tham số dòng lệnh đã phân tích
     """
-    log_level = logging.INFO
-    
+    # Xác định cấp độ logging
     if args.debug:
         log_level = logging.DEBUG
     elif args.quiet:
-        log_level = logging.WARNING
+        log_level = logging.ERROR
+    else:
+        log_level = logging.INFO
     
-    # Tạo thư mục log nếu không tồn tại
+    # Thiết lập lại cấp độ cho logger gốc
+    logger.setLevel(log_level)
+    
+    # Tạo thư mục logs nếu chưa tồn tại
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
     os.makedirs(log_dir, exist_ok=True)
     
-    # Tên file log dựa trên thời gian hiện tại
-    log_file = os.path.join(log_dir, f"quangstation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    # Tạo tên file log dựa trên thời gian
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = os.path.join(log_dir, f'quangstation_{timestamp}.log')
     
-    # Thiết lập lại logging
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
+    # Tạo file handler
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setLevel(log_level)
     
-    # Xóa tất cả handlers hiện tại
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # Định dạng log
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
     
-    # Thêm handlers mới
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    root_logger.addHandler(file_handler)
+    # Thêm handler vào logger
+    logger.addHandler(file_handler)
     
-    # Chỉ thêm console handler nếu không ở chế độ yên lặng
-    if not args.quiet:
-        console_handler = logging.StreamHandler(stream=sys.stdout)
-        console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-        root_logger.addHandler(console_handler)
+    # Ghi thông tin phiên
+    logger.info("=" * 50)
+    logger.info("Khởi động QuangStation V2")
+    logger.info(f"Thời gian: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Đường dẫn: {os.path.dirname(os.path.abspath(__file__))}")
+    logger.info("=" * 50)
     
     logger.info(f"Đã thiết lập log tại: {log_file}")
 
@@ -162,6 +171,7 @@ def parse_arguments():
     parser.add_argument('--version', action='store_true', help='Hiển thị phiên bản và thoát')
     parser.add_argument('--debug', action='store_true', help='Chạy ở chế độ debug (chi tiết)')
     parser.add_argument('--quiet', action='store_true', help='Chạy ở chế độ yên lặng (chỉ hiện lỗi)')
+    parser.add_argument('--no-splash', action='store_true', help='Không hiển thị màn hình splash')
     
     # Các tham số chức năng
     parser.add_argument('--skip-checks', action='store_true', help='Bỏ qua kiểm tra thư viện và hệ thống')
@@ -170,6 +180,57 @@ def parse_arguments():
     parser.add_argument('--lang', type=str, choices=['vi', 'en'], default='vi', help='Ngôn ngữ (vi hoặc en)')
     
     return parser.parse_args()
+
+def run_checks_thread(args):
+    """
+    Chạy các kiểm tra hệ thống trên luồng riêng
+    
+    Args:
+        args: Tham số dòng lệnh đã phân tích
+    """
+    # Kiểm tra thư viện và hệ thống
+    if not args.skip_checks:
+        check_dependencies()
+        check_system_config()
+    
+def run_application(root, args):
+    """
+    Khởi chạy ứng dụng chính
+    
+    Args:
+        root: Cửa sổ Tkinter gốc
+        args: Tham số dòng lệnh đã phân tích
+    """
+    try:
+        logger.info("Đang khởi động QuangStation V2...")
+        
+        # Nạp module chính
+        import quangstation
+        
+        # Hiện thông tin phiên bản
+        quangstation.show_version()
+        
+        # Thiết lập ngôn ngữ từ tham số dòng lệnh
+        if hasattr(quangstation, 'set_language'):
+            quangstation.set_language(args.lang)
+        
+        # Thiết lập thư mục dữ liệu nếu được chỉ định
+        if args.data_dir and hasattr(quangstation, 'set_data_directory'):
+            quangstation.set_data_directory(args.data_dir)
+        
+        # Nạp cấu hình nếu được chỉ định
+        if args.config and hasattr(quangstation, 'load_config'):
+            quangstation.load_config(args.config)
+        
+        # Khởi chạy ứng dụng
+        logger.info("Đang khởi chạy giao diện người dùng...")
+        quangstation.run_application()
+        
+    except Exception as error:
+        logger.error(f"Lỗi khi khởi động: {str(error)}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
 
 def main():
     """
@@ -203,49 +264,32 @@ def main():
     print("                       Mã nguồn mở - Phát triển tại Việt Nam")
     print("=" * 80)
     
-    # Kiểm tra thư viện và hệ thống
-    if not args.skip_checks:
-        if not check_dependencies():
-            logger.error("Không thể khởi động do thiếu thư viện phụ thuộc")
-            return
-        
-        check_system_config()
+    # Khởi tạo cửa sổ Tkinter ẩn
+    root = tk.Tk()
+    root.withdraw()  # Ẩn cửa sổ gốc
     
-    # Cố gắng nạp và khởi chạy ứng dụng
-    try:
-        logger.info("Đang khởi động QuangStation V2...")
-        
-        # Nạp module chính
-        import quangstation
-        
-        # Hiện thông tin phiên bản
-        quangstation.show_version()
-        
-        # Thiết lập ngôn ngữ từ tham số dòng lệnh
-        if hasattr(quangstation, 'set_language'):
-            quangstation.set_language(args.lang)
-        
-        # Thiết lập thư mục dữ liệu nếu được chỉ định
-        if args.data_dir and hasattr(quangstation, 'set_data_directory'):
-            quangstation.set_data_directory(args.data_dir)
-        
-        # Nạp cấu hình nếu được chỉ định
-        if args.config and hasattr(quangstation, 'load_config'):
-            quangstation.load_config(args.config)
-        
-        # Khởi chạy ứng dụng
-        logger.info("Đang khởi chạy giao diện người dùng...")
-        quangstation.run_application()
-        
-    except Exception as error:
-        logger.error(f"Lỗi khi khởi động: {str(error)}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
+    # Khởi chạy kiểm tra trong thread riêng
+    check_thread = Thread(target=run_checks_thread, args=(args,))
+    check_thread.daemon = True
+    check_thread.start()
+    
+    # Sử dụng splash screen hoặc khởi chạy trực tiếp
+    if not args.no_splash:
+        try:
+            from quangstation.gui.splash_screen import show_splash
+            splash = show_splash(root, lambda: run_application(root, args), 3000)
+        except Exception as e:
+            logger.error(f"Không thể hiển thị splash screen: {str(e)}")
+            run_application(root, args)
+    else:
+        run_application(root, args)
+    
+    # Vòng lặp chính của ứng dụng
+    root.mainloop()
     
     # Hiển thị thời gian khởi động
     elapsed_time = time.time() - start_time
-    logger.info(f"Thời gian khởi động: {elapsed_time:.2f} giây")
+    logger.info(f"Thời gian hoạt động: {elapsed_time:.2f} giây")
 
 if __name__ == "__main__":
     main() 

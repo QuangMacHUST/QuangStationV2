@@ -66,8 +66,18 @@ class AdvancedDoseAlgorithm:
         getattr(self, "beams", {}).append(beam_data)
         logger.log_info(f"Đã thêm chùm tia {beam_data['id']} cho thuật toán {self.name}")
         
-    def calculate(self) -> np.ndarray:
-        """Tính toán phân bố liều."""
+    def calculate_dose(self) -> np.ndarray:
+        """
+        Tính toán phân bố liều.
+        Phương thức cơ sở này thực hiện quy trình tính toán liều cơ bản
+        và có thể được ghi đè hoặc mở rộng trong các lớp con.
+        
+        Returns:
+            np.ndarray: Ma trận 3D chứa phân bố liều
+        
+        Raises:
+            ValueError: Nếu chưa thiết lập dữ liệu bệnh nhân hoặc chùm tia
+        """
         if self.patient_data is None:
             raise ValueError("Chưa thiết lập dữ liệu bệnh nhân")
         if not getattr(self, "beams", {}):
@@ -75,8 +85,44 @@ class AdvancedDoseAlgorithm:
             
         logger.log_info(f"Bắt đầu tính toán liều với thuật toán {self.name}")
         
-        # Phương thức này cần được ghi đè trong các lớp con
-        raise NotImplementedError("Phương thức này cần được ghi đè trong các lớp con")
+        # Khởi tạo ma trận liều trống
+        image_data = self.patient_data['image']
+        dose_matrix = np.zeros_like(image_data, dtype=np.float32)
+        
+        # Duyệt qua từng chùm tia
+        for beam_index, beam in enumerate(self.beams):
+            logger.log_info(f"Đang tính liều cho chùm tia {beam_index + 1}/{len(self.beams)}")
+            
+            # Tính toán đóng góp liều của chùm tia này
+            beam_dose = self._calculate_beam_dose(beam)
+            
+            # Cộng vào ma trận liều tổng
+            dose_matrix += beam_dose
+            
+        # Chuẩn hóa liều theo liều chỉ định
+        if hasattr(self, 'prescribed_dose') and self.prescribed_dose > 0:
+            max_dose = np.max(dose_matrix)
+            if max_dose > 0:
+                dose_matrix = dose_matrix / max_dose * self.prescribed_dose
+        
+        logger.log_info(f"Đã hoàn thành tính toán liều với thuật toán {self.name}")
+        return dose_matrix
+        
+    def _calculate_beam_dose(self, beam: Dict[str, Any]) -> np.ndarray:
+        """
+        Tính liều từ một chùm tia đơn lẻ.
+        Đây là phương thức hỗ trợ cho calculate_dose.
+        
+        Args:
+            beam: Thông tin chùm tia
+            
+        Returns:
+            np.ndarray: Ma trận 3D chứa phân bố liều từ chùm tia này
+        """
+        # Phương thức này trả về ma trận trống trong lớp cơ sở
+        # Các lớp con cần ghi đè phương thức này với thuật toán cụ thể
+        logger.log_warning(f"Phương thức _calculate_beam_dose được gọi từ lớp cơ sở, trả về ma trận liều bằng 0")
+        return np.zeros_like(self.patient_data['image'], dtype=np.float32)
         
     def save_configuration(self, file_path: str) -> None:
         """Lưu cấu hình ra file."""
@@ -426,57 +472,127 @@ class ConvolutionSuperposition(AdvancedDoseAlgorithm):
         return dose_grid
         
     def _calculate_terma(self, beam: Dict[str, Any]) -> np.ndarray:
-        """Tính toán TERMA cho một chùm tia."""
-        # TODO: Triển khai tính toán TERMA thực tế
-        # Đây chỉ là triển khai mẫu
+        """
+        Tính toán TERMA (Total Energy Released per unit MAss) cho một chùm tia.
         
+        TERMA là tổng năng lượng giải phóng trên đơn vị khối lượng, do photon tương tác
+        với vật liệu tại mỗi điểm trong vật thể.
+        
+        Args:
+            beam: Thông tin chùm tia
+            
+        Returns:
+            np.ndarray: Lưới TERMA 3D
+        """
         image_data = self.patient_data['image']
         spacing = self.patient_data['spacing']
         
         # Tạo lưới TERMA trống
         terma_grid = np.zeros_like(image_data, dtype=np.float32)
         
-        # Tính hướng chùm tia
-        gantry_angle = beam['gantry_angle']
+        # Lấy thông tin chùm tia
+        gantry_angle = beam.get('gantry_angle', 0.0)
+        collimator_angle = beam.get('collimator_angle', 0.0)
+        couch_angle = beam.get('couch_angle', 0.0)
+        energy = beam.get('energy', '6X')
+        source_to_surface_distance = beam.get('ssd', 100.0)
+        field_size_x = beam.get('field_size_x', 10.0)
+        field_size_y = beam.get('field_size_y', 10.0)
+        isocenter = beam.get('isocenter', {'x': 0, 'y': 0, 'z': 0})
+        monitor_units = beam.get('monitor_units', 100.0)
+        
+        # Chuyển đổi góc sang radian
         gantry_rad = np.radians(gantry_angle)
-        beam_dir = np.array([
-            np.sin(gantry_rad),
-            np.cos(gantry_rad),
-            0.0
+        collimator_rad = np.radians(collimator_angle)
+        couch_rad = np.radians(couch_angle)
+        
+        # Tính vector hướng chùm tia
+        # Gantry 0° là hướng từ trước ra sau (0,1,0), 90° là từ phải sang trái (-1,0,0)
+        direction = np.array([
+            -np.sin(gantry_rad),
+            np.cos(gantry_rad) * np.cos(couch_rad),
+            np.cos(gantry_rad) * np.sin(couch_rad)
         ])
         
-        # Tính tâm khối hình ảnh
-        shape = image_data.shape
-        center = np.array(shape) / 2
+        # Lấy vị trí isocenter trong lưới 3D
+        iso_pos = np.array([isocenter['x'], isocenter['y'], isocenter['z']])
         
-        # Duyệt qua tất cả các voxel
-        for z in range(shape[0]):
-            for y in range(shape[1]):
-                for x in range(shape[2]):
-                    # Tính vị trí tương đối so với tâm
-                    rel_pos = np.array([z, y, x]) - center
-                    
-                    # Tính độ sâu dọc theo hướng chùm tia
-                    depth = np.dot(rel_pos, beam_dir)
-                    
-                    # Tính khoảng cách vuông góc với trục chùm tia
-                    proj = rel_pos - depth * beam_dir
-                    lateral_dist = np.linalg.norm(proj)
-                    
-                    # Tính giá trị TERMA
-                    if depth > 0:  # Chỉ tính TERMA phía sau nguồn
-                        # Áp dụng suy giảm theo độ sâu
-                        attenuation = np.exp(-0.02 * depth)
-                        
-                        # Áp dụng suy giảm theo khoảng cách ngang
-                        profile = np.exp(-(lateral_dist**2) / (2 * 40.0**2))
-                        
-                        # Áp dụng hệ số chuyển đổi HU sang mật độ
-                        hu_value = image_data[z, y, x]
-                        density_factor = self._hu_to_density_factor(hu_value)
-                        
-                        # Lưu giá trị TERMA
-                        terma_grid[z, y, x] = attenuation * profile * density_factor
+        # Tạo lưới tọa độ 3D
+        shape = image_data.shape
+        x, y, z = np.meshgrid(
+            np.arange(shape[0]) * spacing[0],
+            np.arange(shape[1]) * spacing[1],
+            np.arange(shape[2]) * spacing[2],
+            indexing='ij'
+        )
+        
+        # Dịch lưới tọa độ về tâm tại isocenter
+        x = x - iso_pos[0]
+        y = y - iso_pos[1]
+        z = z - iso_pos[2]
+        
+        # Tính khoảng cách từ mỗi điểm đến isocenter dọc theo hướng chùm tia
+        # d = (p - p_0) • direction
+        depth = x * direction[0] + y * direction[1] + z * direction[2]
+        
+        # Tính khoảng cách từ mỗi điểm đến trục chùm tia (off-axis distance)
+        # off_axis = |p - p_0 - depth*direction|
+        off_axis_x = x - depth * direction[0]
+        off_axis_y = y - depth * direction[1]
+        off_axis_z = z - depth * direction[2]
+        off_axis_distance = np.sqrt(off_axis_x**2 + off_axis_y**2 + off_axis_z**2)
+        
+        # Xác định các điểm nằm trong trường chiếu (field)
+        # Đơn giản hóa: giả sử trường chiếu là hình chữ nhật vuông góc với trục chùm tia
+        # Biến đổi tọa độ để tính toán trong hệ tọa độ collimator
+        cos_coll = np.cos(collimator_rad)
+        sin_coll = np.sin(collimator_rad)
+        
+        x_coll = off_axis_x * cos_coll + off_axis_y * sin_coll
+        y_coll = -off_axis_x * sin_coll + off_axis_y * cos_coll
+        
+        # Xác định điểm nằm trong trường chiếu
+        half_field_x = field_size_x / 2.0
+        half_field_y = field_size_y / 2.0
+        is_in_field = (np.abs(x_coll) <= half_field_x) & (np.abs(y_coll) <= half_field_y)
+        
+        # Tính hệ số suy giảm theo khoảng cách inverse square law
+        # Khoảng cách thực = SSD + depth
+        distance = source_to_surface_distance + depth
+        inverse_square = (source_to_surface_distance / distance)**2
+        
+        # Xác định hệ số suy giảm theo độ sâu (PDD - Percentage Depth Dose)
+        # Đơn giản hóa: sử dụng hàm mũ
+        energy_val = float(energy.strip('X')) if isinstance(energy, str) and energy.endswith('X') else 6.0
+        mu_water = 0.03 * energy_val**(-0.3)  # Ước lượng hệ số suy giảm trong nước
+        pdd = np.exp(-mu_water * depth)
+        
+        # Tính profile ngang (off-axis ratio)
+        sigma = 0.3 * field_size_x  # Độ rộng của Gaussian để mô phỏng horn effect
+        off_axis_ratio = np.exp(-(off_axis_distance**2) / (2 * sigma**2))
+        
+        # Chuyển đổi HU sang mật độ điện tử
+        density = np.ones_like(image_data, dtype=np.float32)
+        for i in range(shape[0]):
+            for j in range(shape[1]):
+                for k in range(shape[2]):
+                    density[i, j, k] = self._hu_to_density_factor(image_data[i, j, k])
+        
+        # Tính TERMA: năng lượng * fluence * hệ số hấp thụ
+        # Fluence = MU * khoảng cách * off-axis
+        fluence = monitor_units * inverse_square * off_axis_ratio * is_in_field
+        
+        # Hệ số hấp thụ năng lượng tỷ lệ với mật độ điện tử
+        absorption_coeff = mu_water * density
+        
+        # TERMA = fluence * absorption_coeff
+        terma_grid = fluence * absorption_coeff * pdd
+        
+        # Chuẩn hóa TERMA
+        if np.max(terma_grid) > 0:
+            terma_grid = terma_grid / np.max(terma_grid) * monitor_units
+        
+        self.logger.info(f"Đã tính TERMA cho chùm tia {beam.get('name', 'unnamed')}")
         
         return terma_grid
         

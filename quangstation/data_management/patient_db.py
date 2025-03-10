@@ -1,527 +1,780 @@
-import pickle
-import json
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Module quản lý dữ liệu bệnh nhân cho QuangStation V2
+"""
+
 import os
+import json
 import sqlite3
+import pandas as pd
 from datetime import datetime
-import numpy as np
+from typing import Dict, List, Any, Optional, Tuple
+import logging
+import uuid
+import shutil
 
-"""
-Module này tạo database cho bệnh nhân
-"""
+from quangstation.utils.logging import get_logger
+from quangstation.utils.config import config, get_config
+
+logger = get_logger(__name__)
+
+class Patient:
+    """Lớp đại diện cho thông tin bệnh nhân"""
+    
+    def __init__(self, patient_id: str = None, **kwargs):
+        """
+        Khởi tạo đối tượng bệnh nhân
+        
+        Args:
+            patient_id: ID bệnh nhân (nếu không cung cấp sẽ tạo tự động)
+            **kwargs: Thông tin khác về bệnh nhân (họ tên, ngày sinh, giới tính, chẩn đoán,...)
+        """
+        self.patient_id = patient_id or str(uuid.uuid4())
+        self.created_date = kwargs.get('created_date', datetime.now().isoformat())
+        self.modified_date = kwargs.get('modified_date', datetime.now().isoformat())
+        self.demographics = {
+            'name': kwargs.get('name', ''),
+            'birth_date': kwargs.get('birth_date', ''),
+            'gender': kwargs.get('gender', ''),
+            'address': kwargs.get('address', ''),
+            'phone': kwargs.get('phone', ''),
+            'email': kwargs.get('email', '')
+        }
+        self.clinical_info = {
+            'diagnosis': kwargs.get('diagnosis', ''),
+            'diagnosis_date': kwargs.get('diagnosis_date', ''),
+            'physician': kwargs.get('physician', ''),
+            'notes': kwargs.get('notes', '')
+        }
+        self.plans = {}  # Các kế hoạch của bệnh nhân
+        self.structures = {}  # Các cấu trúc/contour của bệnh nhân
+        self.images = {}  # Các hình ảnh của bệnh nhân (CT, MRI,...)
+        
+        # Tải thêm thông tin từ kwargs
+        for key, value in kwargs.items():
+            if key not in ['patient_id', 'created_date', 'modified_date', 'name', 'birth_date', 
+                          'gender', 'address', 'phone', 'email', 'diagnosis', 'diagnosis_date', 
+                          'physician', 'notes']:
+                setattr(self, key, value)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Chuyển đổi thông tin bệnh nhân thành dictionary"""
+        result = {
+            'patient_id': self.patient_id,
+            'created_date': self.created_date,
+            'modified_date': self.modified_date,
+            'demographics': self.demographics,
+            'clinical_info': self.clinical_info
+        }
+        
+        # Không bao gồm các dữ liệu lớn như plans, structures, images
+        # vì chúng sẽ được lưu riêng
+        
+        return result
+    
+    def update(self, **kwargs) -> None:
+        """
+        Cập nhật thông tin bệnh nhân
+        
+        Args:
+            **kwargs: Thông tin cần cập nhật
+        """
+        # Cập nhật thông tin demographics
+        for key in ['name', 'birth_date', 'gender', 'address', 'phone', 'email']:
+            if key in kwargs:
+                self.demographics[key] = kwargs[key]
+        
+        # Cập nhật thông tin clinical_info
+        for key in ['diagnosis', 'diagnosis_date', 'physician', 'notes']:
+            if key in kwargs:
+                self.clinical_info[key] = kwargs[key]
+        
+        # Cập nhật các thông tin khác
+        for key, value in kwargs.items():
+            if key not in ['patient_id', 'created_date', 'demographics', 'clinical_info']:
+                setattr(self, key, value)
+        
+        # Cập nhật ngày sửa đổi
+        self.modified_date = datetime.now().isoformat()
+    
+    def add_plan(self, plan_id: str, plan_data: Dict[str, Any]) -> None:
+        """
+        Thêm hoặc cập nhật kế hoạch cho bệnh nhân
+        
+        Args:
+            plan_id: ID của kế hoạch
+            plan_data: Dữ liệu kế hoạch
+        """
+        self.plans[plan_id] = plan_data
+        self.modified_date = datetime.now().isoformat()
+    
+    def remove_plan(self, plan_id: str) -> bool:
+        """
+        Xóa kế hoạch của bệnh nhân
+        
+        Args:
+            plan_id: ID của kế hoạch cần xóa
+            
+        Returns:
+            bool: True nếu xóa thành công, False nếu không tìm thấy kế hoạch
+        """
+        if plan_id in self.plans:
+            del self.plans[plan_id]
+            self.modified_date = datetime.now().isoformat()
+            return True
+        return False
+    
+    def add_structure(self, structure_id: str, structure_data: Dict[str, Any]) -> None:
+        """
+        Thêm hoặc cập nhật cấu trúc/contour cho bệnh nhân
+        
+        Args:
+            structure_id: ID của cấu trúc
+            structure_data: Dữ liệu cấu trúc
+        """
+        self.structures[structure_id] = structure_data
+        self.modified_date = datetime.now().isoformat()
+    
+    def remove_structure(self, structure_id: str) -> bool:
+        """
+        Xóa cấu trúc của bệnh nhân
+        
+        Args:
+            structure_id: ID của cấu trúc cần xóa
+            
+        Returns:
+            bool: True nếu xóa thành công, False nếu không tìm thấy cấu trúc
+        """
+        if structure_id in self.structures:
+            del self.structures[structure_id]
+            self.modified_date = datetime.now().isoformat()
+            return True
+        return False
+    
+    def add_image(self, image_id: str, image_data: Dict[str, Any]) -> None:
+        """
+        Thêm hoặc cập nhật hình ảnh cho bệnh nhân
+        
+        Args:
+            image_id: ID của hình ảnh
+            image_data: Dữ liệu hình ảnh
+        """
+        self.images[image_id] = image_data
+        self.modified_date = datetime.now().isoformat()
+    
+    def remove_image(self, image_id: str) -> bool:
+        """
+        Xóa hình ảnh của bệnh nhân
+        
+        Args:
+            image_id: ID của hình ảnh cần xóa
+            
+        Returns:
+            bool: True nếu xóa thành công, False nếu không tìm thấy hình ảnh
+        """
+        if image_id in self.images:
+            del self.images[image_id]
+            self.modified_date = datetime.now().isoformat()
+            return True
+        return False
+    
+    def __str__(self) -> str:
+        """Biểu diễn chuỗi của đối tượng bệnh nhân"""
+        return f"Patient: {self.demographics.get('name', '')} (ID: {self.patient_id})"
+
+
 class PatientDatabase:
-    def __init__(self, db_file='patients.db'):
-        self.conn = sqlite3.connect(db_file)
-        self.create_tables()
+    """Lớp quản lý dữ liệu bệnh nhân"""
     
-    def create_tables(self):
-        cursor = self.conn.cursor()
-        # Bảng thông tin bệnh nhân
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS patients (
-                id TEXT PRIMARY KEY,
-                name TEXT,
-                birth_date TEXT,
-                sex TEXT,
-                study_date TEXT,
-                study_description TEXT,
-                institution_name TEXT,
-                last_modified TEXT
-            )
-        ''')
-        # Bảng dữ liệu khối ảnh
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS volumes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                modality TEXT,
-                depth INTEGER,
-                rows INTEGER,
-                cols INTEGER,
-                volume_data BLOB,
-                metadata BLOB,
-                import_date TEXT,
-                FOREIGN KEY(patient_id) REFERENCES patients(id)
-            )
-        ''')
-        # Bảng cấu trúc RT Structure
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rt_structs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                struct_data BLOB,
-                import_date TEXT,
-                FOREIGN KEY(patient_id) REFERENCES patients(id)
-            )
-        ''')
-        # Bảng dữ liệu liều RT Dose
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rt_doses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                dose_data BLOB,
-                metadata BLOB,
-                import_date TEXT,
-                FOREIGN KEY(patient_id) REFERENCES patients(id)
-            )
-        ''')
-        # Bảng kế hoạch RT Plan
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS rt_plans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                plan_data BLOB,
-                import_date TEXT,
-                FOREIGN KEY(patient_id) REFERENCES patients(id)
-            )
-        ''')
-        # Bảng contours (tạo bởi người dùng)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS contours (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id TEXT,
-                structure_name TEXT,
-                color TEXT,
-                contour_data BLOB,
-                creation_date TEXT,
-                FOREIGN KEY(patient_id) REFERENCES patients(id)
-            )
-        ''')
-        # Tạo chỉ mục để tăng tốc truy vấn
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_volumes_patient_modality ON volumes (patient_id, modality)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_rt_structs_patient ON rt_structs (patient_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_rt_doses_patient ON rt_doses (patient_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_rt_plans_patient ON rt_plans (patient_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_contours_patient ON contours (patient_id)')
-        self.conn.commit()
+    def __init__(self, db_path: str = None):
+        """
+        Khởi tạo cơ sở dữ liệu bệnh nhân
+        
+        Args:
+            db_path: Đường dẫn đến file cơ sở dữ liệu (nếu không cung cấp sẽ sử dụng đường dẫn mặc định)
+        """
+        # Xác định đường dẫn cơ sở dữ liệu
+        self.db_path = db_path or os.path.join(
+            config.get('data_dir', os.path.expanduser('~/.quangstation/data')),
+            'patient_db.sqlite'
+        )
+        
+        # Tạo thư mục chứa cơ sở dữ liệu nếu chưa tồn tại
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        
+        # Khởi tạo kết nối cơ sở dữ liệu
+        self._init_database()
+        
+        # Đường dẫn thư mục lưu trữ dữ liệu bệnh nhân
+        self.patient_data_dir = os.path.join(
+            config.get('data_dir', os.path.expanduser('~/.quangstation/data')),
+            'patients'
+        )
+        os.makedirs(self.patient_data_dir, exist_ok=True)
+        
+        # Dữ liệu bệnh nhân đã tải
+        self.loaded_patients = {}
+        
+        logger.info(f"Khởi tạo PatientDatabase tại {self.db_path}")
     
-    def insert_patient(self, patient_info):
-        """Thêm hoặc cập nhật thông tin bệnh nhân"""
-        cursor = self.conn.cursor()
-        current_time = datetime.now().isoformat()
+    def _init_database(self) -> None:
+        """Khởi tạo cấu trúc cơ sở dữ liệu nếu chưa tồn tại"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
+        # Tạo bảng patients nếu chưa tồn tại
         cursor.execute('''
-            INSERT OR REPLACE INTO patients 
-            (id, name, birth_date, sex, study_date, study_description, institution_name, last_modified) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            patient_info['patient_id'],
-            patient_info['patient_name'],
-            patient_info.get('birth_date', ''),
-            patient_info.get('sex', ''),
-            patient_info.get('study_date', ''),
-            patient_info.get('study_description', ''),
-            patient_info.get('institution_name', ''),
-            current_time
-        ))
-        self.conn.commit()
-        return patient_info['patient_id']
-
-    def insert_volume(self, patient_id, modality, volume_data, metadata=None):
-        """Thêm dữ liệu khối ảnh"""
-        cursor = self.conn.cursor()
-        depth, rows, cols = volume_data.shape
-        volume_blob = volume_data.tobytes()
-        metadata_blob = pickle.dumps(metadata) if metadata else None
-        current_time = datetime.now().isoformat()
+        CREATE TABLE IF NOT EXISTS patients (
+            patient_id TEXT PRIMARY KEY,
+            name TEXT,
+            birth_date TEXT,
+            gender TEXT,
+            address TEXT,
+            phone TEXT,
+            email TEXT,
+            diagnosis TEXT,
+            diagnosis_date TEXT,
+            physician TEXT,
+            notes TEXT,
+            created_date TEXT,
+            modified_date TEXT
+        )
+        ''')
         
+        # Tạo bảng plans nếu chưa tồn tại
         cursor.execute('''
-            INSERT INTO volumes 
-            (patient_id, modality, depth, rows, cols, volume_data, metadata, import_date) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            patient_id,
-            modality,
-            depth,
-            rows,
-            cols,
-            volume_blob,
-            metadata_blob,
-            current_time
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def insert_rt_struct(self, patient_id, struct_data):
-        """Thêm dữ liệu RT Structure"""
-        cursor = self.conn.cursor()
-        struct_blob = pickle.dumps(struct_data)
-        current_time = datetime.now().isoformat()
+        CREATE TABLE IF NOT EXISTS plans (
+            plan_id TEXT PRIMARY KEY,
+            patient_id TEXT,
+            name TEXT,
+            description TEXT,
+            status TEXT,
+            created_date TEXT,
+            modified_date TEXT,
+            FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
+        )
+        ''')
         
+        # Tạo bảng images nếu chưa tồn tại
         cursor.execute('''
-            INSERT INTO rt_structs 
-            (patient_id, struct_data, import_date) 
-            VALUES (?, ?, ?)
-        ''', (
-            patient_id,
-            struct_blob,
-            current_time
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def insert_rt_dose(self, patient_id, dose_data, metadata=None):
-        """Thêm dữ liệu RT Dose"""
-        cursor = self.conn.cursor()
-        dose_blob = dose_data.tobytes()
-        metadata_blob = pickle.dumps(metadata) if metadata else None
-        current_time = datetime.now().isoformat()
+        CREATE TABLE IF NOT EXISTS images (
+            image_id TEXT PRIMARY KEY,
+            patient_id TEXT,
+            modality TEXT,
+            description TEXT,
+            created_date TEXT,
+            metadata TEXT,
+            FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
+        )
+        ''')
         
+        # Tạo bảng structures nếu chưa tồn tại
         cursor.execute('''
-            INSERT INTO rt_doses 
-            (patient_id, dose_data, metadata, import_date) 
-            VALUES (?, ?, ?, ?)
-        ''', (
-            patient_id,
-            dose_blob,
-            metadata_blob,
-            current_time
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def insert_rt_plan(self, patient_id, plan_data):
-        """Thêm dữ liệu RT Plan"""
-        cursor = self.conn.cursor()
-        plan_blob = pickle.dumps(plan_data)
-        current_time = datetime.now().isoformat()
+        CREATE TABLE IF NOT EXISTS structures (
+            structure_id TEXT PRIMARY KEY,
+            patient_id TEXT,
+            name TEXT,
+            type TEXT,
+            color TEXT,
+            created_date TEXT,
+            modified_date TEXT,
+            FOREIGN KEY (patient_id) REFERENCES patients (patient_id)
+        )
+        ''')
         
-        cursor.execute('''
-            INSERT INTO rt_plans 
-            (patient_id, plan_data, import_date) 
-            VALUES (?, ?, ?)
-        ''', (
-            patient_id,
-            plan_blob,
-            current_time
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def insert_contour(self, patient_id, structure_name, contour_data, color='#FF0000'):
-        """Thêm dữ liệu contour tạo bởi người dùng"""
-        cursor = self.conn.cursor()
-        contour_blob = pickle.dumps(contour_data)
-        current_time = datetime.now().isoformat()
+        conn.commit()
+        conn.close()
+    
+    def add_patient(self, patient: Patient) -> str:
+        """
+        Thêm bệnh nhân vào cơ sở dữ liệu
         
-        cursor.execute('''
-            INSERT INTO contours 
-            (patient_id, structure_name, color, contour_data, creation_date) 
-            VALUES (?, ?, ?, ?, ?)
-        ''', (
-            patient_id,
-            structure_name,
-            color,
-            contour_blob,
-            current_time
-        ))
-        self.conn.commit()
-        return cursor.lastrowid
-
-    def get_all_patients(self):
-        """Lấy danh sách tất cả bệnh nhân"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT id, name, study_date, last_modified FROM patients ORDER BY last_modified DESC')
-        return cursor.fetchall()
-
-    def get_patient_info(self, patient_id):
-        """Lấy thông tin chi tiết của bệnh nhân"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM patients WHERE id = ?', (patient_id,))
-        result = cursor.fetchone()
-        if result:
-            columns = [col[0] for col in cursor.description]
-            return dict(zip(columns, result))
-        return None
-
-    def get_volume(self, patient_id, modality):
-        """Lấy dữ liệu khối ảnh"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT depth, rows, cols, volume_data, metadata 
-            FROM volumes 
-            WHERE patient_id = ? AND modality = ?
-            ORDER BY import_date DESC
-            LIMIT 1
-        ''', (patient_id, modality))
-        result = cursor.fetchone()
-        if result:
-            depth, rows, cols, volume_blob, metadata_blob = result
-            volume = np.frombuffer(volume_blob, dtype=np.float32).reshape(depth, rows, cols)
-            metadata = pickle.loads(metadata_blob) if metadata_blob else None
-            return volume, metadata
-        return None, None
-
-    def get_rt_struct(self, patient_id):
-        """Lấy dữ liệu RT Structure"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT struct_data 
-            FROM rt_structs 
+        Args:
+            patient: Đối tượng bệnh nhân cần thêm
+            
+        Returns:
+            str: ID của bệnh nhân đã thêm
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Thêm vào bảng patients
+            cursor.execute('''
+            INSERT OR REPLACE INTO patients (
+                patient_id, name, birth_date, gender, address, phone, email,
+                diagnosis, diagnosis_date, physician, notes, created_date, modified_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                patient.patient_id,
+                patient.demographics.get('name', ''),
+                patient.demographics.get('birth_date', ''),
+                patient.demographics.get('gender', ''),
+                patient.demographics.get('address', ''),
+                patient.demographics.get('phone', ''),
+                patient.demographics.get('email', ''),
+                patient.clinical_info.get('diagnosis', ''),
+                patient.clinical_info.get('diagnosis_date', ''),
+                patient.clinical_info.get('physician', ''),
+                patient.clinical_info.get('notes', ''),
+                patient.created_date,
+                patient.modified_date
+            ))
+            
+            conn.commit()
+            
+            # Lưu dữ liệu chi tiết vào file JSON
+            self._save_patient_data(patient)
+            
+            # Thêm vào danh sách đã tải
+            self.loaded_patients[patient.patient_id] = patient
+            
+            logger.info(f"Đã thêm bệnh nhân: {patient}")
+            return patient.patient_id
+            
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Lỗi khi thêm bệnh nhân: {str(e)}")
+            raise
+        finally:
+            conn.close()
+    
+    def update_patient(self, patient: Patient) -> bool:
+        """
+        Cập nhật thông tin bệnh nhân
+        
+        Args:
+            patient: Đối tượng bệnh nhân cần cập nhật
+            
+        Returns:
+            bool: True nếu cập nhật thành công, False nếu không tìm thấy bệnh nhân
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Kiểm tra bệnh nhân có tồn tại không
+            cursor.execute("SELECT patient_id FROM patients WHERE patient_id = ?", (patient.patient_id,))
+            if not cursor.fetchone():
+                return False
+            
+            # Cập nhật thông tin trong bảng patients
+            cursor.execute('''
+            UPDATE patients SET
+                name = ?, birth_date = ?, gender = ?, address = ?, phone = ?, email = ?,
+                diagnosis = ?, diagnosis_date = ?, physician = ?, notes = ?, modified_date = ?
             WHERE patient_id = ?
-            ORDER BY import_date DESC
-            LIMIT 1
-        ''', (patient_id,))
-        result = cursor.fetchone()
-        if result:
-            return pickle.loads(result[0])
-        return None
-
-    def get_rt_dose(self, patient_id):
-        """Lấy dữ liệu RT Dose"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT dose_data, metadata 
-            FROM rt_doses 
-            WHERE patient_id = ?
-            ORDER BY import_date DESC
-            LIMIT 1
-        ''', (patient_id,))
-        result = cursor.fetchone()
-        if result:
-            dose_blob, metadata_blob = result
-            dose = np.frombuffer(dose_blob, dtype=np.float32)
-            metadata = pickle.loads(metadata_blob) if metadata_blob else None
-            if metadata and 'shape' in metadata:
-                dose = dose.reshape(metadata['shape'])
-            return dose, metadata
-        return None, None
-
-    def get_rt_plan(self, patient_id):
-        """Lấy dữ liệu RT Plan"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT plan_data 
-            FROM rt_plans 
-            WHERE patient_id = ?
-            ORDER BY import_date DESC
-            LIMIT 1
-        ''', (patient_id,))
-        result = cursor.fetchone()
-        if result:
-            return pickle.loads(result[0])
-        return None
-
-    def get_contours(self, patient_id):
-        """Lấy tất cả contours của bệnh nhân"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-            SELECT id, structure_name, color, contour_data, creation_date 
-            FROM contours 
-            WHERE patient_id = ?
-            ORDER BY creation_date DESC
-        ''', (patient_id,))
-        results = cursor.fetchall()
-        contours = []
-        for result in results:
-            contour_id, structure_name, color, contour_blob, creation_date = result
-            contour_data = pickle.loads(contour_blob)
-            contours.append({
-                'id': contour_id,
-                'structure_name': structure_name,
-                'color': color,
-                'contour_data': contour_data,
-                'creation_date': creation_date
-            })
-        return contours
-
-    def update_contour(self, contour_id, contour_data=None, structure_name=None, color=None):
-        """Cập nhật dữ liệu contour"""
-        cursor = self.conn.cursor()
-        current_time = datetime.now().isoformat()
-        updates = []
-        params = []
-        
-        if contour_data is not None:
-            updates.append("contour_data = ?")
-            params.append(pickle.dumps(contour_data))
-        
-        if structure_name is not None:
-            updates.append("structure_name = ?")
-            params.append(structure_name)
-        
-        if color is not None:
-            updates.append("color = ?")
-            params.append(color)
-        
-        if not updates:
-            return False
-        
-        updates.append("creation_date = ?")
-        params.append(current_time)
-        params.append(contour_id)
-        
-        query = f"UPDATE contours SET {', '.join(updates)} WHERE id = ?"
-        cursor.execute(query, params)
-        self.conn.commit()
-        return cursor.rowcount > 0
-
-    def delete_contour(self, contour_id):
-        """Xóa contour"""
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM contours WHERE id = ?", (contour_id,))
-        self.conn.commit()
-        return cursor.rowcount > 0
-
+            ''', (
+                patient.demographics.get('name', ''),
+                patient.demographics.get('birth_date', ''),
+                patient.demographics.get('gender', ''),
+                patient.demographics.get('address', ''),
+                patient.demographics.get('phone', ''),
+                patient.demographics.get('email', ''),
+                patient.clinical_info.get('diagnosis', ''),
+                patient.clinical_info.get('diagnosis_date', ''),
+                patient.clinical_info.get('physician', ''),
+                patient.clinical_info.get('notes', ''),
+                patient.modified_date,
+                patient.patient_id
+            ))
+            
+            conn.commit()
+            
+            # Lưu dữ liệu chi tiết vào file JSON
+            self._save_patient_data(patient)
+            
+            # Cập nhật trong danh sách đã tải
+            self.loaded_patients[patient.patient_id] = patient
+            
+            logger.info(f"Đã cập nhật bệnh nhân: {patient}")
+            return True
+            
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Lỗi khi cập nhật bệnh nhân: {str(e)}")
+            raise
+        finally:
+            conn.close()
+    
     def delete_patient(self, patient_id: str) -> bool:
         """
-        Xóa bệnh nhân và tất cả dữ liệu liên quan
+        Xóa bệnh nhân khỏi cơ sở dữ liệu
         
         Args:
             patient_id: ID của bệnh nhân cần xóa
             
         Returns:
-            bool: True nếu xóa thành công, False nếu không
+            bool: True nếu xóa thành công, False nếu không tìm thấy bệnh nhân
         """
-        try:
-            cursor = self.conn.cursor()
-            # Bắt đầu transaction
-            self.conn.execute('BEGIN TRANSACTION')
-            
-            # Xóa dữ liệu từ các bảng phụ thuộc trước
-            cursor.execute('DELETE FROM contours WHERE patient_id = ?', (patient_id,))
-            cursor.execute('DELETE FROM rt_plans WHERE patient_id = ?', (patient_id,))
-            cursor.execute('DELETE FROM rt_doses WHERE patient_id = ?', (patient_id,))
-            cursor.execute('DELETE FROM rt_structs WHERE patient_id = ?', (patient_id,))
-            cursor.execute('DELETE FROM volumes WHERE patient_id = ?', (patient_id,))
-            
-            # Cuối cùng xóa bệnh nhân
-            cursor.execute('DELETE FROM patients WHERE id = ?', (patient_id,))
-            
-            # Commit transaction
-            self.conn.commit()
-            return True
-        except Exception as error:
-            # Rollback transaction khi có lỗi
-            self.conn.rollback()
-            print(f"Lỗi khi xóa bệnh nhân: {error}")
-            return False
-
-    def close(self):
-        """Đóng kết nối database"""
-        if self.conn:
-            self.conn.close()
-
-    def update_patient(self, patient_id: str, update_data: dict) -> bool:
-        """
-        Cập nhật thông tin bệnh nhân
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         
-        Args:
-            patient_id: ID bệnh nhân
-            update_data: Dữ liệu cập nhật
-            
-        Returns:
-            True nếu thành công, False nếu thất bại
-        """
         try:
-            cursor = self.conn.cursor()
-            
-            # Tạo chuỗi cập nhật SQL
-            update_fields = []
-            update_values = []
-            
-            for key, value in update_data.items():
-                if key != 'patient_id':  # Không cập nhật patient_id
-                    update_fields.append(f"{key} = ?")
-                    update_values.append(value)
-            
-            if not update_fields:
+            # Kiểm tra bệnh nhân có tồn tại không
+            cursor.execute("SELECT patient_id FROM patients WHERE patient_id = ?", (patient_id,))
+            if not cursor.fetchone():
                 return False
-                
-            update_sql = f"UPDATE patients SET {', '.join(update_fields)} WHERE patient_id = ?"
-            update_values.append(patient_id)
             
-            cursor.execute(update_sql, update_values)
-            self.conn.commit()
+            # Xóa các dữ liệu liên quan
+            cursor.execute("DELETE FROM plans WHERE patient_id = ?", (patient_id,))
+            cursor.execute("DELETE FROM images WHERE patient_id = ?", (patient_id,))
+            cursor.execute("DELETE FROM structures WHERE patient_id = ?", (patient_id,))
             
+            # Xóa bệnh nhân
+            cursor.execute("DELETE FROM patients WHERE patient_id = ?", (patient_id,))
+            
+            conn.commit()
+            
+            # Xóa thư mục dữ liệu của bệnh nhân
+            patient_dir = os.path.join(self.patient_data_dir, patient_id)
+            if os.path.exists(patient_dir):
+                shutil.rmtree(patient_dir)
+            
+            # Xóa khỏi danh sách đã tải
+            if patient_id in self.loaded_patients:
+                del self.loaded_patients[patient_id]
+            
+            logger.info(f"Đã xóa bệnh nhân: {patient_id}")
             return True
-        except Exception as error:
-            print(f"Lỗi cập nhật bệnh nhân: {error}")
-            return False
-
-    def get_patient_details(self, patient_id: str) -> dict:
+            
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Lỗi khi xóa bệnh nhân: {str(e)}")
+            raise
+        finally:
+            conn.close()
+    
+    def get_patient(self, patient_id: str) -> Optional[Patient]:
         """
-        Lấy chi tiết thông tin bệnh nhân
+        Lấy thông tin bệnh nhân
+        
+        Args:
+            patient_id: ID của bệnh nhân cần lấy
+            
+        Returns:
+            Patient: Đối tượng bệnh nhân, hoặc None nếu không tìm thấy
+        """
+        # Kiểm tra đã tải chưa
+        if patient_id in self.loaded_patients:
+            return self.loaded_patients[patient_id]
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Lấy thông tin cơ bản từ cơ sở dữ liệu
+            cursor.execute('''
+            SELECT name, birth_date, gender, address, phone, email,
+                   diagnosis, diagnosis_date, physician, notes, created_date, modified_date
+            FROM patients
+            WHERE patient_id = ?
+            ''', (patient_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return None
+            
+            # Tạo đối tượng Patient
+            name, birth_date, gender, address, phone, email, diagnosis, diagnosis_date, physician, notes, created_date, modified_date = row
+            
+            patient = Patient(
+                patient_id=patient_id,
+                name=name,
+                birth_date=birth_date,
+                gender=gender,
+                address=address,
+                phone=phone,
+                email=email,
+                diagnosis=diagnosis,
+                diagnosis_date=diagnosis_date,
+                physician=physician,
+                notes=notes,
+                created_date=created_date,
+                modified_date=modified_date
+            )
+            
+            # Tải dữ liệu chi tiết
+            self._load_patient_data(patient)
+            
+            # Lưu vào danh sách đã tải
+            self.loaded_patients[patient_id] = patient
+            
+            return patient
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy thông tin bệnh nhân: {str(e)}")
+            return None
+        finally:
+            conn.close()
+    
+    def get_all_patients(self) -> List[Dict[str, Any]]:
+        """
+        Lấy danh sách tất cả bệnh nhân (chỉ thông tin cơ bản)
+        
+        Returns:
+            List[Dict]: Danh sách thông tin cơ bản của các bệnh nhân
+        """
+        conn = sqlite3.connect(self.db_path)
+        
+        try:
+            # Lấy danh sách tất cả bệnh nhân
+            query = '''
+            SELECT patient_id, name, birth_date, gender, diagnosis, diagnosis_date, physician, created_date, modified_date
+            FROM patients
+            ORDER BY name
+            '''
+            
+            # Sử dụng pandas để dễ xử lý dữ liệu
+            df = pd.read_sql_query(query, conn)
+            
+            # Chuyển thành list of dicts
+            patients = df.to_dict('records')
+            
+            return patients
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi lấy danh sách bệnh nhân: {str(e)}")
+            return []
+        finally:
+            conn.close()
+    
+    def search_patients(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Tìm kiếm bệnh nhân theo từ khóa
+        
+        Args:
+            query: Từ khóa tìm kiếm
+            
+        Returns:
+            List[Dict]: Danh sách thông tin cơ bản của các bệnh nhân thỏa mãn
+        """
+        conn = sqlite3.connect(self.db_path)
+        
+        try:
+            # Tìm kiếm bệnh nhân trong các trường name, diagnosis, physician
+            search_query = f"%{query}%"
+            sql_query = '''
+            SELECT patient_id, name, birth_date, gender, diagnosis, diagnosis_date, physician, created_date, modified_date
+            FROM patients
+            WHERE name LIKE ? OR diagnosis LIKE ? OR physician LIKE ?
+            ORDER BY name
+            '''
+            
+            # Sử dụng pandas để dễ xử lý dữ liệu
+            df = pd.read_sql_query(sql_query, conn, params=(search_query, search_query, search_query))
+            
+            # Chuyển thành list of dicts
+            patients = df.to_dict('records')
+            
+            return patients
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi tìm kiếm bệnh nhân: {str(e)}")
+            return []
+        finally:
+            conn.close()
+    
+    def _save_patient_data(self, patient: Patient) -> None:
+        """
+        Lưu dữ liệu chi tiết của bệnh nhân vào file
+        
+        Args:
+            patient: Đối tượng bệnh nhân cần lưu
+        """
+        # Tạo thư mục cho bệnh nhân
+        patient_dir = os.path.join(self.patient_data_dir, patient.patient_id)
+        os.makedirs(patient_dir, exist_ok=True)
+        
+        # Lưu thông tin cơ bản vào file patient_info.json
+        patient_info_file = os.path.join(patient_dir, 'patient_info.json')
+        with open(patient_info_file, 'w') as f:
+            json.dump(patient.to_dict(), f, indent=2)
+        
+        # Lưu danh sách plan_ids vào file plans.json
+        plans_file = os.path.join(patient_dir, 'plans.json')
+        with open(plans_file, 'w') as f:
+            json.dump(list(patient.plans.keys()), f, indent=2)
+        
+        # Lưu danh sách image_ids vào file images.json
+        images_file = os.path.join(patient_dir, 'images.json')
+        with open(images_file, 'w') as f:
+            json.dump(list(patient.images.keys()), f, indent=2)
+        
+        # Lưu danh sách structure_ids vào file structures.json
+        structures_file = os.path.join(patient_dir, 'structures.json')
+        with open(structures_file, 'w') as f:
+            json.dump(list(patient.structures.keys()), f, indent=2)
+        
+        # Tạo thư mục cho các thành phần
+        plans_dir = os.path.join(patient_dir, 'plans')
+        os.makedirs(plans_dir, exist_ok=True)
+        
+        images_dir = os.path.join(patient_dir, 'images')
+        os.makedirs(images_dir, exist_ok=True)
+        
+        structures_dir = os.path.join(patient_dir, 'structures')
+        os.makedirs(structures_dir, exist_ok=True)
+        
+        # Lưu dữ liệu chi tiết từng plan
+        for plan_id, plan_data in patient.plans.items():
+            plan_file = os.path.join(plans_dir, f'{plan_id}.json')
+            with open(plan_file, 'w') as f:
+                json.dump(plan_data, f, indent=2)
+        
+        # Lưu dữ liệu chi tiết từng image (metadata)
+        for image_id, image_data in patient.images.items():
+            # Lưu metadata vào file JSON
+            image_meta_file = os.path.join(images_dir, f'{image_id}_meta.json')
+            with open(image_meta_file, 'w') as f:
+                # Chỉ lưu metadata, không lưu dữ liệu hình ảnh
+                meta_data = {k: v for k, v in image_data.items() if k != 'data'}
+                json.dump(meta_data, f, indent=2)
+            
+            # Dữ liệu hình ảnh (nếu có) sẽ được lưu dưới dạng binary hoặc numpy array
+            if 'data' in image_data and image_data['data'] is not None:
+                import numpy as np
+                image_data_file = os.path.join(images_dir, f'{image_id}_data.npy')
+                np.save(image_data_file, image_data['data'])
+        
+        # Lưu dữ liệu chi tiết từng structure
+        for structure_id, structure_data in patient.structures.items():
+            # Lưu metadata vào file JSON
+            structure_meta_file = os.path.join(structures_dir, f'{structure_id}_meta.json')
+            with open(structure_meta_file, 'w') as f:
+                # Chỉ lưu metadata, không lưu mask
+                meta_data = {k: v for k, v in structure_data.items() if k != 'mask'}
+                json.dump(meta_data, f, indent=2)
+            
+            # Dữ liệu mask (nếu có) sẽ được lưu dưới dạng numpy array
+            if 'mask' in structure_data and structure_data['mask'] is not None:
+                import numpy as np
+                mask_file = os.path.join(structures_dir, f'{structure_id}_mask.npy')
+                np.save(mask_file, structure_data['mask'])
+    
+    def _load_patient_data(self, patient: Patient) -> None:
+        """
+        Tải dữ liệu chi tiết của bệnh nhân từ file
+        
+        Args:
+            patient: Đối tượng bệnh nhân cần tải dữ liệu
+        """
+        patient_dir = os.path.join(self.patient_data_dir, patient.patient_id)
+        
+        # Kiểm tra thư mục có tồn tại không
+        if not os.path.exists(patient_dir):
+            logger.warning(f"Không tìm thấy thư mục dữ liệu của bệnh nhân: {patient.patient_id}")
+            return
+        
+        # Tải danh sách plan_ids
+        plans_file = os.path.join(patient_dir, 'plans.json')
+        if os.path.exists(plans_file):
+            with open(plans_file, 'r') as f:
+                plan_ids = json.load(f)
+                
+                # Tải dữ liệu từng plan
+                plans_dir = os.path.join(patient_dir, 'plans')
+                for plan_id in plan_ids:
+                    plan_file = os.path.join(plans_dir, f'{plan_id}.json')
+                    if os.path.exists(plan_file):
+                        with open(plan_file, 'r') as pf:
+                            patient.plans[plan_id] = json.load(pf)
+        
+        # Tải danh sách image_ids
+        images_file = os.path.join(patient_dir, 'images.json')
+        if os.path.exists(images_file):
+            with open(images_file, 'r') as f:
+                image_ids = json.load(f)
+                
+                # Tải dữ liệu từng image
+                images_dir = os.path.join(patient_dir, 'images')
+                for image_id in image_ids:
+                    # Tải metadata
+                    image_meta_file = os.path.join(images_dir, f'{image_id}_meta.json')
+                    if os.path.exists(image_meta_file):
+                        with open(image_meta_file, 'r') as imf:
+                            image_data = json.load(imf)
+                            
+                            # Tải dữ liệu hình ảnh (nếu có)
+                            image_data_file = os.path.join(images_dir, f'{image_id}_data.npy')
+                            if os.path.exists(image_data_file):
+                                import numpy as np
+                                image_data['data'] = np.load(image_data_file)
+                            
+                            patient.images[image_id] = image_data
+        
+        # Tải danh sách structure_ids
+        structures_file = os.path.join(patient_dir, 'structures.json')
+        if os.path.exists(structures_file):
+            with open(structures_file, 'r') as f:
+                structure_ids = json.load(f)
+                
+                # Tải dữ liệu từng structure
+                structures_dir = os.path.join(patient_dir, 'structures')
+                for structure_id in structure_ids:
+                    # Tải metadata
+                    structure_meta_file = os.path.join(structures_dir, f'{structure_id}_meta.json')
+                    if os.path.exists(structure_meta_file):
+                        with open(structure_meta_file, 'r') as smf:
+                            structure_data = json.load(smf)
+                            
+                            # Tải mask (nếu có)
+                            mask_file = os.path.join(structures_dir, f'{structure_id}_mask.npy')
+                            if os.path.exists(mask_file):
+                                import numpy as np
+                                structure_data['mask'] = np.load(mask_file)
+                            
+                            patient.structures[structure_id] = structure_data
+
+    def get_patient_plans(self, patient_id: str) -> List[Dict[str, Any]]:
+        """
+        Lấy danh sách kế hoạch của bệnh nhân
         
         Args:
             patient_id: ID bệnh nhân
             
         Returns:
-            Dictionary chứa thông tin bệnh nhân
+            List[Dict]: Danh sách thông tin cơ bản của các kế hoạch
         """
-        try:
-            # Lưu lại row_factory hiện tại
-            old_row_factory = self.conn.row_factory
-            self.conn.row_factory = sqlite3.Row
-            cursor = self.conn.cursor()
-            
-            cursor.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
-            row = cursor.fetchone()
-            
-            result = {}
-            if row:
-                # Chuyển từ sqlite3.Row sang dict
-                patient_info = {key: row[key] for key in row.keys()}
-                
-                # Lấy thêm danh sách nghiên cứu
-                cursor.execute("SELECT * FROM studies WHERE patient_id = ?", (patient_id,))
-                studies = []
-                for study_row in cursor.fetchall():
-                    study_dict = {key: study_row[key] for key in study_row.keys()}
-                    studies.append(study_dict)
-                
-                patient_info['studies'] = studies
-                result = patient_info
-            
-            # Khôi phục row_factory
-            self.conn.row_factory = old_row_factory
-            return result
-        except Exception as error:
-            print(f"Lỗi lấy thông tin bệnh nhân: {error}")
-            return {}
-
-    def search_patients(self, **kwargs) -> list:
+        # Tải bệnh nhân
+        patient = self.get_patient(patient_id)
+        if not patient:
+            return []
+        
+        # Lấy danh sách plan_ids
+        plans = []
+        for plan_id, plan_data in patient.plans.items():
+            # Bổ sung plan_id vào plan_data nếu chưa có
+            if 'id' not in plan_data:
+                plan_data['id'] = plan_id
+            plans.append(plan_data)
+        
+        # Sắp xếp theo ngày sửa đổi (mới nhất lên đầu)
+        plans.sort(key=lambda x: x.get('modified_date', ''), reverse=True)
+        
+        return plans
+        
+    def get_plan_structures(self, plan_id: str) -> Dict[str, Any]:
         """
-        Tìm kiếm bệnh nhân theo tiêu chí
+        Lấy danh sách cấu trúc của kế hoạch
         
         Args:
-            **kwargs: Các tiêu chí tìm kiếm (name, id, etc.)
+            plan_id: ID kế hoạch
             
         Returns:
-            Danh sách bệnh nhân thỏa mãn
+            Dict[str, Any]: Dictionary các cấu trúc
         """
-        try:
-            # Lưu lại row_factory hiện tại
-            old_row_factory = self.conn.row_factory
-            self.conn.row_factory = sqlite3.Row
-            cursor = self.conn.cursor()
-            
-            query = "SELECT * FROM patients WHERE 1=1"
-            params = []
-            
-            # Xây dựng truy vấn từ các tiêu chí
-            for key, value in kwargs.items():
-                if value:
-                    if isinstance(value, str) and '%' in value:
-                        # Tìm kiếm mờ
-                        query += f" AND {key} LIKE ?"
-                        params.append(value)
-                    else:
-                        # Tìm kiếm chính xác
-                        query += f" AND {key} = ?"
-                        params.append(value)
-            
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-            
-            results = []
-            for row in rows:
-                # Chuyển từ sqlite3.Row sang dict
-                patient_dict = {key: row[key] for key in row.keys()}
-                results.append(patient_dict)
-            
-            # Khôi phục row_factory
-            self.conn.row_factory = old_row_factory
-            return results
-        except Exception as error:
-            print(f"Lỗi tìm kiếm bệnh nhân: {error}")
-            return []
+        # Tìm plan trong tất cả bệnh nhân
+        for patient_id in self.loaded_patients.keys():
+            patient = self.loaded_patients[patient_id]
+            if plan_id in patient.plans:
+                # Nếu tìm thấy plan, lấy cấu trúc của bệnh nhân
+                return patient.structures
+        
+        # Nếu không tìm thấy, trả về dict rỗng
+        return {}
+
+# Tạo instance mặc định
+patient_db = PatientDatabase()

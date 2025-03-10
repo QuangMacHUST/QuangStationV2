@@ -14,6 +14,7 @@ import threading
 from datetime import datetime
 
 from quangstation.utils.logging import get_logger
+from quangstation.utils.config import config, get_config
 from quangstation.planning import create_technique
 from quangstation.dose_calculation.dose_engine_wrapper import DoseCalculator
 from quangstation.plan_evaluation.dvh import DVHCalculator, DVHPlotter
@@ -1928,50 +1929,285 @@ class PlanDesignWindow:
             messagebox.showerror("Lỗi", f"Lỗi khi xác định tâm điều trị tự động: {str(e)}")
     
     def on_beam_select(self, event):
-        """Xử lý sự kiện khi chọn chùm tia."""
-        if not hasattr(self, 'beam_listbox') or not self.beam_listbox.curselection():
-            return
+        """Xử lý sự kiện khi chọn chùm tia từ danh sách"""
+        try:
+            # Lấy chùm tia đã chọn
+            selected_indices = self.beam_listbox.curselection()
+            if not selected_indices:
+                return
             
-        index = self.beam_listbox.curselection()[0]
-        beam_id = self.beam_listbox.get(index)
-        
-        # Cập nhật thông tin chi tiết chùm tia
-        if hasattr(self, 'beam_angle_var'):
-            # TODO: Lấy thông tin chùm tia và cập nhật các biến giao diện
-            pass
+            selected_index = selected_indices[0]
+            beam_name = self.beam_listbox.get(selected_index)
             
-        logger.debug(f"Đã chọn chùm tia: {beam_id}")
+            # Tìm chùm tia trong danh sách
+            selected_beam = None
+            for beam in self.plan_data.get("beams", []):
+                if beam.get("name") == beam_name:
+                    selected_beam = beam
+                    break
+            
+            if not selected_beam:
+                return
+            
+            # Lưu chùm tia hiện tại
+            self.current_beam = selected_beam
+            
+            # Cập nhật các biến giao diện
+            self.beam_name_var.set(selected_beam.get("name", ""))
+            self.beam_description_var.set(selected_beam.get("description", ""))
+            self.beam_type_var.set(selected_beam.get("type", "STATIC"))
+            self.beam_energy_var.set(selected_beam.get("energy", "6X"))
+            self.gantry_angle_var.set(selected_beam.get("gantry_angle", 0))
+            self.collimator_angle_var.set(selected_beam.get("collimator_angle", 0))
+            self.couch_angle_var.set(selected_beam.get("couch_angle", 0))
+            self.field_size_x_var.set(selected_beam.get("field_size_x", 10))
+            self.field_size_y_var.set(selected_beam.get("field_size_y", 10))
+            self.ssd_var.set(selected_beam.get("ssd", 100))
+            self.mu_var.set(selected_beam.get("monitor_units", 100))
+            
+            # Cập nhật trọng số
+            weight = selected_beam.get("weight", 1.0)
+            self.beam_weight_var.set(weight)
+            
+            # Cập nhật isocenter
+            isocenter = selected_beam.get("isocenter", {"x": 0, "y": 0, "z": 0})
+            self.isocenter_x_var.set(isocenter.get("x", 0))
+            self.isocenter_y_var.set(isocenter.get("y", 0))
+            self.isocenter_z_var.set(isocenter.get("z", 0))
+            
+            # Cập nhật MLC nếu có
+            if "mlc" in selected_beam:
+                self.has_mlc_var.set(True)
+                # Lưu thông tin MLC để sử dụng khi hiển thị
+            else:
+                self.has_mlc_var.set(False)
+            
+            # Cập nhật wedge nếu có
+            if "wedge" in selected_beam:
+                self.has_wedge_var.set(True)
+                wedge = selected_beam.get("wedge", {})
+                self.wedge_angle_var.set(wedge.get("angle", 0))
+                self.wedge_orientation_var.set(wedge.get("orientation", "IN"))
+                self.wedge_type_var.set(wedge.get("type", "PHYSICAL"))
+            else:
+                self.has_wedge_var.set(False)
+                self.wedge_angle_var.set(0)
+                self.wedge_orientation_var.set("IN")
+                self.wedge_type_var.set("PHYSICAL")
+            
+            # Cập nhật giao diện hiển thị beam
+            self._update_beam_view_with_dose()
+            
+            # Kích hoạt các nút chức năng liên quan
+            self.beam_update_button.configure(state="normal")
+            self.beam_delete_button.configure(state="normal")
+            
+            # Log thông tin
+            self.logger.info(f"Đã chọn chùm tia: {beam_name}")
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi chọn chùm tia: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     def update_beam(self):
-        """Cập nhật thông tin chùm tia."""
-        if not hasattr(self, 'beam_listbox') or not self.beam_listbox.curselection():
-            messagebox.showwarning("Cảnh báo", "Vui lòng chọn chùm tia trước khi cập nhật")
-            return
+        """Cập nhật thông tin chùm tia từ giao diện người dùng"""
+        try:
+            # Kiểm tra xem có chùm tia đang được chọn không
+            if not hasattr(self, 'current_beam') or not self.current_beam:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn chùm tia trước khi cập nhật")
+                return
             
-        # Lấy thông tin chùm tia đã chọn
-        index = self.beam_listbox.curselection()[0]
-        beam_id = self.beam_listbox.get(index)
-        
-        # Cập nhật thông tin từ giao diện
-        # TODO: Cập nhật thông tin chùm tia dựa trên các biến giao diện
-        
-        messagebox.showinfo("Thành công", f"Đã cập nhật chùm tia {beam_id}")
-        logger.info(f"Đã cập nhật chùm tia {beam_id}")
+            # Lấy giá trị từ giao diện
+            name = self.beam_name_var.get()
+            description = self.beam_description_var.get()
+            beam_type = self.beam_type_var.get()
+            energy = self.beam_energy_var.get()
+            
+            try:
+                gantry_angle = float(self.gantry_angle_var.get())
+                collimator_angle = float(self.collimator_angle_var.get())
+                couch_angle = float(self.couch_angle_var.get())
+                field_size_x = float(self.field_size_x_var.get())
+                field_size_y = float(self.field_size_y_var.get())
+                ssd = float(self.ssd_var.get())
+                mu = float(self.mu_var.get())
+                weight = float(self.beam_weight_var.get())
+                
+                isocenter_x = float(self.isocenter_x_var.get())
+                isocenter_y = float(self.isocenter_y_var.get())
+                isocenter_z = float(self.isocenter_z_var.get())
+            except ValueError as e:
+                messagebox.showerror("Lỗi", f"Giá trị không hợp lệ: {str(e)}")
+                return
+            
+            # Cập nhật thông tin chùm tia
+            self.current_beam["name"] = name
+            self.current_beam["description"] = description
+            self.current_beam["type"] = beam_type
+            self.current_beam["energy"] = energy
+            self.current_beam["gantry_angle"] = gantry_angle
+            self.current_beam["collimator_angle"] = collimator_angle
+            self.current_beam["couch_angle"] = couch_angle
+            self.current_beam["field_size_x"] = field_size_x
+            self.current_beam["field_size_y"] = field_size_y
+            self.current_beam["ssd"] = ssd
+            self.current_beam["monitor_units"] = mu
+            self.current_beam["weight"] = weight
+            
+            # Cập nhật isocenter
+            if "isocenter" not in self.current_beam:
+                self.current_beam["isocenter"] = {}
+            self.current_beam["isocenter"]["x"] = isocenter_x
+            self.current_beam["isocenter"]["y"] = isocenter_y
+            self.current_beam["isocenter"]["z"] = isocenter_z
+            
+            # Cập nhật MLC nếu có
+            has_mlc = self.has_mlc_var.get()
+            if has_mlc:
+                # Nếu chưa có MLC, tạo MLC mới dựa trên field size
+                if "mlc" not in self.current_beam:
+                    from quangstation.planning.mlc_manager import MLCManager
+                    mlc_manager = MLCManager()
+                    bank_a, bank_b = mlc_manager.active_model.create_rectangular_mlc(field_size_x, field_size_y)
+                    self.current_beam["mlc"] = {
+                        "model": mlc_manager.active_model.name,
+                        "bank_a": bank_a,
+                        "bank_b": bank_b
+                    }
+            else:
+                # Nếu không dùng MLC, xóa MLC khỏi beam
+                if "mlc" in self.current_beam:
+                    del self.current_beam["mlc"]
+            
+            # Cập nhật wedge nếu có
+            has_wedge = self.has_wedge_var.get()
+            if has_wedge:
+                wedge_angle = float(self.wedge_angle_var.get())
+                wedge_orientation = self.wedge_orientation_var.get()
+                wedge_type = self.wedge_type_var.get()
+                
+                # Cập nhật hoặc tạo mới wedge
+                if "wedge" not in self.current_beam:
+                    self.current_beam["wedge"] = {}
+                
+                self.current_beam["wedge"]["angle"] = wedge_angle
+                self.current_beam["wedge"]["orientation"] = wedge_orientation
+                self.current_beam["wedge"]["type"] = wedge_type
+            else:
+                # Nếu không dùng wedge, xóa wedge khỏi beam
+                if "wedge" in self.current_beam:
+                    del self.current_beam["wedge"]
+            
+            # Cập nhật danh sách chùm tia
+            self.update_beam_list()
+            
+            # Cập nhật hiển thị
+            self._update_beam_view_with_dose()
+            
+            # Thông báo thành công
+            messagebox.showinfo("Thành công", f"Đã cập nhật chùm tia {name}")
+            
+            # Đánh dấu kế hoạch đã thay đổi
+            self.plan_modified = True
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể cập nhật chùm tia: {str(e)}")
+            self.logger.error(f"Lỗi khi cập nhật chùm tia: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     def on_structure_select(self, event):
-        """Xử lý sự kiện khi chọn cấu trúc."""
-        if not hasattr(self, 'structure_listbox') or not self.structure_listbox.curselection():
-            return
+        """Xử lý sự kiện khi chọn cấu trúc từ danh sách"""
+        try:
+            # Kiểm tra xem có cấu trúc được chọn không
+            if not hasattr(self, 'structure_listbox') or not self.structure_listbox.curselection():
+                return
+                
+            # Lấy cấu trúc đã chọn
+            index = self.structure_listbox.curselection()[0]
+            structure_name = self.structure_listbox.get(index)
             
-        index = self.structure_listbox.curselection()[0]
-        structure_name = self.structure_listbox.get(index)
-        
-        # Cập nhật thông tin chi tiết cấu trúc
-        if hasattr(self, 'structure_name_var'):
-            self.structure_name_var.set(structure_name)
-            # TODO: Lấy thông tin cấu trúc và cập nhật các biến giao diện
+            # Cập nhật thông tin chi tiết cấu trúc
+            if hasattr(self, 'structure_name_var'):
+                # Cập nhật tên cấu trúc
+                self.structure_name_var.set(structure_name)
+                
+                # Lấy dữ liệu cấu trúc từ plan_data
+                structures_data = self.plan_data.get('structures', {})
+                structure_data = None
+                
+                # Tìm thông tin cấu trúc
+                for struct in structures_data:
+                    if struct.get('name') == structure_name:
+                        structure_data = struct
+                        break
+                
+                if structure_data:
+                    # Cập nhật thông tin cấu trúc vào giao diện
+                    self.structure_type_var.set(structure_data.get('type', 'UNKNOWN'))
+                    
+                    # Cập nhật màu sắc
+                    color = structure_data.get('color', '#FF0000')
+                    self.structure_color_var.set(color)
+                    
+                    # Cập nhật thể tích
+                    volume = structure_data.get('volume', 0.0)
+                    self.structure_volume_var.set(f"{volume:.2f}")
+                    
+                    # Cập nhật liều
+                    if 'dose_metrics' in structure_data:
+                        dose_metrics = structure_data.get('dose_metrics', {})
+                        self.structure_min_dose_var.set(f"{dose_metrics.get('D_min', 0.0):.2f}")
+                        self.structure_max_dose_var.set(f"{dose_metrics.get('D_max', 0.0):.2f}")
+                        self.structure_mean_dose_var.set(f"{dose_metrics.get('D_mean', 0.0):.2f}")
+                    else:
+                        self.structure_min_dose_var.set("0.00")
+                        self.structure_max_dose_var.set("0.00")
+                        self.structure_mean_dose_var.set("0.00")
+                    
+                    # Cập nhật trạng thái hiển thị
+                    visibility = structure_data.get('visible', True)
+                    self.structure_visible_var.set(visibility)
+                    
+                    # Cập nhật mô tả
+                    description = structure_data.get('description', '')
+                    if hasattr(self, 'structure_description_var'):
+                        self.structure_description_var.set(description)
+                    
+                    # Hiển thị thông tin đặc trưng dựa vào loại cấu trúc
+                    struct_type = structure_data.get('type', '').upper()
+                    if struct_type in ['PTV', 'CTV', 'GTV']:
+                        # Đây là cấu trúc mục tiêu (target)
+                        if hasattr(self, 'structure_prescription_frame'):
+                            self.structure_prescription_frame.pack(fill=tk.X, pady=5)
+                            
+                            # Cập nhật liều chỉ định
+                            rx_dose = structure_data.get('prescribed_dose', 0.0)
+                            self.structure_rx_dose_var.set(f"{rx_dose:.2f}")
+                            
+                            # Cập nhật phần trăm liều
+                            dose_percent = structure_data.get('dose_percent', 95.0)
+                            self.structure_dose_percent_var.set(f"{dose_percent:.1f}")
+                    else:
+                        # Đây là cơ quan nguy cấp (OAR)
+                        if hasattr(self, 'structure_prescription_frame'):
+                            self.structure_prescription_frame.pack_forget()
+                
+                # Kích hoạt các nút chức năng liên quan
+                if hasattr(self, 'structure_update_button'):
+                    self.structure_update_button.configure(state="normal")
+                
+                if hasattr(self, 'structure_delete_button'):
+                    self.structure_delete_button.configure(state="normal")
             
-        logger.debug(f"Đã chọn cấu trúc: {structure_name}")
+            # Log thông tin
+            self.logger.info(f"Đã chọn cấu trúc: {structure_name}")
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi chọn cấu trúc: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     def choose_color(self):
         """Chọn màu cho cấu trúc."""
@@ -1985,20 +2221,94 @@ class PlanDesignWindow:
             self.structure_color_var.set(color)
     
     def update_structure(self):
-        """Cập nhật thông tin cấu trúc."""
-        if not hasattr(self, 'structure_listbox') or not self.structure_listbox.curselection():
-            messagebox.showwarning("Cảnh báo", "Vui lòng chọn cấu trúc trước khi cập nhật")
-            return
+        """Cập nhật thông tin cấu trúc từ giao diện người dùng"""
+        try:
+            # Kiểm tra xem có cấu trúc được chọn không
+            if not hasattr(self, 'structure_listbox') or not self.structure_listbox.curselection():
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn cấu trúc trước khi cập nhật")
+                return
+                
+            # Lấy thông tin cấu trúc đã chọn
+            index = self.structure_listbox.curselection()[0]
+            structure_name = self.structure_listbox.get(index)
             
-        # Lấy thông tin cấu trúc đã chọn
-        index = self.structure_listbox.curselection()[0]
-        structure_name = self.structure_listbox.get(index)
-        
-        # Cập nhật thông tin từ giao diện
-        # TODO: Cập nhật thông tin cấu trúc dựa trên các biến giao diện
-        
-        messagebox.showinfo("Thành công", f"Đã cập nhật cấu trúc {structure_name}")
-        logger.info(f"Đã cập nhật cấu trúc {structure_name}")
+            # Lấy dữ liệu cấu trúc từ plan_data
+            structures_data = self.plan_data.get('structures', [])
+            structure_data = None
+            structure_index = -1
+            
+            # Tìm thông tin cấu trúc
+            for i, struct in enumerate(structures_data):
+                if struct.get('name') == structure_name:
+                    structure_data = struct
+                    structure_index = i
+                    break
+            
+            if structure_data and structure_index >= 0:
+                # Lấy giá trị từ giao diện
+                new_name = self.structure_name_var.get()
+                new_type = self.structure_type_var.get()
+                new_color = self.structure_color_var.get()
+                visibility = self.structure_visible_var.get()
+                
+                # Lấy mô tả nếu có
+                description = ""
+                if hasattr(self, 'structure_description_var'):
+                    description = self.structure_description_var.get()
+                
+                # Cập nhật thông tin
+                structure_data['name'] = new_name
+                structure_data['type'] = new_type
+                structure_data['color'] = new_color
+                structure_data['visible'] = visibility
+                structure_data['description'] = description
+                
+                # Cập nhật thông tin đặc trưng dựa vào loại cấu trúc
+                struct_type = new_type.upper()
+                if struct_type in ['PTV', 'CTV', 'GTV']:
+                    # Đây là cấu trúc mục tiêu (target)
+                    try:
+                        rx_dose = float(self.structure_rx_dose_var.get())
+                        dose_percent = float(self.structure_dose_percent_var.get())
+                        
+                        structure_data['prescribed_dose'] = rx_dose
+                        structure_data['dose_percent'] = dose_percent
+                    except ValueError:
+                        messagebox.showwarning("Cảnh báo", "Giá trị liều không hợp lệ. Vui lòng nhập số.")
+                
+                # Cập nhật lại cấu trúc trong plan_data
+                structures_data[structure_index] = structure_data
+                self.plan_data['structures'] = structures_data
+                
+                # Nếu tên thay đổi, cập nhật danh sách cấu trúc
+                if new_name != structure_name:
+                    self.update_structure_list()
+                    # Chọn lại cấu trúc vừa cập nhật
+                    for i, name in enumerate(self.structure_listbox.get(0, tk.END)):
+                        if name == new_name:
+                            self.structure_listbox.selection_clear(0, tk.END)
+                            self.structure_listbox.selection_set(i)
+                            break
+                
+                # Đánh dấu kế hoạch đã thay đổi
+                self.plan_modified = True
+                
+                # Cập nhật hiển thị
+                self._update_structure_view()
+                
+                # Thông báo thành công
+                messagebox.showinfo("Thành công", f"Đã cập nhật cấu trúc {new_name}")
+                
+                # Log thông tin
+                self.logger.info(f"Đã cập nhật cấu trúc {new_name}")
+            else:
+                messagebox.showerror("Lỗi", f"Không tìm thấy cấu trúc {structure_name} trong kế hoạch")
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể cập nhật cấu trúc: {str(e)}")
+            self.logger.error(f"Lỗi khi cập nhật cấu trúc: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     def show_target_3d(self):
         """Hiển thị đích trong chế độ 3D."""
@@ -2403,15 +2713,822 @@ class PlanDesignWindow:
     
     def show_mlc(self):
         """Hiển thị MLC trong chế độ xem chùm tia."""
-        messagebox.showinfo("Thông báo", "Tính năng hiển thị MLC đang được phát triển")
+        try:
+            # Kiểm tra xem có chùm tia đang được chọn không
+            if not hasattr(self, 'current_beam') or not self.current_beam:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn một chùm tia trước khi hiển thị MLC")
+                return
+            
+            # Lấy dữ liệu MLC từ chùm tia hiện tại
+            beam_data = self.current_beam
+            
+            # Kiểm tra xem chùm tia có dữ liệu MLC hay không
+            if 'mlc' not in beam_data or not beam_data['mlc']:
+                # Nếu không có dữ liệu MLC, tạo MLC mặc định dựa trên kích thước trường
+                from quangstation.planning.mlc_manager import MLCManager
+                
+                # Tạo instance MLCManager
+                mlc_manager = MLCManager()
+                
+                # Kích thước trường (mặc định 10x10 nếu không có)
+                field_size_x = beam_data.get('field_size_x', 10.0)
+                field_size_y = beam_data.get('field_size_y', 10.0)
+                
+                # Tạo MLC hình chữ nhật với kích thước trường này
+                mlc_model = mlc_manager.active_model
+                bank_a, bank_b = mlc_model.create_rectangular_mlc(field_size_x, field_size_y)
+                
+                # Lưu MLC vào dữ liệu chùm tia
+                beam_data['mlc'] = {
+                    'bank_a': bank_a,
+                    'bank_b': bank_b
+                }
+                
+                # Lưu cập nhật vào current_beam
+                self.current_beam = beam_data
+                
+                # Cập nhật giao diện nếu cần
+                if hasattr(self, 'update_beam'):
+                    self.update_beam()
+                
+                self.logger.info(f"Đã tạo MLC mặc định cho chùm tia {beam_data.get('name', 'unknown')}")
+            else:
+                # Sử dụng MLC đã có
+                bank_a = beam_data['mlc'].get('bank_a', [])
+                bank_b = beam_data['mlc'].get('bank_b', [])
+            
+            # Tạo cửa sổ mới để hiển thị MLC
+            mlc_window = tk.Toplevel(self.window)
+            mlc_window.title(f"MLC - Chùm tia {beam_data.get('name', '')}")
+            mlc_window.geometry("800x600")
+            mlc_window.transient(self.window)
+            mlc_window.grab_set()
+            
+            # Tạo frame chính
+            main_frame = ttk.Frame(mlc_window, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Tạo frame hiển thị MLC
+            display_frame = ttk.Frame(main_frame)
+            display_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Tạo hình với matplotlib
+            fig, ax = plt.subplots(figsize=(8, 6))
+            
+            # Hiển thị MLC
+            from quangstation.planning.mlc_manager import MLCManager
+            mlc_manager = MLCManager()
+            
+            # Kiểm tra xem cấu trúc đích có được chọn không
+            target_contour = None
+            if hasattr(self, 'structures') and self.structures:
+                # Tìm cấu trúc PTV
+                for name, mask in self.structures.items():
+                    if name.startswith('PTV'):
+                        # Tạo contour 2D từ góc chùm tia hiện tại
+                        gantry_angle = beam_data.get('gantry_angle', 0)
+                        target_contour = mlc_manager._create_beam_eye_view(mask, gantry_angle)
+                        break
+            
+            # Hiển thị MLC và contour (nếu có)
+            mlc_manager.active_model.visualize_mlc(
+                bank_a=bank_a, 
+                bank_b=bank_b, 
+                ax=ax,
+                contour=target_contour
+            )
+            
+            # Cài đặt các tùy chọn hiển thị
+            ax.set_aspect('equal')
+            ax.set_title(f"MLC - Chùm tia {beam_data.get('name', '')}")
+            ax.set_xlabel('X (cm)')
+            ax.set_ylabel('Y (cm)')
+            ax.grid(True)
+            
+            # Thêm biểu đồ vào frame hiển thị
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            canvas = FigureCanvasTkAgg(fig, master=display_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Thêm thanh công cụ matplotlib
+            from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+            toolbar = NavigationToolbar2Tk(canvas, display_frame)
+            toolbar.update()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=10)
+            
+            # Nút tinh chỉnh MLC
+            def adjust_mlc():
+                # Triển khai giao diện tinh chỉnh MLC chi tiết
+                adj_window = tk.Toplevel(mlc_window)
+                adj_window.title(f"Tinh chỉnh MLC chi tiết - Chùm tia {beam_data.get('name', '')}")
+                adj_window.geometry("850x650")
+                adj_window.transient(mlc_window)
+                adj_window.grab_set()
+                
+                # Tạo frame chính
+                main_frame = ttk.Frame(adj_window, padding=10)
+                main_frame.pack(fill=tk.BOTH, expand=True)
+                
+                # Frame thông tin chung
+                info_frame = ttk.LabelFrame(main_frame, text="Thông tin MLC", padding=10)
+                info_frame.pack(fill=tk.X, pady=10)
+                
+                # Hiển thị thông tin MLC
+                ttk.Label(info_frame, text=f"Loại MLC: {mlc_manager.active_model.name}").pack(anchor=tk.W)
+                ttk.Label(info_frame, text=f"Số lá: {mlc_manager.active_model.leaf_count}").pack(anchor=tk.W)
+                ttk.Label(info_frame, text=f"Độ rộng lá: {mlc_manager.active_model.leaf_width} mm").pack(anchor=tk.W)
+                ttk.Label(info_frame, text=f"Khoảng cách tối thiểu giữa các lá: {mlc_manager.active_model.min_gap} mm").pack(anchor=tk.W)
+                
+                # Frame điều chỉnh các lá MLC
+                adjust_frame = ttk.LabelFrame(main_frame, text="Điều chỉnh vị trí lá", padding=10)
+                adjust_frame.pack(fill=tk.BOTH, expand=True)
+                
+                # Tạo frame cuộn
+                canvas = tk.Canvas(adjust_frame)
+                scrollbar = ttk.Scrollbar(adjust_frame, orient="vertical", command=canvas.yview)
+                scrollable_frame = ttk.Frame(canvas)
+                
+                scrollable_frame.bind(
+                    "<Configure>",
+                    lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+                )
+                
+                canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+                canvas.configure(yscrollcommand=scrollbar.set)
+                
+                canvas.pack(side="left", fill="both", expand=True)
+                scrollbar.pack(side="right", fill="y")
+                
+                # Tiêu đề cột
+                header_frame = ttk.Frame(scrollable_frame)
+                header_frame.pack(fill=tk.X, pady=5)
+                
+                ttk.Label(header_frame, text="Lá số", width=8).grid(row=0, column=0, padx=5)
+                ttk.Label(header_frame, text="Bank A (cm)", width=12).grid(row=0, column=1, padx=5)
+                ttk.Label(header_frame, text="Bank B (cm)", width=12).grid(row=0, column=2, padx=5)
+                ttk.Label(header_frame, text="Khoảng cách (cm)", width=15).grid(row=0, column=3, padx=5)
+                ttk.Label(header_frame, text="Ảnh hưởng", width=20).grid(row=0, column=4, padx=5)
+                
+                # Lấy vị trí hiện tại của các lá
+                bank_a = beam_data['mlc'].get('bank_a', [])
+                bank_b = beam_data['mlc'].get('bank_b', [])
+                
+                # Các biến theo dõi vị trí
+                bank_a_vars = []
+                bank_b_vars = []
+                
+                # Tạo các control điều chỉnh
+                for i in range(len(bank_a)):
+                    row_frame = ttk.Frame(scrollable_frame)
+                    row_frame.pack(fill=tk.X, pady=2)
+                    
+                    # Số lá
+                    ttk.Label(row_frame, text=f"{i+1}", width=8).grid(row=0, column=0, padx=5)
+                    
+                    # Bank A
+                    a_var = tk.DoubleVar(value=bank_a[i])
+                    bank_a_vars.append(a_var)
+                    a_entry = ttk.Spinbox(
+                        row_frame, 
+                        from_=-20.0, 
+                        to=20.0, 
+                        increment=0.1, 
+                        textvariable=a_var,
+                        width=10
+                    )
+                    a_entry.grid(row=0, column=1, padx=5)
+                    
+                    # Bank B
+                    b_var = tk.DoubleVar(value=bank_b[i])
+                    bank_b_vars.append(b_var)
+                    b_entry = ttk.Spinbox(
+                        row_frame, 
+                        from_=-20.0, 
+                        to=20.0, 
+                        increment=0.1, 
+                        textvariable=b_var, 
+                        width=10
+                    )
+                    b_entry.grid(row=0, column=2, padx=5)
+                    
+                    # Khoảng cách
+                    distance_var = tk.StringVar()
+                    distance_label = ttk.Label(row_frame, textvariable=distance_var, width=15)
+                    distance_label.grid(row=0, column=3, padx=5)
+                    
+                    # Nhãn ảnh hưởng
+                    impact_var = tk.StringVar(value="Bình thường")
+                    impact_label = ttk.Label(row_frame, textvariable=impact_var, width=20)
+                    impact_label.grid(row=0, column=4, padx=5)
+                    
+                    # Cập nhật khoảng cách
+                    def update_distance(index):
+                        a = bank_a_vars[index].get()
+                        b = bank_b_vars[index].get()
+                        distance = abs(a - b)
+                        distance_var.set(f"{distance:.2f}")
+                        
+                        # Kiểm tra khoảng cách
+                        min_gap = mlc_manager.active_model.min_gap / 10.0  # mm to cm
+                        if distance < min_gap:
+                            impact_var.set(f"Quá gần! (< {min_gap:.2f} cm)")
+                            impact_label.configure(foreground="red")
+                        else:
+                            impact_var.set("Bình thường")
+                            impact_label.configure(foreground="green")
+                    
+                    # Thiết lập hàm cập nhật khoảng cách và kiểm tra
+                    a_var.trace_add("write", lambda *args, idx=i: update_distance(idx))
+                    b_var.trace_add("write", lambda *args, idx=i: update_distance(idx))
+                    
+                    # Cập nhật ban đầu
+                    update_distance(i)
+                
+                # Frame nút điều khiển
+                button_frame = ttk.Frame(main_frame)
+                button_frame.pack(fill=tk.X, pady=10)
+                
+                def update_all_mlc():
+                    # Cập nhật vị trí tất cả các lá
+                    new_bank_a = [var.get() for var in bank_a_vars]
+                    new_bank_b = [var.get() for var in bank_b_vars]
+                    
+                    # Kiểm tra hợp lệ
+                    valid = mlc_manager.active_model.validate_leaf_positions(new_bank_a, new_bank_b)
+                    if not valid:
+                        messagebox.showerror("Lỗi", "Vị trí các lá MLC không hợp lệ. Vui lòng kiểm tra lại.")
+                        return
+                    
+                    # Cập nhật dữ liệu chùm tia
+                    beam_data['mlc']['bank_a'] = new_bank_a
+                    beam_data['mlc']['bank_b'] = new_bank_b
+                    
+                    # Cập nhật hiển thị
+                    mlc_manager.active_model.visualize_mlc(
+                        bank_a=new_bank_a, 
+                        bank_b=new_bank_b, 
+                        ax=ax,
+                        contour=None
+                    )
+                    canvas.draw()
+                    
+                    messagebox.showinfo("Thành công", "Đã cập nhật vị trí MLC")
+                    adj_window.destroy()
+                
+                def reset_to_original():
+                    # Đặt lại vị trí ban đầu
+                    for i, var in enumerate(bank_a_vars):
+                        var.set(bank_a[i])
+                    for i, var in enumerate(bank_b_vars):
+                        var.set(bank_b[i])
+                
+                def symmetrize_mlc():
+                    # Làm đối xứng các lá MLC
+                    n = len(bank_a_vars)
+                    middle = n // 2
+                    
+                    for i in range(middle):
+                        # Bank A
+                        avg_a = (bank_a_vars[i].get() + bank_a_vars[n-i-1].get()) / 2
+                        bank_a_vars[i].set(avg_a)
+                        bank_a_vars[n-i-1].set(avg_a)
+                        
+                        # Bank B
+                        avg_b = (bank_b_vars[i].get() + bank_b_vars[n-i-1].get()) / 2
+                        bank_b_vars[i].set(avg_b)
+                        bank_b_vars[n-i-1].set(avg_b)
+                
+                # Thêm các nút điều khiển
+                ttk.Button(button_frame, text="Cập nhật MLC", command=update_all_mlc).pack(side=tk.RIGHT, padx=5)
+                ttk.Button(button_frame, text="Đối xứng MLC", command=symmetrize_mlc).pack(side=tk.RIGHT, padx=5)
+                ttk.Button(button_frame, text="Đặt lại", command=reset_to_original).pack(side=tk.RIGHT, padx=5)
+                ttk.Button(button_frame, text="Hủy bỏ", command=adj_window.destroy).pack(side=tk.RIGHT, padx=5)
+            
+            # Nút tự động tạo MLC
+            def auto_fit_mlc():
+                # Kiểm tra xem có cấu trúc PTV nào không
+                if not hasattr(self, 'structures') or not self.structures:
+                    messagebox.showwarning("Cảnh báo", "Không có cấu trúc nào để tạo MLC")
+                    return
+                
+                # Tìm cấu trúc PTV
+                target_mask = None
+                target_name = None
+                for name, mask in self.structures.items():
+                    if name.startswith('PTV'):
+                        target_mask = mask
+                        target_name = name
+                        break
+                
+                if target_mask is None:
+                    messagebox.showwarning("Cảnh báo", "Không tìm thấy cấu trúc PTV")
+                    return
+                
+                # Lấy góc chùm tia hiện tại
+                gantry_angle = beam_data.get('gantry_angle', 0)
+                
+                # Sử dụng MLCManager để tạo MLC tự động
+                try:
+                    # Tạo MLC phù hợp với contour
+                    margin = 0.5  # cm
+                    bank_a, bank_b = mlc_manager.fit_mlc_to_structure(
+                        target_mask, gantry_angle, margin_cm=margin
+                    )
+                    
+                    # Cập nhật dữ liệu chùm tia
+                    beam_data['mlc'] = {
+                        'bank_a': bank_a,
+                        'bank_b': bank_b
+                    }
+                    
+                    # Cập nhật biểu đồ
+                    ax.clear()
+                    
+                    # Tạo contour 2D từ góc chùm tia hiện tại
+                    target_contour = mlc_manager._create_beam_eye_view(target_mask, gantry_angle)
+                    
+                    # Hiển thị MLC và contour
+                    mlc_manager.active_model.visualize_mlc(
+                        bank_a=bank_a, 
+                        bank_b=bank_b, 
+                        ax=ax,
+                        contour=target_contour
+                    )
+                    
+                    # Cài đặt các tùy chọn hiển thị
+                    ax.set_aspect('equal')
+                    ax.set_title(f"MLC - Chùm tia {beam_data.get('name', '')}")
+                    ax.set_xlabel('X (cm)')
+                    ax.set_ylabel('Y (cm)')
+                    ax.grid(True)
+                    
+                    # Cập nhật canvas
+                    canvas.draw()
+                    
+                    # Lưu cập nhật vào current_beam
+                    self.current_beam = beam_data
+                    
+                    # Cập nhật giao diện nếu cần
+                    if hasattr(self, 'update_beam'):
+                        self.update_beam()
+                    
+                    messagebox.showinfo("Thành công", f"Đã tạo MLC tự động phù hợp với {target_name}")
+                    
+                except Exception as e:
+                    messagebox.showerror("Lỗi", f"Không thể tạo MLC tự động: {str(e)}")
+                    self.logger.error(f"Lỗi khi tạo MLC tự động: {str(e)}")
+            
+            # Thêm các nút điều khiển
+            ttk.Button(button_frame, text="Tinh chỉnh MLC", command=adjust_mlc).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Tạo MLC tự động", command=auto_fit_mlc).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Đóng", command=mlc_window.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể hiển thị MLC: {str(e)}")
+            self.logger.error(f"Lỗi khi hiển thị MLC: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     def show_target_bev(self):
         """Hiển thị đích trong chế độ xem chùm tia."""
-        messagebox.showinfo("Thông báo", "Tính năng hiển thị đích BEV đang được phát triển")
+        try:
+            # Kiểm tra xem có chùm tia đang được chọn không
+            if not hasattr(self, 'current_beam') or not self.current_beam:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn một chùm tia trước khi hiển thị BEV")
+                return
+            
+            # Kiểm tra xem có cấu trúc PTV nào không
+            if not hasattr(self, 'structures') or not self.structures:
+                messagebox.showwarning("Cảnh báo", "Không có cấu trúc nào để hiển thị")
+                return
+            
+            # Tìm cấu trúc PTV
+            target_mask = None
+            target_name = None
+            for name, mask in self.structures.items():
+                if name.startswith('PTV'):
+                    target_mask = mask
+                    target_name = name
+                    break
+            
+            if target_mask is None:
+                messagebox.showwarning("Cảnh báo", "Không tìm thấy cấu trúc PTV")
+                return
+            
+            # Lấy góc chùm tia hiện tại
+            beam_data = self.current_beam
+            gantry_angle = beam_data.get('gantry_angle', 0)
+            
+            # Tạo cửa sổ mới để hiển thị BEV
+            bev_window = tk.Toplevel(self.window)
+            bev_window.title(f"Beam's Eye View - Chùm tia {beam_data.get('name', '')}")
+            bev_window.geometry("800x700")
+            bev_window.transient(self.window)
+            bev_window.grab_set()
+            
+            # Tạo frame chính
+            main_frame = ttk.Frame(bev_window, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Tạo frame hiển thị BEV
+            display_frame = ttk.Frame(main_frame)
+            display_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Tạo hình với matplotlib
+            fig, ax = plt.subplots(figsize=(8, 6))
+            
+            # Tạo BEV
+            from quangstation.planning.mlc_manager import MLCManager
+            mlc_manager = MLCManager()
+            
+            # Tạo contour 2D từ góc chùm tia hiện tại
+            target_contour = mlc_manager._create_beam_eye_view(target_mask, gantry_angle)
+            
+            # Hiển thị contour
+            if target_contour is not None:
+                # Vẽ contour với màu đỏ
+                contour_data = ax.contourf(
+                    target_contour, 
+                    levels=[0.5, 1], 
+                    colors=['red'], 
+                    alpha=0.3
+                )
+                contour_lines = ax.contour(
+                    target_contour, 
+                    levels=[0.5], 
+                    colors=['red'], 
+                    linewidths=2
+                )
+                
+                # Thêm nhãn
+                ax.text(0, 0, target_name, color='red', fontsize=12, ha='center', va='center')
+            
+            # Hiển thị MLC nếu có
+            if 'mlc' in beam_data and beam_data['mlc']:
+                bank_a = beam_data['mlc'].get('bank_a', [])
+                bank_b = beam_data['mlc'].get('bank_b', [])
+                
+                if bank_a and bank_b:
+                    mlc_manager.active_model.visualize_mlc(
+                        bank_a=bank_a, 
+                        bank_b=bank_b, 
+                        ax=ax,
+                        contour=None  # Không vẽ lại contour vì đã vẽ ở trên
+                    )
+            
+            # Thêm các kích thước trường
+            field_size_x = beam_data.get('field_size_x', 10.0)
+            field_size_y = beam_data.get('field_size_y', 10.0)
+            
+            # Vẽ đường biên của trường
+            rect = plt.Rectangle(
+                (-field_size_x/2, -field_size_y/2), 
+                field_size_x, 
+                field_size_y, 
+                linewidth=2, 
+                edgecolor='blue', 
+                facecolor='none',
+                linestyle='--'
+            )
+            ax.add_patch(rect)
+            
+            # Vẽ trục chính
+            ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+            ax.axvline(x=0, color='black', linestyle='--', alpha=0.5)
+            
+            # Cài đặt các tùy chọn hiển thị
+            ax.set_aspect('equal')
+            ax.set_title(f"Beam's Eye View - Chùm tia {beam_data.get('name', '')}\nGóc gantry: {gantry_angle}°")
+            ax.set_xlabel('X (cm)')
+            ax.set_ylabel('Y (cm)')
+            ax.grid(True)
+            
+            # Thiết lập giới hạn trục
+            limit = max(field_size_x, field_size_y) * 0.7
+            ax.set_xlim(-limit, limit)
+            ax.set_ylim(-limit, limit)
+            
+            # Thêm biểu đồ vào frame hiển thị
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            canvas = FigureCanvasTkAgg(fig, master=display_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Thêm thanh công cụ matplotlib
+            from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+            toolbar = NavigationToolbar2Tk(canvas, display_frame)
+            toolbar.update()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Frame thông tin
+            info_frame = ttk.LabelFrame(main_frame, text="Thông tin chùm tia", padding=10)
+            info_frame.pack(fill=tk.X, pady=10)
+            
+            # Hiển thị thông tin chùm tia
+            ttk.Label(info_frame, text=f"Tên chùm tia: {beam_data.get('name', '')}", 
+                    font=("Arial", 10, "bold")).pack(anchor=tk.W)
+            ttk.Label(info_frame, text=f"Góc gantry: {gantry_angle}°").pack(anchor=tk.W)
+            ttk.Label(info_frame, text=f"Kích thước trường: {field_size_x} × {field_size_y} cm²").pack(anchor=tk.W)
+            ttk.Label(info_frame, text=f"Năng lượng: {beam_data.get('energy', '')}").pack(anchor=tk.W)
+            ttk.Label(info_frame, text=f"SSD: {beam_data.get('ssd', '')} cm").pack(anchor=tk.W)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=10)
+            
+            # Thêm nút điều khiển
+            ttk.Button(button_frame, text="Hiển thị MLC", command=self.show_mlc).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Hiển thị OARs", command=self.show_oars_bev).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Xuất DRR", command=self.export_drr).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Đóng", command=bev_window.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể hiển thị BEV: {str(e)}")
+            self.logger.error(f"Lỗi khi hiển thị BEV: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     def show_oars_bev(self):
         """Hiển thị các cơ quan nguy cấp trong chế độ xem chùm tia."""
-        messagebox.showinfo("Thông báo", "Tính năng hiển thị OAR BEV đang được phát triển")
+        try:
+            # Kiểm tra xem có chùm tia đang được chọn không
+            if not hasattr(self, 'current_beam') or not self.current_beam:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn một chùm tia trước khi hiển thị OARs")
+                return
+            
+            # Kiểm tra xem có cấu trúc nào không
+            if not hasattr(self, 'structures') or not self.structures:
+                messagebox.showwarning("Cảnh báo", "Không có cấu trúc nào để hiển thị")
+                return
+            
+            # Lấy góc chùm tia hiện tại
+            beam_data = self.current_beam
+            gantry_angle = beam_data.get('gantry_angle', 0)
+            
+            # Tạo cửa sổ mới để hiển thị OARs trong BEV
+            oars_window = tk.Toplevel(self.window)
+            oars_window.title(f"OARs - Beam's Eye View - Chùm tia {beam_data.get('name', '')}")
+            oars_window.geometry("900x800")
+            oars_window.transient(self.window)
+            oars_window.grab_set()
+            
+            # Tạo frame chính
+            main_frame = ttk.Frame(oars_window, padding=10)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Tạo frame bên trái (danh sách OARs)
+            left_frame = ttk.Frame(main_frame, width=250)
+            left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+            
+            # Tạo frame bên phải (hiển thị BEV)
+            right_frame = ttk.Frame(main_frame)
+            right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+            
+            # Tạo frame hiển thị BEV
+            display_frame = ttk.Frame(right_frame)
+            display_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Tạo hình với matplotlib
+            fig, ax = plt.subplots(figsize=(8, 6))
+            
+            # Lọc các cơ quan nguy cấp (không phải PTV, CTV, GTV)
+            oars = {}
+            for name, mask in self.structures.items():
+                if not (name.startswith('PTV') or name.startswith('CTV') or name.startswith('GTV')):
+                    oars[name] = mask
+            
+            # Nếu không có OARs nào
+            if not oars:
+                messagebox.showwarning("Cảnh báo", "Không có cơ quan nguy cấp nào trong kế hoạch")
+                oars_window.destroy()
+                return
+            
+            # Tạo BEV cho từng OARs
+            from quangstation.planning.mlc_manager import MLCManager
+            mlc_manager = MLCManager()
+            
+            # Danh sách các màu cho OARs
+            oar_colors = {
+                'cord': 'yellow',
+                'lung': 'cyan',
+                'heart': 'magenta',
+                'liver': 'brown',
+                'kidney': 'purple',
+                'brain': 'gray',
+                'parotid': 'pink',
+                'bowel': 'orange',
+                'bladder': 'lime',
+                'rectum': 'gold',
+                'Lung': 'cyan',
+                'Heart': 'magenta',
+                'Liver': 'brown',
+                'Kidney': 'purple',
+                'Brain': 'gray',
+                'Parotid': 'pink',
+                'Bowel': 'orange',
+                'Bladder': 'lime',
+                'Rectum': 'gold'
+            }
+            
+            # Lấy màu cho OARs
+            def get_color_for_oar(oar_name):
+                for key, color in oar_colors.items():
+                    if key in oar_name:
+                        return color
+                return 'green'  # Màu mặc định
+            
+            # Tạo biến kiểm soát hiển thị OARs
+            oar_vars = {}
+            
+            # Framedarwing sách OARs
+            oars_list_frame = ttk.LabelFrame(left_frame, text="Cơ quan nguy cấp")
+            oars_list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+            
+            # Tạo checkbox cho từng OAR
+            for name in oars.keys():
+                var = tk.BooleanVar(value=True)
+                oar_vars[name] = var
+                ttk.Checkbutton(oars_list_frame, text=name, variable=var, command=lambda: update_display()).pack(anchor=tk.W, pady=2)
+            
+            # Nút chọn/bỏ chọn tất cả
+            def select_all():
+                for var in oar_vars.values():
+                    var.set(True)
+                update_display()
+            
+            def deselect_all():
+                for var in oar_vars.values():
+                    var.set(False)
+                update_display()
+            
+            # Frame nút điều khiển OARs
+            oars_buttons_frame = ttk.Frame(left_frame)
+            oars_buttons_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Button(oars_buttons_frame, text="Chọn tất cả", command=select_all).pack(side=tk.LEFT, padx=5)
+            ttk.Button(oars_buttons_frame, text="Bỏ chọn tất cả", command=deselect_all).pack(side=tk.LEFT, padx=5)
+            
+            # Hàm cập nhật hiển thị
+            def update_display():
+                # Xóa biểu đồ cũ
+                ax.clear()
+                
+                # Hiển thị OARs được chọn
+                for name, var in oar_vars.items():
+                    if var.get():
+                        # Tạo contour 2D từ góc chùm tia hiện tại
+                        contour = mlc_manager._create_beam_eye_view(oars[name], gantry_angle)
+                        
+                        if contour is not None:
+                            # Lấy màu cho OAR
+                            color = get_color_for_oar(name)
+                            
+                            # Vẽ contour
+                            contour_data = ax.contourf(
+                                contour, 
+                                levels=[0.5, 1], 
+                                colors=[color], 
+                                alpha=0.3
+                            )
+                            contour_lines = ax.contour(
+                                contour, 
+                                levels=[0.5], 
+                                colors=[color], 
+                                linewidths=1.5
+                            )
+                            
+                            # Đánh nhãn
+                            try:
+                                # Tìm vị trí trọng tâm của contour để đặt nhãn
+                                if np.any(contour > 0.5):
+                                    indices = np.where(contour > 0.5)
+                                    center_y = np.mean(indices[0])
+                                    center_x = np.mean(indices[1])
+                                    ax.text(center_x, center_y, name, color=color, fontsize=8, 
+                                         ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
+                            except:
+                                # Nếu không thể tìm vị trí trọng tâm, bỏ qua đánh nhãn
+                                pass
+                
+                # Hiển thị MLC nếu có
+                if 'mlc' in beam_data and beam_data['mlc']:
+                    bank_a = beam_data['mlc'].get('bank_a', [])
+                    bank_b = beam_data['mlc'].get('bank_b', [])
+                    
+                    if bank_a and bank_b:
+                        mlc_manager.active_model.visualize_mlc(
+                            bank_a=bank_a, 
+                            bank_b=bank_b, 
+                            ax=ax,
+                            contour=None  # Không vẽ lại contour vì đã vẽ ở trên
+                        )
+                
+                # Thêm các kích thước trường
+                field_size_x = beam_data.get('field_size_x', 10.0)
+                field_size_y = beam_data.get('field_size_y', 10.0)
+                
+                # Vẽ đường biên của trường
+                rect = plt.Rectangle(
+                    (-field_size_x/2, -field_size_y/2), 
+                    field_size_x, 
+                    field_size_y, 
+                    linewidth=2, 
+                    edgecolor='blue', 
+                    facecolor='none',
+                    linestyle='--'
+                )
+                ax.add_patch(rect)
+                
+                # Vẽ trục chính
+                ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+                ax.axvline(x=0, color='black', linestyle='--', alpha=0.5)
+                
+                # Cài đặt các tùy chọn hiển thị
+                ax.set_aspect('equal')
+                ax.set_title(f"OARs - Beam's Eye View - Chùm tia {beam_data.get('name', '')}\nGóc gantry: {gantry_angle}°")
+                ax.set_xlabel('X (cm)')
+                ax.set_ylabel('Y (cm)')
+                ax.grid(True)
+                
+                # Thiết lập giới hạn trục
+                limit = max(field_size_x, field_size_y) * 0.7
+                ax.set_xlim(-limit, limit)
+                ax.set_ylim(-limit, limit)
+                
+                # Cập nhật canvas
+                canvas.draw()
+            
+            # Tạo các option hiển thị BEV
+            options_frame = ttk.LabelFrame(left_frame, text="Tùy chọn hiển thị")
+            options_frame.pack(fill=tk.X, pady=5)
+            
+            # Tùy chọn hiển thị MLC
+            show_mlc_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(options_frame, text="Hiển thị MLC", variable=show_mlc_var, command=update_display).pack(anchor=tk.W, pady=2)
+            
+            # Tùy chọn hiển thị trường chữ nhật
+            show_field_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(options_frame, text="Hiển thị trường", variable=show_field_var, command=update_display).pack(anchor=tk.W, pady=2)
+            
+            # Thêm biểu đồ vào frame hiển thị
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            canvas = FigureCanvasTkAgg(fig, master=display_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Thêm thanh công cụ matplotlib
+            from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+            toolbar = NavigationToolbar2Tk(canvas, display_frame)
+            toolbar.update()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Frame nút điều khiển
+            button_frame = ttk.Frame(right_frame)
+            button_frame.pack(fill=tk.X, pady=10)
+            
+            # Thêm nút điều khiển
+            ttk.Button(button_frame, text="Hiển thị đích", command=self.show_target_bev).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Hiển thị MLC", command=self.show_mlc).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Xuất hình ảnh", command=lambda: self._save_bev_image(fig, canvas)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Đóng", command=oars_window.destroy).pack(side=tk.RIGHT, padx=5)
+            
+            # Cập nhật hiển thị ban đầu
+            update_display()
+            
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể hiển thị OARs: {str(e)}")
+            self.logger.error(f"Lỗi khi hiển thị OARs: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+    
+    def _save_bev_image(self, fig, canvas):
+        """Lưu hình ảnh BEV hiện tại"""
+        try:
+            # Mở hộp thoại lưu file
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[
+                    ("PNG Image", "*.png"),
+                    ("JPEG Image", "*.jpg"),
+                    ("PDF Document", "*.pdf"),
+                    ("SVG Image", "*.svg")
+                ],
+                title="Lưu hình ảnh BEV"
+            )
+            
+            if file_path:
+                # Lưu hình ảnh
+                fig.savefig(file_path, dpi=300, bbox_inches='tight')
+                messagebox.showinfo("Thành công", f"Đã lưu hình ảnh vào {file_path}")
+        
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể lưu hình ảnh: {str(e)}")
+            self.logger.error(f"Lỗi khi lưu hình ảnh BEV: {str(e)}")
     
     def export_drr(self):
         """Xuất DRR (Digitally Reconstructed Radiograph)."""
@@ -2664,13 +3781,17 @@ class PlanDesignWindow:
             coverage_var = tk.DoubleVar(value=95.0)
             ttk.Entry(setup_frame, textvariable=coverage_var, width=10).grid(row=2, column=1, sticky=tk.W, pady=5)
             
-            # Frame ràng buộc OAR
-            constraints_frame = ttk.LabelFrame(main_frame, text="Ràng buộc OAR", padding=10)
-            constraints_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            # Thêm tab để chọn loại QA
+            qa_tabs = ttk.Notebook(main_frame)
+            qa_tabs.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Tab 1: Ràng buộc OAR
+            oar_tab = ttk.Frame(qa_tabs, padding=10)
+            qa_tabs.add(oar_tab, text="Ràng buộc OAR")
             
             # Canvas cho các ràng buộc cuộn được
-            canvas = tk.Canvas(constraints_frame)
-            scrollbar = ttk.Scrollbar(constraints_frame, orient="vertical", command=canvas.yview)
+            canvas = tk.Canvas(oar_tab)
+            scrollbar = ttk.Scrollbar(oar_tab, orient="vertical", command=canvas.yview)
             scrollable_frame = ttk.Frame(canvas)
             
             scrollable_frame.bind(
@@ -2740,6 +3861,45 @@ class PlanDesignWindow:
                     mean_dose_var.set(30.0)
                 
                 row += 1
+                
+            # Tab 2: QA dựa trên KBP (Knowledge-Based Planning)
+            kbp_tab = ttk.Frame(qa_tabs, padding=10)
+            qa_tabs.add(kbp_tab, text="QA dựa trên mô hình KBP")
+            
+            # Chọn mô hình KBP
+            ttk.Label(kbp_tab, text="Mô hình KBP:").grid(row=0, column=0, sticky=tk.W, pady=5)
+            model_var = tk.StringVar(value="default_model")
+            model_combo = ttk.Combobox(kbp_tab, textvariable=model_var, width=30, state="readonly")
+            
+            # Lấy danh sách mô hình có sẵn
+            model_dir = get_config("optimization.kbp_models_dir", 
+                           os.path.join(get_config("workspace.root_dir"), "models", "kbp"))
+            os.makedirs(model_dir, exist_ok=True)
+            
+            available_models = ["default_model"]
+            if os.path.exists(model_dir):
+                available_models = ["default_model"] + [f for f in os.listdir(model_dir) 
+                                                       if os.path.isdir(os.path.join(model_dir, f))]
+            
+            model_combo['values'] = available_models
+            model_combo.grid(row=0, column=1, sticky=tk.W, pady=5)
+            
+            # Độ chặt chẽ của kiểm tra
+            ttk.Label(kbp_tab, text="Độ chặt chẽ (%):").grid(row=1, column=0, sticky=tk.W, pady=5)
+            tolerance_var = tk.DoubleVar(value=5.0)
+            ttk.Entry(kbp_tab, textvariable=tolerance_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=5)
+            ttk.Label(kbp_tab, text="(% sai lệch cho phép so với dự đoán)").grid(row=1, column=2, sticky=tk.W, pady=5)
+            
+            # Loại báo cáo
+            ttk.Label(kbp_tab, text="Loại báo cáo:").grid(row=2, column=0, sticky=tk.W, pady=5)
+            report_format_var = tk.StringVar(value="html")
+            
+            report_format_frame = ttk.Frame(kbp_tab)
+            report_format_frame.grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=5)
+            
+            ttk.Radiobutton(report_format_frame, text="HTML", variable=report_format_var, value="html").pack(side=tk.LEFT, padx=5)
+            ttk.Radiobutton(report_format_frame, text="PDF", variable=report_format_var, value="pdf").pack(side=tk.LEFT, padx=5)
+            ttk.Radiobutton(report_format_frame, text="CSV", variable=report_format_var, value="csv").pack(side=tk.LEFT, padx=5)
             
             # Frame kết quả
             results_frame = ttk.LabelFrame(main_frame, text="Kết quả", padding=10)
@@ -2756,6 +3916,16 @@ class PlanDesignWindow:
             
             # Hàm chạy kiểm tra QA
             def run_qa_check():
+                # Xác định tab nào đang được chọn
+                selected_tab = qa_tabs.index(qa_tabs.select())
+                
+                if selected_tab == 0:  # Tab OAR Constraints
+                    run_traditional_qa_check()
+                else:  # Tab KBP
+                    run_kbp_qa_check()
+            
+            # Hàm chạy kiểm tra QA truyền thống
+            def run_traditional_qa_check():
                 try:
                     # Lấy giá trị từ giao diện
                     target = target_var.get()
@@ -2807,7 +3977,143 @@ class PlanDesignWindow:
                     logger.error(f"Lỗi khi chạy kiểm tra QA: {str(error)}")
                     messagebox.showerror("Lỗi", f"Không thể chạy kiểm tra QA: {str(error)}")
             
-            # Hàm cập nhật kết quả
+            # Hàm chạy kiểm tra QA dựa trên KBP
+            def run_kbp_qa_check():
+                try:
+                    # Lấy giá trị từ giao diện
+                    target = target_var.get()
+                    if not target:
+                        messagebox.showwarning("Cảnh báo", "Vui lòng chọn cấu trúc đích (PTV)")
+                        return
+                    
+                    prescription = prescription_var.get()
+                    model_path = os.path.join(model_dir, model_var.get()) if model_var.get() != "default_model" else None
+                    tolerance = tolerance_var.get() / 100.0  # Chuyển đổi phần trăm thành tỷ lệ
+                    report_format = report_format_var.get()
+                    
+                    # Tạo đối tượng PlanQA từ module mới
+                    from quangstation.plan_evaluation.plan_qa import PlanQAModule
+                    
+                    # Tạo progress bar
+                    progress_window = tk.Toplevel(qa_window)
+                    progress_window.title("Đang chạy kiểm tra QA")
+                    progress_window.geometry("300x100")
+                    progress_window.transient(qa_window)
+                    progress_window.grab_set()
+                    
+                    ttk.Label(progress_window, text="Đang tính toán...").pack(pady=10)
+                    progress_bar = ttk.Progressbar(progress_window, mode="indeterminate")
+                    progress_bar.pack(pady=10, padx=20, fill=tk.X)
+                    progress_bar.start()
+                    
+                    # Chạy kiểm tra QA trong một luồng riêng biệt
+                    import threading
+                    
+                    def qa_thread():
+                        try:
+                            # Khởi tạo module QA với mô hình được chọn
+                            plan_qa = PlanQAModule(model_path=model_path, tolerance=tolerance)
+                            
+                            # Chạy kiểm tra
+                            qa_results = plan_qa.check_plan(
+                                plan_data=self.plan_data,
+                                dose_data=self.dose_data,
+                                structures=self.structures
+                            )
+                            
+                            # Tạo báo cáo
+                            report_path = plan_qa.generate_report(
+                                plan_name=self.plan_data.get('name', 'plan'),
+                                output_format=report_format
+                            )
+                            
+                            # Tạo trực quan hóa kết quả
+                            visualization_path = os.path.join(os.path.dirname(report_path), 
+                                                            f"qa_visualization_{os.path.basename(report_path).split('.')[0]}.png")
+                            plan_qa.visualize_results(display=False, save_path=visualization_path)
+                            
+                            # Cập nhật UI trong luồng chính
+                            qa_window.after(100, lambda: update_kbp_results(qa_results, report_path, visualization_path))
+                        except Exception as e:
+                            qa_window.after(100, lambda: handle_qa_error(str(e)))
+                        finally:
+                            qa_window.after(100, lambda: progress_window.destroy())
+                    
+                    # Bắt đầu luồng
+                    threading.Thread(target=qa_thread).start()
+                    
+                except Exception as error:
+                    logger.error(f"Lỗi khi chạy kiểm tra QA dựa trên KBP: {str(error)}")
+                    messagebox.showerror("Lỗi", f"Không thể chạy kiểm tra QA: {str(error)}")
+            
+            # Hàm cập nhật kết quả từ QA dựa trên KBP
+            def update_kbp_results(qa_results, report_path, visualization_path):
+                results_text.config(state=tk.NORMAL)
+                results_text.delete(1.0, tk.END)
+                
+                # Hiển thị tiêu đề
+                results_text.insert(tk.END, "KẾT QUẢ KIỂM TRA CHẤT LƯỢNG KẾ HOẠCH DỰA TRÊN KBP\n", "title")
+                results_text.insert(tk.END, "=" * 60 + "\n\n")
+                
+                # Tính tổng kết
+                total_checks = len(qa_results)
+                passed_checks = sum(1 for result in qa_results if result.is_passed)
+                pass_percent = (passed_checks / total_checks * 100) if total_checks > 0 else 0
+                
+                # Tổng quan
+                passed_status = "ĐẠT" if passed_checks/total_checks >= 0.8 else "KHÔNG ĐẠT"
+                results_text.insert(tk.END, f"Tổng số kiểm tra: {total_checks}\n")
+                results_text.insert(tk.END, f"Số kiểm tra đạt: {passed_checks} ({pass_percent:.1f}%)\n")
+                results_text.insert(tk.END, f"Kết quả tổng thể: {passed_status}\n\n", "subtitle")
+                
+                # Sắp xếp kết quả theo mức độ quan trọng và trạng thái
+                sorted_results = sorted(qa_results, key=lambda x: (x.importance, not x.is_passed), reverse=True)
+                
+                # Chi tiết từng kiểm tra
+                results_text.insert(tk.END, "CHI TIẾT KIỂM TRA:\n", "subtitle")
+                
+                for result in sorted_results:
+                    status = "✓" if result.is_passed else "✗"
+                    tag = "passed" if result.is_passed else "failed"
+                    
+                    results_text.insert(tk.END, f"{status} ", tag)
+                    results_text.insert(tk.END, f"{result.structure_name} - {result.metric_name}: ")
+                    results_text.insert(tk.END, f"{result.actual_value:.2f} ")
+                    results_text.insert(tk.END, f"(dự báo: {result.predicted_value:.2f}, ")
+                    results_text.insert(tk.END, f"Δ: {result.delta:.2f}, {result.delta_percent:.1f}%)\n")
+                
+                if report_path:
+                    results_text.insert(tk.END, f"\nBáo cáo đã được lưu tại: {report_path}\n")
+                    
+                # Thêm nút để mở báo cáo
+                if report_path and os.path.exists(report_path):
+                    def open_report():
+                        import subprocess
+                        import platform
+                        
+                        system = platform.system()
+                        if system == 'Windows':
+                            os.startfile(report_path)
+                        elif system == 'Darwin':  # macOS
+                            subprocess.call(['open', report_path])
+                        else:  # Linux
+                            subprocess.call(['xdg-open', report_path])
+                    
+                    open_button = ttk.Button(buttons_frame, text="Mở báo cáo", command=open_report)
+                    open_button.pack(side=tk.LEFT, padx=5)
+                
+                # Thiết lập tags
+                results_text.tag_configure("title", font=("Helvetica", 12, "bold"))
+                results_text.tag_configure("subtitle", font=("Helvetica", 10, "bold"))
+                results_text.tag_configure("passed", foreground="green", font=("Helvetica", 10, "bold"))
+                results_text.tag_configure("failed", foreground="red", font=("Helvetica", 10, "bold"))
+                
+                results_text.config(state=tk.DISABLED)
+                
+                # Hiển thị thông báo thành công
+                messagebox.showinfo("Thành công", "Đã hoàn thành kiểm tra QA dựa trên KBP")
+            
+            # Hàm cập nhật kết quả từ QA truyền thống
             def update_results(results):
                 results_text.config(state=tk.NORMAL)
                 results_text.delete(1.0, tk.END)
@@ -2899,6 +4205,10 @@ class PlanDesignWindow:
                 results_text.tag_configure("failed", foreground="red", font=("Helvetica", 10, "bold"))
                 
                 results_text.config(state=tk.DISABLED)
+            
+            def handle_qa_error(error_message):
+                logger.error(f"Lỗi khi chạy kiểm tra QA: {error_message}")
+                messagebox.showerror("Lỗi", f"Không thể chạy kiểm tra QA: {error_message}")
             
             # Nút Chạy QA
             ttk.Button(buttons_frame, text="Chạy kiểm tra QA", command=run_qa_check).pack(side=tk.LEFT, padx=5)

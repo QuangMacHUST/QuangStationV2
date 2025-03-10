@@ -32,8 +32,55 @@ class RTTechnique:
         return getattr(self, "beams", {})
         
     def create_plan(self, structures: Dict[str, np.ndarray]) -> Dict:
-        """Tạo kế hoạch xạ trị dựa trên các cấu trúc"""
-        raise NotImplementedError("Subclasses must implement this method")
+        """
+        Tạo kế hoạch xạ trị dựa trên các cấu trúc.
+        Phương thức cơ sở này cung cấp các thông tin cơ bản cho kế hoạch.
+        Các lớp con có thể mở rộng phương thức này để cung cấp thêm chức năng đặc thù.
+        
+        Args:
+            structures: Dictionary chứa các cấu trúc (key: tên cấu trúc, value: mảng numpy)
+            
+        Returns:
+            Dictionary chứa thông tin kế hoạch cơ bản
+        """
+        # Tạo khung kế hoạch cơ bản
+        plan = {
+            "technique": self.name,
+            "description": self.description,
+            "beams": getattr(self, "beams", []),
+            "prescription": {
+                "dose": self.prescription_dose,
+                "fractions": self.fractions
+            },
+            "isocenter": self.isocenter,
+            "metadata": self.metadata
+        }
+        
+        # Tự động xác định tâm xạ trị nếu chưa được thiết lập
+        if not any(self.isocenter) and structures:
+            # Tìm cấu trúc PTV
+            ptv_key = None
+            for key in structures.keys():
+                if "ptv" in key.lower():
+                    ptv_key = key
+                    break
+            
+            # Nếu tìm thấy PTV, sử dụng tâm của nó làm tâm xạ trị
+            if ptv_key:
+                ptv = structures[ptv_key]
+                # Tính toán tâm của PTV
+                if hasattr(ptv, "shape") and len(ptv.shape) == 3:
+                    z_indices, y_indices, x_indices = np.where(ptv > 0)
+                    if len(z_indices) > 0:
+                        center_z = np.mean(z_indices)
+                        center_y = np.mean(y_indices)
+                        center_x = np.mean(x_indices)
+                        self.isocenter = [center_x, center_y, center_z]
+                        plan["isocenter"] = self.isocenter
+                        logger.info(f"Đã tự động xác định tâm xạ trị tại {self.isocenter}")
+        
+        logger.info(f"Đã tạo kế hoạch xạ trị {self.name}")
+        return plan
 
     def set_isocenter(self, position: List[float]):
         """

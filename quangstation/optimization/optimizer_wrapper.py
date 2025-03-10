@@ -218,19 +218,58 @@ class PlanOptimizer:
         return self.optimized_weights
     
     def _optimize_cpp(self) -> List[float]:
-        """
-        Tối ưu hóa sử dụng module C++
-        
-        Returns:
-            Danh sách trọng số chùm tia tối ưu
-        """
-        # Thực hiện tối ưu hóa
-        if self.algorithm == self.ALGO_GRADIENT:
-            self._algo.optimize()
-            # Lấy trọng số tối ưu
-            return self._algo.get_optimized_weights()
-        elif self.algorithm == self.ALGO_GENETIC:
-            return self._algo.optimize()
+        """Thực hiện tối ưu hóa sử dụng module C++"""
+        if not HAS_CPP_MODULE:
+            return self._optimize_python()
+            
+        try:
+            if self.algorithm == self.ALGO_GRADIENT:
+                # Chuyển đổi dữ liệu sang C++
+                optimizer = GradientOptimizer.convert_python_data(
+                    self.dose_matrices[0],
+                    self.structures,
+                    self.objectives,
+                    {
+                        "learning_rate": self.learning_rate,
+                        "max_iterations": self.max_iterations,
+                        "convergence_threshold": self.convergence_threshold
+                    }
+                )
+                
+                # Kiểm tra xem đã tạo được optimizer chưa
+                if optimizer is None:
+                    raise ValueError("Không thể tạo optimizer C++")
+                
+                try:
+                    # Tạo đối tượng kết quả
+                    result = {}
+                    
+                    # Thực hiện tối ưu hóa
+                    success = GradientOptimizer.run_optimization(optimizer, result)
+                    
+                    if not success:
+                        raise ValueError("Tối ưu hóa C++ thất bại")
+                    
+                    # Lấy trọng số tối ưu
+                    weights = result.get("weights", [])
+                    
+                    # Cập nhật thông tin
+                    self.objective_values = result.get("objective_values", [])
+                    self.optimized_dose = result.get("optimized_dose", None)
+                    
+                    return weights
+                finally:
+                    # Giải phóng bộ nhớ
+                    GradientOptimizer.free_optimizer(optimizer)
+                    
+            elif self.algorithm == self.ALGO_GENETIC:
+                # Tương tự cho thuật toán di truyền
+                pass
+                
+        except Exception as e:
+            logger.error(f"Lỗi khi tối ưu hóa C++: {str(e)}")
+            # Fallback sang phiên bản Python
+            return self._optimize_python()
     
     def _optimize_python(self) -> List[float]:
         """

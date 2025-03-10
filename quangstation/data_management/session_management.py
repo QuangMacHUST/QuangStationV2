@@ -1,3 +1,10 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Module quản lý phiên làm việc cho QuangStation V2.
+"""
+
 import os
 import json
 import datetime
@@ -5,6 +12,8 @@ import shutil
 import sys
 import numpy as np
 from quangstation.data_management.patient_db import PatientDatabase
+import time
+from quangstation.utils.logging import get_logger
 
 # Sửa lỗi import pydicom
 try:
@@ -21,6 +30,8 @@ except ImportError:
     from pydicom.sequence import Sequence
     from pydicom.uid import generate_uid
 import tempfile
+
+logger = get_logger(__name__)
 
 """
 Module này quản lý phiên làm việc, lưu và tải kế hoạch xạ trị sử dụng định dạng DICOM
@@ -135,8 +146,6 @@ class SessionManager:
             return full_path
             
         except Exception as error:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.error(f"Lỗi khi tạo file DICOM: {str(error)}", include_traceback=True)
             raise ValueError(f"Không thể tạo file DICOM: {str(error)}")
     
@@ -195,8 +204,6 @@ class SessionManager:
                         if shape_str.endswith(','):
                             shape = shape + (1,)
                 except Exception as error:
-                    from quangstation.utils.logging import get_logger
-                    logger = get_logger()
                     logger.error(f"Lỗi khi phân tích shape: {shape_str}, lỗi: {str(error)}")
                     return None
                 
@@ -213,8 +220,6 @@ class SessionManager:
                     
                     return arr
                 except Exception as error:
-                    from quangstation.utils.logging import get_logger
-                    logger = get_logger()
                     logger.error(f"Lỗi khi tạo lại mảng numpy: {str(error)}")
                     return None
             
@@ -224,14 +229,10 @@ class SessionManager:
                 return string_data
             
             else:
-                from quangstation.utils.logging import get_logger
-                logger = get_logger()
                 logger.warning(f"Không xác định được kiểu dữ liệu: {data_type}")
                 return None
         
         except Exception as error:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.error(f"Lỗi khi đọc file DICOM {file_path}: {str(error)}")
             return None
     
@@ -252,8 +253,6 @@ class SessionManager:
             if not patient_id:
                 patient_id = metadata.get('patient_id', self.current_patient_id)
                 if not patient_id:
-                    from quangstation.utils.logging import get_logger
-                    logger = get_logger()
                     logger.error("Không tìm thấy patient_id trong metadata và không được cung cấp")
                     return None
             
@@ -287,15 +286,11 @@ class SessionManager:
             self.current_patient_id = patient_id
             self.current_plan_id = plan_id
             
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.info(f"Đã lưu metadata kế hoạch: {plan_id}")
             
             return plan_id
             
         except Exception as error:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.error(f"Lỗi khi lưu metadata kế hoạch: {str(error)}")
             return None
     
@@ -368,6 +363,55 @@ class SessionManager:
         
         return True
     
+    def update_plan_optimization(self, patient_id, plan_id, optimization_result):
+        """
+        Cập nhật kế hoạch với kết quả tối ưu hóa
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            plan_id: ID của kế hoạch
+            optimization_result: Kết quả tối ưu hóa từ PlanOptimizer
+            
+        Returns:
+            bool: True nếu cập nhật thành công, False nếu không
+        """
+        try:
+            # Lưu trạng thái hiện tại
+            current_patient = self.current_patient_id
+            current_plan = self.current_plan_id
+            
+            # Chuyển sang kế hoạch cần cập nhật
+            self.load_session(patient_id, plan_id)
+            
+            # Lưu kết quả tối ưu hóa
+            self.save_optimization_results(optimization_result)
+            
+            # Cập nhật trạng thái kế hoạch
+            plan_metadata = self.get_plan_summary(patient_id, plan_id)
+            if plan_metadata:
+                # Cập nhật trạng thái
+                plan_metadata["optimization_status"] = "completed"
+                plan_metadata["optimization_timestamp"] = time.time()
+                plan_metadata["optimization_summary"] = {
+                    "initial_objective": optimization_result.get("initial_objective", 0),
+                    "final_objective": optimization_result.get("final_objective", 0),
+                    "iterations": optimization_result.get("iterations", 0),
+                    "runtime": optimization_result.get("runtime", 0)
+                }
+                
+                # Lưu metadata đã cập nhật
+                self.save_plan_metadata(plan_metadata)
+            
+            # Khôi phục trạng thái trước đó nếu cần
+            if current_patient != patient_id or current_plan != plan_id:
+                self.load_session(current_patient, current_plan)
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật kế hoạch với kết quả tối ưu hóa: {str(e)}")
+            return False
+    
     def save_screenshot(self, image_data, filename="screenshot.png"):
         """Lưu ảnh chụp màn hình dưới dạng DICOM Secondary Capture"""
         if not self.current_patient_id or not self.current_plan_id:
@@ -405,9 +449,6 @@ class SessionManager:
     def load_session(self, patient_id, plan_id):
         """Tải phiên làm việc từ thư mục workspace."""
         try:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
-            
             session_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
             
             if not os.path.exists(session_dir):
@@ -476,8 +517,6 @@ class SessionManager:
             }
         
         except Exception as error:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.error(f"Lỗi khi tải phiên: {str(error)}", include_traceback=True)
             raise
     
@@ -558,36 +597,98 @@ class SessionManager:
             print(f"Lỗi khi xóa kế hoạch: {error}")
             return False
     
-    def export_plan(self, output_dir, include_screenshots=True):
-        """Xuất kế hoạch hiện tại ra thư mục khác"""
-        if not self.current_patient_id or not self.current_plan_id:
-            raise ValueError("Chưa tạo phiên làm việc")
+    def export_plan(self, export_folder, include_screenshots=False):
+        """
+        Xuất kế hoạch ra định dạng JSON
         
-        plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-        
-        # Tạo thư mục đích nếu chưa tồn tại
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        # Sao chép các file từ plan_dir sang output_dir
-        for item in os.listdir(plan_dir):
-            src_path = os.path.join(plan_dir, item)
-            dst_path = os.path.join(output_dir, item)
+        Args:
+            export_folder: Thư mục xuất ra
+            include_screenshots: Có xuất ảnh chụp màn hình không
             
-            if os.path.isfile(src_path):
-                shutil.copy2(src_path, dst_path)
-            elif os.path.isdir(src_path) and item == "screenshots" and include_screenshots:
-                # Sao chép thư mục screenshots nếu có và được yêu cầu
-                if not os.path.exists(dst_path):
-                    os.makedirs(dst_path)
+        Returns:
+            bool: True nếu thành công, False nếu thất bại
+        """
+        try:
+            if not self.current_patient_id or not self.current_plan_id:
+                logger.warning("Chưa chọn bệnh nhân hoặc kế hoạch")
+                return False
                 
-                for screenshot in os.listdir(src_path):
-                    src_screenshot = os.path.join(src_path, screenshot)
-                    dst_screenshot = os.path.join(dst_path, screenshot)
-                    if os.path.isfile(src_screenshot):
-                        shutil.copy2(src_screenshot, dst_screenshot)
-        
-        return True
+            # Tạo thư mục xuất nếu chưa có
+            os.makedirs(export_folder, exist_ok=True)
+            
+            # Thư mục kế hoạch hiện tại
+            plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
+            
+            # Xuất thông tin kế hoạch
+            plan_data = self.get_plan_summary(self.current_patient_id, self.current_plan_id)
+            if plan_data:
+                plan_json_file = os.path.join(export_folder, "plan_info.json")
+                with open(plan_json_file, 'w', encoding='utf-8') as f:
+                    json.dump(plan_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"Đã xuất thông tin kế hoạch sang {plan_json_file}")
+            
+            # Xuất cấu hình kế hoạch
+            plan_config = self.get_plan_config(self.current_patient_id, self.current_plan_id)
+            if plan_config:
+                config_json_file = os.path.join(export_folder, "plan_config.json")
+                with open(config_json_file, 'w', encoding='utf-8') as f:
+                    json.dump(plan_config.to_dict(), f, ensure_ascii=False, indent=2)
+                logger.info(f"Đã xuất cấu hình kế hoạch sang {config_json_file}")
+            
+            # Xuất dữ liệu cấu trúc
+            structure_data = self.get_structure_data(self.current_patient_id, self.current_plan_id)
+            if structure_data:
+                struct_json_file = os.path.join(export_folder, "structures.json")
+                with open(struct_json_file, 'w', encoding='utf-8') as f:
+                    json.dump(structure_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"Đã xuất dữ liệu cấu trúc sang {struct_json_file}")
+            
+            # Xuất dữ liệu liều
+            dose_data = self.get_dose_data(self.current_patient_id, self.current_plan_id)
+            if dose_data:
+                dose_json_file = os.path.join(export_folder, "dose.json")
+                with open(dose_json_file, 'w', encoding='utf-8') as f:
+                    json.dump(dose_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"Đã xuất dữ liệu liều sang {dose_json_file}")
+            
+            # Xuất ảnh chụp màn hình nếu được yêu cầu
+            if include_screenshots:
+                # Tạo thư mục ảnh
+                screenshots_dir = os.path.join(export_folder, "screenshots")
+                os.makedirs(screenshots_dir, exist_ok=True)
+                
+                # Xuất ảnh từ thư mục kế hoạch
+                screenshots_src_dir = os.path.join(plan_dir, "screenshots")
+                if os.path.exists(screenshots_src_dir):
+                    for file in os.listdir(screenshots_src_dir):
+                        if file.endswith(('.png', '.jpg', '.jpeg')):
+                            src_file = os.path.join(screenshots_src_dir, file)
+                            dst_file = os.path.join(screenshots_dir, file)
+                            shutil.copy2(src_file, dst_file)
+                    logger.info(f"Đã xuất ảnh chụp màn hình sang {screenshots_dir}")
+            
+            # Tạo file README
+            readme_file = os.path.join(export_folder, "README.txt")
+            with open(readme_file, 'w', encoding='utf-8') as f:
+                f.write(f"Kế hoạch xạ trị: {plan_data.get('name', 'Không tên')}\n")
+                f.write(f"ID: {self.current_plan_id}\n")
+                f.write(f"Bệnh nhân: {plan_data.get('patient_name', 'Không tên')}\n")
+                f.write(f"Ngày xuất: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write("Nội dung:\n")
+                f.write("- plan_info.json: Thông tin kế hoạch\n")
+                f.write("- plan_config.json: Cấu hình kế hoạch\n")
+                f.write("- structures.json: Dữ liệu cấu trúc\n")
+                if dose_data:
+                    f.write("- dose.json: Dữ liệu liều\n")
+                if include_screenshots:
+                    f.write("- screenshots/: Thư mục chứa ảnh chụp màn hình\n")
+            
+            logger.info(f"Đã xuất kế hoạch thành công sang {export_folder}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi xuất kế hoạch: {str(e)}")
+            return False
     
     def duplicate_plan(self, patient_id, plan_id, new_plan_name=None):
         """
@@ -656,15 +757,11 @@ class SessionManager:
                     json.dump(metadata, f, ensure_ascii=False, indent=2)
             
             # Ghi log
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.info(f"Đã sao chép kế hoạch {plan_id} thành kế hoạch mới {new_plan_id}")
             
             return new_plan_id
             
         except Exception as error:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger()
             logger.error(f"Lỗi khi sao chép kế hoạch: {str(error)}", include_traceback=True)
             return None
     
@@ -715,39 +812,287 @@ class SessionManager:
             patient_id = self.current_patient_id
         if plan_id is None:
             plan_id = self.current_plan_id
-        
+            
         if not patient_id or not plan_id:
-            raise ValueError("Chưa chọn kế hoạch")
-        
+            return None
+            
+        # Thử đọc từ file JSON
         plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        if not os.path.exists(plan_dir):
-            raise FileNotFoundError(f"Không tìm thấy kế hoạch: {plan_id}")
-        
-        # Tải metadata từ file JSON (định dạng mới)
-        metadata_json_file = os.path.join(plan_dir, "plan_metadata.json")
-        if os.path.exists(metadata_json_file):
+        json_file = os.path.join(plan_dir, "plan_metadata.json")
+        if os.path.exists(json_file):
             try:
-                with open(metadata_json_file, 'r', encoding='utf-8') as f:
+                with open(json_file, 'r') as f:
                     return json.load(f)
             except Exception as error:
-                from quangstation.utils.logging import get_logger
-                logger = get_logger()
                 logger.error(f"Lỗi khi đọc plan_metadata.json: {str(error)}")
         
-        # Thử tải metadata từ DICOM (định dạng cũ)
+        # Thử đọc từ file DICOM
         metadata_file = os.path.join(plan_dir, "metadata.dcm")
         if os.path.exists(metadata_file):
             try:
                 return self._load_dicom_data(metadata_file)
             except Exception as error:
-                from quangstation.utils.logging import get_logger
-                logger = get_logger()
                 logger.error(f"Lỗi khi đọc metadata.dcm: {str(error)}")
         
-        # Nếu không tìm thấy metadata, trả về thông tin tối thiểu
-        return {
-            "plan_id": plan_id,
-            "patient_id": patient_id,
-            "plan_name": "Không rõ tên",
-            "created_at": os.path.getctime(plan_dir)
-        }
+        return None
+    
+    def get_structure_data(self, patient_id=None, plan_id=None):
+        """
+        Lấy dữ liệu cấu trúc cho kế hoạch
+        
+        Args:
+            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
+            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
+            
+        Returns:
+            Dict: Dữ liệu cấu trúc hoặc None nếu không tìm thấy
+        """
+        if patient_id is None:
+            patient_id = self.current_patient_id
+        if plan_id is None:
+            plan_id = self.current_plan_id
+            
+        if not patient_id or not plan_id:
+            return None
+            
+        # Đường dẫn đến thư mục kế hoạch
+        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+        
+        # Thử đọc từ file DICOM
+        structure_file = os.path.join(plan_dir, "structures.dcm")
+        if os.path.exists(structure_file):
+            try:
+                return self._load_dicom_data(structure_file)
+            except Exception as error:
+                logger.error(f"Lỗi khi đọc structures.dcm: {str(error)}")
+        
+        # Thử đọc từ file JSON
+        json_file = os.path.join(plan_dir, "structures.json")
+        if os.path.exists(json_file):
+            try:
+                with open(json_file, 'r') as f:
+                    return json.load(f)
+            except Exception as error:
+                logger.error(f"Lỗi khi đọc structures.json: {str(error)}")
+        
+        return None
+    
+    def get_dose_data(self, patient_id=None, plan_id=None):
+        """
+        Lấy dữ liệu liều cho kế hoạch
+        
+        Args:
+            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
+            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
+            
+        Returns:
+            Dict: Dữ liệu liều hoặc None nếu không tìm thấy
+        """
+        if patient_id is None:
+            patient_id = self.current_patient_id
+        if plan_id is None:
+            plan_id = self.current_plan_id
+            
+        if not patient_id or not plan_id:
+            return None
+            
+        # Đường dẫn đến thư mục kế hoạch
+        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+        
+        # Thử đọc từ file DICOM
+        dose_file = os.path.join(plan_dir, "dose.dcm")
+        if os.path.exists(dose_file):
+            try:
+                return self._load_dicom_data(dose_file)
+            except Exception as error:
+                logger.error(f"Lỗi khi đọc dose.dcm: {str(error)}")
+        
+        # Thử đọc từ file JSON
+        json_file = os.path.join(plan_dir, "dose.json")
+        if os.path.exists(json_file):
+            try:
+                with open(json_file, 'r') as f:
+                    return json.load(f)
+            except Exception as error:
+                logger.error(f"Lỗi khi đọc dose.json: {str(error)}")
+        
+        return None
+    
+    def get_structure_list(self, patient_id=None, plan_id=None):
+        """
+        Lấy danh sách các cấu trúc trong kế hoạch
+        
+        Args:
+            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
+            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
+            
+        Returns:
+            List: Danh sách các cấu trúc hoặc danh sách rỗng nếu không tìm thấy
+        """
+        structure_data = self.get_structure_data(patient_id, plan_id)
+        if not structure_data:
+            return []
+            
+        structures = []
+        
+        # Lấy danh sách cấu trúc
+        if "structures" in structure_data:
+            for name, struct in structure_data["structures"].items():
+                structure_info = {
+                    "name": name,
+                    "type": struct.get("type", "Unknown"),
+                    "color": struct.get("color", "#FFFFFF"),
+                    "volume": struct.get("volume", 0)
+                }
+                structures.append(structure_info)
+        
+        return structures
+    
+    def has_dose_calculation(self, patient_id=None, plan_id=None):
+        """
+        Kiểm tra xem kế hoạch đã có dữ liệu liều chưa
+        
+        Args:
+            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
+            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
+            
+        Returns:
+            bool: True nếu đã có dữ liệu liều, False nếu chưa
+        """
+        dose_data = self.get_dose_data(patient_id, plan_id)
+        return dose_data is not None and (
+            "dose_matrix" in dose_data or 
+            "dose_grid" in dose_data
+        )
+    
+    def has_contours(self, patient_id=None, plan_id=None):
+        """
+        Kiểm tra xem kế hoạch đã có contour chưa
+        
+        Args:
+            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
+            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
+            
+        Returns:
+            bool: True nếu đã có contour, False nếu chưa
+        """
+        structure_data = self.get_structure_data(patient_id, plan_id)
+        if not structure_data:
+            return False
+            
+        # Kiểm tra xem có cấu trúc nào không
+        if "structures" in structure_data and structure_data["structures"]:
+            return len(structure_data["structures"]) > 0
+            
+        return False
+    
+    def get_contour_tools(self):
+        """
+        Lấy đối tượng ContourTools hiện tại
+        
+        Returns:
+            ContourTools: Đối tượng ContourTools hoặc None nếu chưa có
+        """
+        if hasattr(self, 'contour_tools'):
+            return self.contour_tools
+        return None
+    
+    def set_contour_tools(self, contour_tools):
+        """
+        Thiết lập đối tượng ContourTools
+        
+        Args:
+            contour_tools: Đối tượng ContourTools
+        """
+        self.contour_tools = contour_tools
+    
+    def save_contours(self):
+        """
+        Lưu contour vào session
+        
+        Returns:
+            bool: True nếu thành công, False nếu thất bại
+        """
+        try:
+            if not hasattr(self, 'contour_tools') or self.contour_tools is None:
+                logger.warning("Không có contour để lưu")
+                return False
+                
+            if not self.current_patient_id or not self.current_plan_id:
+                logger.warning("Chưa chọn bệnh nhân hoặc kế hoạch")
+                return False
+                
+            # Lấy dữ liệu contour
+            contours = self.contour_tools.get_all_contours()
+            
+            # Tạo cấu trúc dữ liệu
+            structure_data = {
+                "structures": {}
+            }
+            
+            # Thêm từng contour vào dữ liệu
+            for name, contour in contours.items():
+                structure_data["structures"][name] = {
+                    "contour_data": contour,
+                    "color": self.contour_tools.get_color(name),
+                    "type": self.contour_tools.get_type(name)
+                }
+            
+            # Lưu vào file
+            plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
+            os.makedirs(plan_dir, exist_ok=True)
+            
+            # Lưu dưới dạng JSON
+            json_file = os.path.join(plan_dir, "structures.json")
+            with open(json_file, 'w') as f:
+                json.dump(structure_data, f)
+            
+            logger.info(f"Đã lưu contour vào {json_file}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi lưu contour: {str(e)}")
+            return False
+    
+    def get_plan_config(self, patient_id=None, plan_id=None):
+        """
+        Lấy cấu hình kế hoạch
+        
+        Args:
+            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
+            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
+            
+        Returns:
+            PlanConfig: Đối tượng PlanConfig hoặc None nếu không tìm thấy
+        """
+        if patient_id is None:
+            patient_id = self.current_patient_id
+        if plan_id is None:
+            plan_id = self.current_plan_id
+            
+        if not patient_id or not plan_id:
+            return None
+            
+        # Đường dẫn đến thư mục kế hoạch
+        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
+        
+        # Thử đọc từ file JSON
+        json_file = os.path.join(plan_dir, "plan_config.json")
+        if os.path.exists(json_file):
+            try:
+                with open(json_file, 'r') as f:
+                    config_data = json.load(f)
+                    
+                # Tạo đối tượng PlanConfig
+                from quangstation.planning.plan_config import PlanConfig
+                config = PlanConfig()
+                
+                # Cập nhật từ dữ liệu JSON
+                for key, value in config_data.items():
+                    setattr(config, key, value)
+                    
+                return config
+            except Exception as error:
+                logger.error(f"Lỗi khi đọc plan_config.json: {str(error)}")
+        
+        return None

@@ -28,9 +28,8 @@ class DVHCalculator:
     """
     
     def __init__(self):
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        structure_mask = np.zeros_like(self.volume)
         """Khởi tạo DVH Calculator"""
+        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
         self.structures = {}  # Dict lưu trữ mặt nạ cấu trúc
         self.dose_data = None  # Dữ liệu liều 3D
         self.dose_grid_scaling = 1.0  # Hệ số nhân liều (Gy)

@@ -639,15 +639,58 @@ class GoalBasedOptimizer:
             return ci_penalty
         
         elif goal.goal_type == OptimizationGoal.TYPE_DOSE_FALL_OFF:
-            # Do doc cua lieu: gradient
+            # Tính độ dốc của liều: gradient
             if self.voxel_sizes is None:
-                logger.warning("Khong co thong tin kich thuoc voxel cho tinh toan do doc lieu")
+                logger.warning("Không có thông tin kích thước voxel cho tính toán độ dốc liều")
                 return 0.0
             
-            # Tinh do doc trung binh tai bien cua cau truc
-            # TODO: Implement dose falloff calculation
-            
-            return 0.0
+            # Tính độ dốc trung bình tại biên của cấu trúc
+            try:
+                # Lấy mask của cấu trúc
+                structure_mask = self.structures.get(goal.structure_name)
+                
+                if structure_mask is None:
+                    logger.warning(f"Không tìm thấy cấu trúc {goal.structure_name} để tính độ dốc liều")
+                    return 0.0
+                
+                # Tìm biên của cấu trúc
+                from scipy import ndimage
+                
+                # Sử dụng phép xói mòn để xác định biên
+                eroded = ndimage.binary_erosion(structure_mask)
+                boundary = structure_mask & ~eroded
+                
+                # Tính gradient của trường liều
+                grad_x = ndimage.sobel(dose_matrix, axis=0) / self.voxel_sizes[0]
+                grad_y = ndimage.sobel(dose_matrix, axis=1) / self.voxel_sizes[1]
+                grad_z = ndimage.sobel(dose_matrix, axis=2) / self.voxel_sizes[2]
+                
+                # Tính độ lớn của gradient
+                gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2 + grad_z**2)
+                
+                # Tính giá trị trung bình của gradient trên biên
+                boundary_gradients = gradient_magnitude[boundary]
+                
+                if len(boundary_gradients) == 0:
+                    logger.warning(f"Không có voxel biên nào cho cấu trúc {goal.structure_name}")
+                    return 0.0
+                
+                # Tính độ chênh lệch giữa độ dốc trung bình thực tế và mục tiêu
+                mean_gradient = np.mean(boundary_gradients)
+                target_gradient = goal.dose_value  # Gy/cm
+                
+                # Tính giá trị chất lượng (càng gần 0 càng tốt)
+                quality = np.abs(mean_gradient - target_gradient) / target_gradient
+                
+                logger.info(f"Dose falloff cho {goal.structure_name}: thực tế={mean_gradient:.2f} Gy/cm, mục tiêu={target_gradient:.2f} Gy/cm")
+                
+                return quality
+                
+            except Exception as e:
+                logger.error(f"Lỗi khi tính toán dose falloff: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return 0.0
         
         return 0.0
     

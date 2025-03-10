@@ -13,8 +13,6 @@ class MLCModel:
     """Lớp cơ sở cho các mô hình MLC khác nhau"""
     
     def __init__(self, name: str, leaf_count: int = 60, leaf_width: float = 5.0):
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        structure_mask = np.zeros_like(self.volume)
         """
         Khởi tạo mô hình MLC
         

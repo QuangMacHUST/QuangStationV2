@@ -79,8 +79,64 @@ class SegmentationModel:
             return False
     
     def preprocess(self, image: np.ndarray) -> Union[np.ndarray, torch.Tensor]:
-        """Tiền xử lý hình ảnh đầu vào."""
-        raise NotImplementedError("Phương thức này cần được ghi đè trong lớp con")
+        """
+        Tiền xử lý hình ảnh đầu vào để chuẩn bị cho quá trình phân đoạn.
+        Base implementation cung cấp các bước tiền xử lý cơ bản.
+        
+        Args:
+            image: Hình ảnh đầu vào dưới dạng numpy array 3D (Z, Y, X)
+            
+        Returns:
+            Tensor hoặc numpy array đã được tiền xử lý
+        """
+        import torch
+        self.logger.debug(f"Tiền xử lý hình ảnh kích thước: {image.shape}")
+        
+        # 1. Chuẩn hóa giá trị HU về khoảng [-1, 1]
+        # Thông thường HU trong khoảng [-1000, 3000]
+        image = np.clip(image, -1000, 3000)
+        image = (image + 1000) / 4000 * 2 - 1
+        
+        # 2. Đảm bảo kích thước phù hợp với mô hình
+        # Thông thường, mô hình U-Net yêu cầu đầu vào có kích thước là lũy thừa của 2
+        target_size = (256, 256, 256)  # Kích thước mục tiêu
+        
+        # Crop hoặc pad hình ảnh để có kích thước phù hợp
+        current_shape = image.shape
+        pad_width = []
+        
+        for i in range(3):
+            if i < len(current_shape):
+                diff = target_size[i] - current_shape[i]
+                # Nếu kích thước hiện tại nhỏ hơn kích thước mục tiêu, thêm padding
+                if diff > 0:
+                    pad_before = diff // 2
+                    pad_after = diff - pad_before
+                    pad_width.append((pad_before, pad_after))
+                # Nếu kích thước hiện tại lớn hơn, cắt bớt
+                elif diff < 0:
+                    crop_before = abs(diff) // 2
+                    pad_width.append((-crop_before, crop_before + diff))
+                else:
+                    pad_width.append((0, 0))
+            else:
+                # Nếu không có chiều này, thêm mới hoàn toàn
+                pad_width.append((0, target_size[i]))
+        
+        # Áp dụng padding hoặc cropping
+        processed_image = np.pad(image, pad_width, mode='constant', constant_values=-1)
+        
+        # 3. Thêm chiều batch và channel nếu cần thiết
+        processed_image = np.expand_dims(processed_image, axis=0)  # Thêm chiều batch
+        processed_image = np.expand_dims(processed_image, axis=0)  # Thêm chiều channel
+        
+        # 4. Chuyển đổi thành tensor PyTorch
+        processed_tensor = torch.from_numpy(processed_image).float().to(self.device)
+        
+        self.logger.debug(f"Kết quả tiền xử lý: tensor kích thước {processed_tensor.shape}")
+        self.original_shape = current_shape  # Lưu lại kích thước gốc để sử dụng trong postprocessing
+        
+        return processed_tensor
     
     def predict(self, image: np.ndarray) -> np.ndarray:
         """Thực hiện phân đoạn trên hình ảnh đầu vào."""
