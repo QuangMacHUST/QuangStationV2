@@ -13,9 +13,11 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 import shutil
 import pickle
+from pathlib import Path
 
 from quangstation.utils.logging import get_logger
 from quangstation.utils.config import get_config
+from quangstation.io.dicom_export_rt import export_dicom_data as export_plan_to_dicom
 
 logger = get_logger(__name__)
 
@@ -608,22 +610,11 @@ class PlanManager:
         # Tạo thư mục đầu ra nếu chưa tồn tại
         os.makedirs(output_dir, exist_ok=True)
         
-        # Import module DICOM
-        try:
-            from quangstation.io.dicom_export import export_plan_to_dicom
-            
-            # Xuất kế hoạch sang DICOM
-            result = export_plan_to_dicom(plan, output_dir)
-            
-            logger.info(f"Đã xuất kế hoạch {plan_id} sang DICOM tại {output_dir}")
-            return result
-            
-        except ImportError:
-            logger.error("Module DICOM export không được tìm thấy")
-            raise ImportError("Module DICOM export không được tìm thấy")
-        except Exception as e:
-            logger.error(f"Lỗi khi xuất kế hoạch {plan_id} sang DICOM: {str(e)}")
-            raise
+        # Xuất kế hoạch sang DICOM
+        result = export_plan_to_dicom(plan, output_dir)
+        
+        logger.info(f"Đã xuất kế hoạch {plan_id} sang DICOM tại {output_dir}")
+        return result
     
     def import_plan_from_dicom(self, dicom_dir: str, patient_id: str) -> Optional[RTPlan]:
         """
@@ -636,28 +627,52 @@ class PlanManager:
         Returns:
             RTWPlan: Kế hoạch đã nhập, hoặc None nếu không thành công
         """
-        # Import module DICOM
+        from quangstation.io import import_plan_from_dicom
+        
         try:
-            from quangstation.io.dicom_import import import_plan_from_dicom
+            # Nhập dữ liệu từ DICOM
+            dicom_data = import_plan_from_dicom(dicom_dir)
             
-            # Nhập kế hoạch từ DICOM
-            plan_data = import_plan_from_dicom(dicom_dir, patient_id)
+            if not dicom_data:
+                logger.error("Không thể nhập dữ liệu từ DICOM")
+                return None
             
             # Tạo kế hoạch mới
-            plan = RTPlan(**plan_data)
+            plan_id = str(uuid.uuid4())
+            plan_name = dicom_data.get('plan', {}).get('name', f"Kế hoạch nhập từ DICOM {datetime.datetime.now().strftime('%Y-%m-%d')}")
+            
+            plan = RTPlan(plan_id=plan_id, patient_id=patient_id, name=plan_name)
+            
+            # Cập nhật thông tin kế hoạch từ dữ liệu DICOM
+            plan_info = dicom_data.get('plan', {})
+            plan.update(**plan_info)
+            
+            # Cập nhật cấu trúc
+            structures = dicom_data.get('structures', {})
+            for name, struct_data in structures.items():
+                if 'type' in struct_data:
+                    if struct_data['type'] == 'TARGET':
+                        plan.add_target(name, struct_data.get('target_type', 'PTV'), 
+                                       struct_data.get('prescribed_dose', 0.0),
+                                       struct_data.get('priority', 1))
+                    else:
+                        plan.add_oar(name, struct_data.get('constraints', {}))
+            
+            # Cập nhật dữ liệu liều nếu có
+            dose_data = dicom_data.get('dose', {}).get('data')
+            dose_metadata = dicom_data.get('dose', {}).get('metadata', {})
+            if dose_data is not None:
+                plan.set_dose_data(dose_data, dose_metadata)
             
             # Lưu kế hoạch
             self.save_plan(plan)
             
-            logger.info(f"Đã nhập kế hoạch từ DICOM: {plan}")
+            logger.info(f"Đã nhập kế hoạch từ DICOM thành công: {plan_id}")
             return plan
             
-        except ImportError:
-            logger.error("Module DICOM import không được tìm thấy")
-            raise ImportError("Module DICOM import không được tìm thấy")
         except Exception as e:
             logger.error(f"Lỗi khi nhập kế hoạch từ DICOM: {str(e)}")
-            raise
+            return None
 
 # Tạo instance mặc định
 plan_manager = PlanManager()

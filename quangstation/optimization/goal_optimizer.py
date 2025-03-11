@@ -162,6 +162,7 @@ class GoalBasedOptimizer:
         self.beam_dose_matrices = [] # Ma trận liều của mỗi chùm tia
         self.goals = []              # Danh sách các mục tiêu
         self.voxel_sizes = (0.2, 0.2, 0.2)  # Kích thước voxel (cm)
+        self.beam_weights = []       # Trọng số của các chùm tia (khởi tạo trống)
         
         # Tham số của thuật toán
         self.max_iterations = 200      # Số lần lặp tối đa

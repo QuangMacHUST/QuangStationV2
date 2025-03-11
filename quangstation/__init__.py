@@ -543,7 +543,21 @@ def get_resources_path():
     Returns:
         str: Đường dẫn đến thư mục resources
     """
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources")
+    import os
+    
+    # Thư mục resources nằm trong thư mục quangstation
+    resources_dir = os.path.join(os.path.dirname(__file__), "resources")
+    
+    # Tạo thư mục nếu chưa tồn tại
+    if not os.path.exists(resources_dir):
+        os.makedirs(resources_dir)
+        
+        # Tạo thư mục con cho ngôn ngữ
+        lang_dir = os.path.join(resources_dir, "lang")
+        if not os.path.exists(lang_dir):
+            os.makedirs(lang_dir)
+            
+    return resources_dir
 
 # Hàm hiển thị thông tin phiên bản
 def show_version():
@@ -731,7 +745,7 @@ def _lazy_import():
         from quangstation.integration import RTWorkflow, IntegrationManager, create_workflow, load_workflow
     except ImportError as e:
         if _logger:
-            _logger.warning(f"Không thể import một số module: {str(error)}")
+            _logger.warning(f"Không thể import một số module: {str(e)}")
 
 # Chỉ import khi cần
 if sys.argv[0].endswith("launcher.py") or __name__ != "__main__":

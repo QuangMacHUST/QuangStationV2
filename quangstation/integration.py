@@ -26,7 +26,7 @@ import json
 # Import các module hệ thống
 from quangstation.utils.logging import get_logger
 from quangstation.utils.config import get_config
-from quangstation.data_management.dicom_parser import DICOMParser
+from quangstation.io.dicom_parser import DICOMParser
 from quangstation.image_processing.image_loader import ImageLoader
 from quangstation.contouring.contour_tools import ContourTools
 from quangstation.image_processing.segmentation import Segmentation
@@ -36,6 +36,7 @@ from quangstation.plan_evaluation.dvh import DVHCalculator
 from quangstation.data_management.session_management import SessionManager
 from quangstation.data_management.patient_db import PatientDatabase
 from quangstation.planning.plan_config import PlanConfig
+from quangstation.io.dicom_export_rt import export_dicom_data as export_dicom_rt
 
 # Module log
 logger = get_logger("Integration")
@@ -82,13 +83,12 @@ class DataReceiver(Protocol):
 
 class RTWorkflow:
     """
-    Lớp tổng thể cho quy trình xạ trị, kết nối tất cả các thành phần.
-    Đảm bảo luồng dữ liệu trọn vẹn từ module này sang module khác.
+    Lớp quản lý quy trình xạ trị.
+    
+    Lớp này quản lý toàn bộ quy trình từ nhập dữ liệu đến lập kế hoạch và tính toán liều.
     """
     
     def __init__(self, session_id: Optional[str] = None):
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        structure_mask = np.zeros_like(self.volume)
         """
         Khởi tạo một quy trình xạ trị.
         
@@ -111,33 +111,80 @@ class RTWorkflow:
         self.dvh_calculator = DVHCalculator()
         self.session_manager = SessionManager()
         
-        # Dữ liệu bệnh nhân
+        # Khởi tạo dữ liệu
+        self.volume = None  # Dữ liệu hình ảnh CT
+        self.structures = {}  # Cấu trúc
+        self.plan = None  # Kế hoạch xạ trị
+        self.dose = None  # Phân bố liều
+        self.dvh = None  # Biểu đồ DVH
+        
+        # Thông tin bệnh nhân
         self.patient_id = None
         self.patient_name = None
-        self.patient_metadata = {}
+        self.study_uid = None
+        self.series_uid = None
         
-        # Dữ liệu ảnh và cấu trúc
-        self.image_data = None
-        self.image_spacing = None
-        self.image_origin = None
-        self.image_orientation = None
-        self.structures = {}  # name -> mask
-        self.structure_colors = {}  # name -> color
+        # Thông tin kỹ thuật
+        self.technique = None
+        self.beam_config = None
         
-        # Dữ liệu kế hoạch và liều
-        self.plans = {}  # plan_id -> PlanConfig
-        self.current_plan_id = None
-        self.dose_data = {}  # plan_id -> dose_matrix
-        self.dvh_data = {}  # plan_id -> dvh_results
+        # Thông tin phiên làm việc
+        self.session_data = {}
         
-        # Đánh dấu trạng thái
-        self.has_image = False
-        self.has_structures = False
-        self.has_plan = False
-        self.has_dose = False
+    def load_session(self, session_id: str) -> bool:
+        """
+        Tải dữ liệu từ một phiên làm việc đã lưu.
         
-        self.logger.info("Đã khởi tạo các thành phần của quy trình xạ trị")
-    
+        Args:
+            session_id: ID phiên làm việc cần tải
+            
+        Returns:
+            bool: True nếu tải thành công, False nếu không
+        """
+        try:
+            session_data = self.session_manager.load_session(session_id)
+            if not session_data:
+                self.logger.error(f"Không tìm thấy phiên làm việc với ID: {session_id}")
+                return False
+                
+            # Cập nhật dữ liệu từ phiên
+            self.session_id = session_id
+            self.session_data = session_data
+            
+            # Tải các thành phần từ phiên
+            if 'patient_id' in session_data:
+                self.patient_id = session_data['patient_id']
+            if 'patient_name' in session_data:
+                self.patient_name = session_data['patient_name']
+            if 'study_uid' in session_data:
+                self.study_uid = session_data['study_uid']
+            if 'series_uid' in session_data:
+                self.series_uid = session_data['series_uid']
+                
+            # Tải dữ liệu hình ảnh nếu có
+            if 'image_path' in session_data and os.path.exists(session_data['image_path']):
+                self.volume = self.image_loader.load_volume(session_data['image_path'])
+                
+            # Tải cấu trúc nếu có
+            if 'structures_path' in session_data and os.path.exists(session_data['structures_path']):
+                self.structures = self.contour_tools.load_structures(session_data['structures_path'])
+                
+            # Tải kế hoạch nếu có
+            if 'plan_path' in session_data and os.path.exists(session_data['plan_path']):
+                with open(session_data['plan_path'], 'r') as f:
+                    self.plan = json.load(f)
+                    
+            # Tải liều nếu có
+            if 'dose_path' in session_data and os.path.exists(session_data['dose_path']):
+                self.dose = np.load(session_data['dose_path'])
+                
+            self.logger.info(f"Đã tải phiên làm việc: {session_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi tải phiên làm việc: {str(e)}")
+            return False
+
     def load_dicom_data(self, directory: str) -> bool:
         """
         Tải dữ liệu DICOM từ thư mục
@@ -167,16 +214,15 @@ class RTWorkflow:
                 image_data, metadata = self.dicom_parser.load_series_data(series_id)
                 
                 if image_data is not None:
-                    self.image_data = image_data
+                    self.volume = image_data
                     self.image_spacing = metadata.get('PixelSpacing', [1.0, 1.0]) + [metadata.get('SliceThickness', 1.0)]
                     self.image_origin = metadata.get('ImagePositionPatient', [0.0, 0.0, 0.0])
                     self.image_orientation = metadata.get('ImageOrientationPatient', [1, 0, 0, 0, 1, 0])
-                    self.has_image = True
                     self.logger.info(f"Đã tải dữ liệu CT: shape={image_data.shape}, spacing={self.image_spacing}")
                 
             # Tải dữ liệu cấu trúc nếu có RTSTRUCT
             rt_struct_series = self.dicom_parser.get_series_by_modality('RTSTRUCT')
-            if rt_struct_series and self.has_image:
+            if rt_struct_series and self.volume is not None:
                 series_id = rt_struct_series[0]  # Lấy RTSTRUCT đầu tiên
                 structure_set = self.dicom_parser.load_rt_struct(series_id)
                 
@@ -185,7 +231,6 @@ class RTWorkflow:
                         self.structures[name] = mask
                         getattr(self, "structure_colors", {})[name] = color
                     
-                    self.has_structures = len(self.structures) > 0
                     self.logger.info(f"Đã tải {len(self.structures)} cấu trúc từ RTSTRUCT")
             
             # Tải dữ liệu kế hoạch nếu có RTPLAN
@@ -195,13 +240,8 @@ class RTWorkflow:
                 plan_data = self.dicom_parser.load_rt_plan(series_id)
                 
                 if plan_data:
-                    plan_id = f"plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    plan_config = PlanConfig()
-                    plan_config.from_dict(plan_data)
-                    self.plans[plan_id] = plan_config
-                    self.current_plan_id = plan_id
-                    self.has_plan = True
-                    self.logger.info(f"Đã tải kế hoạch xạ trị: {plan_config.plan_name}")
+                    self.plan = plan_data
+                    self.logger.info(f"Đã tải kế hoạch xạ trị: {self.plan.get('plan_name', 'Unnamed Plan')}")
             
             # Tải dữ liệu liều nếu có RTDOSE
             rt_dose_series = self.dicom_parser.get_series_by_modality('RTDOSE')
@@ -209,14 +249,8 @@ class RTWorkflow:
                 series_id = rt_dose_series[0]  # Lấy RTDOSE đầu tiên
                 dose_data, dose_metadata = self.dicom_parser.load_rt_dose(series_id)
                 
-                if dose_data is not None and self.current_plan_id:
-                    self.dose_data[self.current_plan_id] = dose_data
-                    
-                    # Tính DVH nếu có cấu trúc và liều
-                    if self.has_structures:
-                        self.calculate_dvh(self.current_plan_id)
-                    
-                    self.has_dose = True
+                if dose_data is not None:
+                    self.dose = dose_data
                     self.logger.info(f"Đã tải dữ liệu phân bố liều: shape={dose_data.shape}")
             
             return True
@@ -677,326 +711,35 @@ class IntegrationManager:
             items = ['image', 'structure', 'plan', 'dose']
         
         try:
-            # Tạo thư mục xuất
-            os.makedirs(export_folder, exist_ok=True)
+            # Lấy thông tin bệnh nhân
+            patient_info = self.get_patient_info()
             
-            # Xuất dữ liệu hình ảnh
-            if 'image' in items and self.current_image_data is not None:
-                image_path = os.path.join(export_folder, 'CT')
-                os.makedirs(image_path, exist_ok=True)
-                self.dicom_parser.export_ct_images(self.current_image_data, image_path)
-                logger.info(f"Đã xuất dữ liệu hình ảnh sang {image_path}")
+            # Chuẩn bị dữ liệu để xuất
+            export_data = {
+                'image_data': self.current_image_data if 'image' in items else None,
+                'structures': self.current_structures if 'structure' in items else None,
+                'plan_config': self.current_plan_config if 'plan' in items else None,
+                'dose_data': self.current_dose_data if 'dose' in items else None,
+                'patient_info': patient_info,
+                'dose_spacing': getattr(self, 'dose_spacing', None),
+                'dose_origin': getattr(self, 'dose_origin', None),
+                'dose_positions': getattr(self, 'dose_positions', None),
+                'structure_uid': getattr(self, 'structure_uid', None),
+                'rtplan_uid': getattr(self, 'rtplan_uid', None)
+            }
             
-            # Xuất dữ liệu cấu trúc
-            if 'structure' in items and self.contour_tools is not None:
-                struct_path = os.path.join(export_folder, 'structure.dcm')
-                self.contour_tools.save_to_dicom(struct_path)
-                logger.info(f"Đã xuất dữ liệu cấu trúc sang {struct_path}")
+            # Gọi hàm xuất DICOM từ module io
+            result = export_dicom_rt(export_folder, **export_data)
             
-            # Xuất kế hoạch
-            if 'plan' in items and self.current_plan_config is not None:
-                plan_path = os.path.join(export_folder, 'plan.dcm')
-                self._export_rtplan(plan_path)
-                logger.info(f"Đã xuất dữ liệu kế hoạch sang {plan_path}")
+            if result:
+                logger.info(f"Đã xuất dữ liệu DICOM thành công vào thư mục {export_folder}")
+                return True
+            else:
+                logger.error("Xuất dữ liệu DICOM thất bại")
+                return False
             
-            # Xuất dữ liệu liều
-            if 'dose' in items and self.current_dose_data is not None:
-                dose_path = os.path.join(export_folder, 'dose.dcm')
-                self._export_rtdose(dose_path)
-                logger.info(f"Đã xuất dữ liệu liều sang {dose_path}")
-            
-            return True
         except Exception as error:
             logger.error(f"Lỗi khi xuất dữ liệu DICOM: {str(error)}")
-            return False
-    
-    def _export_rtplan(self, output_path: str) -> bool:
-        """
-        Xuất dữ liệu kế hoạch ra file DICOM RT-PLAN.
-        
-        Args:
-            output_path: Đường dẫn đến file DICOM RT-PLAN xuất ra
-            
-        Returns:
-            bool: True nếu thành công, False nếu thất bại
-        """
-        try:
-            # Kiểm tra dữ liệu kế hoạch
-            if self.current_plan_config is None:
-                logger.error("Không có dữ liệu kế hoạch để xuất")
-                return False
-                
-            # Tạo dataset RT Plan mới
-            rtplan_ds = pydicom.Dataset()
-            
-            # Thêm các phần tử bắt buộc cho thẻ File Meta
-            file_meta = pydicom.Dataset()
-            file_meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.5'  # RT Plan Storage
-            file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
-            file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
-            file_meta.ImplementationClassUID = pydicom.uid.generate_uid()
-            
-            # Tạo đối tượng FileDataset
-            rtplan_ds = pydicom.FileDataset(output_path, {}, file_meta=file_meta, preamble=b"\0" * 128)
-            
-            # Thêm các thẻ bắt buộc
-            rtplan_ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.481.5'  # RT Plan Storage
-            rtplan_ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
-            rtplan_ds.Modality = 'RTPLAN'
-            
-            # Thiết lập các thẻ khác
-            rtplan_ds.RTPlanLabel = self.current_plan_config.plan_name
-            rtplan_ds.RTPlanName = self.current_plan_config.plan_name
-            rtplan_ds.RTPlanDate = datetime.now().strftime('%Y%m%d')
-            rtplan_ds.RTPlanTime = datetime.now().strftime('%H%M%S')
-            rtplan_ds.RTPlanGeometry = 'PATIENT'
-            
-            # Thiết lập UID cho Plan
-            rtplan_ds.SeriesInstanceUID = pydicom.uid.generate_uid()
-            
-            # Thêm thông tin liều tổng/phân liều
-            plan_dict = self.current_plan_config.to_dict()
-            rtplan_ds.FractionGroupSequence = pydicom.Sequence()
-            fg = pydicom.Dataset()
-            fg.FractionGroupNumber = 1
-            fg.NumberOfFractionsPlanned = plan_dict.get('fraction_count', 0)
-            fg.NumberOfBeams = len(plan_dict.get('beams', []))
-            fg.NumberOfBrachyApplicationSetups = 0
-            
-            # Thêm thông tin tham chiếu đến CT
-            if hasattr(self, 'reference_images') and self.reference_images:
-                rtplan_ds.ReferencedStructureSetSequence = pydicom.Sequence()
-                ref_struct = pydicom.Dataset()
-                ref_struct.ReferencedSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.3'  # RT Structure Set
-                # Sử dụng UID của RT Structure nếu có
-                if hasattr(self, 'structure_uid'):
-                    ref_struct.ReferencedSOPInstanceUID = self.structure_uid
-                else:
-                    ref_struct.ReferencedSOPInstanceUID = pydicom.uid.generate_uid()
-                rtplan_ds.ReferencedStructureSetSequence.append(ref_struct)
-            
-            # Thêm thông tin chùm tia
-            rtplan_ds.BeamSequence = pydicom.Sequence()
-            beam_meterset_sequence = pydicom.Sequence()
-            
-            # Lặp qua các chùm tia trong kế hoạch
-            for i, beam_info in enumerate(plan_dict.get('beams', [])):
-                # Tạo đối tượng Beam
-                beam_ds = pydicom.Dataset()
-                beam_ds.BeamNumber = i + 1
-                beam_ds.BeamName = beam_info.get('name', f"Beam {i+1}")
-                beam_ds.BeamType = 'STATIC' if plan_dict.get('technique') != 'VMAT' else 'DYNAMIC'
-                beam_ds.RadiationType = plan_dict.get('radiation_type', 'PHOTON').upper()
-                
-                # Thêm thông tin năng lượng
-                beam_ds.TreatmentMachineName = plan_dict.get('machine_name', 'LINAC')
-                beam_ds.PrimaryDosimeterUnit = 'MU'
-                beam_ds.SourceAxisDistance = "1000.0"  # mm
-                
-                # Thêm thông tin góc chiếu
-                beam_ds.ControlPointSequence = pydicom.Sequence()
-                cp = pydicom.Dataset()
-                cp.ControlPointIndex = 0
-                cp.CumulativeMetersetWeight = 0.0
-                cp.NominalBeamEnergy = plan_dict.get('energy', '6').replace('MV', '').replace('MeV', '')
-                cp.DoseRateSet = 600.0  # cGy/min
-                cp.GantryAngle = beam_info.get('gantry_angle', 0)
-                cp.GantryRotationDirection = 'NONE'
-                cp.BeamLimitingDeviceAngle = beam_info.get('collimator_angle', 0)
-                cp.BeamLimitingDeviceRotationDirection = 'NONE'
-                cp.PatientSupportAngle = beam_info.get('couch_angle', 0)
-                cp.PatientSupportRotationDirection = 'NONE'
-                cp.IsocenterPosition = plan_dict.get('isocenter', [0.0, 0.0, 0.0])
-                
-                # Thêm thông tin field size
-                cp.BeamLimitingDevicePositionSequence = pydicom.Sequence()
-                
-                # Thêm jaw X
-                if 'field_x' in beam_info:
-                    x_jaw = pydicom.Dataset()
-                    x_jaw.RTBeamLimitingDeviceType = 'X'
-                    x_jaw.LeafJawPositions = beam_info.get('field_x', [-50.0, 50.0])
-                    cp.BeamLimitingDevicePositionSequence.append(x_jaw)
-                
-                # Thêm jaw Y
-                if 'field_y' in beam_info:
-                    y_jaw = pydicom.Dataset()
-                    y_jaw.RTBeamLimitingDeviceType = 'Y'
-                    y_jaw.LeafJawPositions = beam_info.get('field_y', [-50.0, 50.0])
-                    cp.BeamLimitingDevicePositionSequence.append(y_jaw)
-                
-                # Thêm MLC nếu có
-                if 'mlc_segments' in beam_info and beam_info['mlc_segments']:
-                    mlc = pydicom.Dataset()
-                    mlc.RTBeamLimitingDeviceType = 'MLCX'
-                    mlc.LeafJawPositions = beam_info['mlc_segments'][0]
-                    cp.BeamLimitingDevicePositionSequence.append(mlc)
-                
-                # Thêm control point vào sequence
-                beam_ds.ControlPointSequence.append(cp)
-                
-                # Nếu là VMAT, thêm control point thứ hai
-                if plan_dict.get('technique') == 'VMAT' and 'arc_segments' in beam_info:
-                    for arc in beam_info.get('arc_segments', []):
-                        # Control point kết thúc
-                        end_cp = pydicom.Dataset()
-                        end_cp.ControlPointIndex = 1
-                        end_cp.CumulativeMetersetWeight = 1.0
-                        end_cp.GantryAngle = arc.get('stop_angle', cp.GantryAngle + 360)
-                        if end_cp.GantryAngle > 360:
-                            end_cp.GantryAngle -= 360
-                        
-                        # Xác định hướng quay
-                        if end_cp.GantryAngle > cp.GantryAngle:
-                            if end_cp.GantryAngle - cp.GantryAngle <= 180:
-                                cp.GantryRotationDirection = 'CW'
-                            else:
-                                cp.GantryRotationDirection = 'CC'
-                        else:
-                            if cp.GantryAngle - end_cp.GantryAngle <= 180:
-                                cp.GantryRotationDirection = 'CC'
-                            else:
-                                cp.GantryRotationDirection = 'CW'
-                        
-                        beam_ds.ControlPointSequence.append(end_cp)
-                
-                # Thêm beam vào sequence
-                rtplan_ds.BeamSequence.append(beam_ds)
-                
-                # Thêm thông tin vào FractionGroupSequence
-                ref_beam = pydicom.Dataset()
-                ref_beam.ReferencedBeamNumber = i + 1
-                ref_beam.BeamMeterset = beam_info.get('monitor_units', 100.0)
-                beam_meterset_sequence.append(ref_beam)
-            
-            # Thêm meterset vào fraction group
-            fg.ReferencedBeamSequence = beam_meterset_sequence
-            rtplan_ds.FractionGroupSequence.append(fg)
-            
-            # Lưu file
-            rtplan_ds.save_as(output_path)
-            logger.info(f"Đã xuất RT Plan thành công: {output_path}")
-            
-            return True
-            
-        except Exception as error:
-            logger.error(f"Lỗi khi xuất RT Plan: {str(error)}", include_traceback=True)
-            return False
-    
-    def _export_rtdose(self, output_path: str) -> bool:
-        """
-        Xuất dữ liệu liều ra file DICOM RT-DOSE.
-        
-        Args:
-            output_path: Đường dẫn đến file DICOM RT-DOSE xuất ra
-            
-        Returns:
-            bool: True nếu thành công, False nếu thất bại
-        """
-        try:
-            # Kiểm tra dữ liệu liều
-            if self.current_dose_data is None:
-                logger.error("Không có dữ liệu liều để xuất")
-                return False
-            
-            # Tạo dataset RT Dose mới
-            rtdose_ds = pydicom.Dataset()
-            
-            # Thêm các phần tử bắt buộc cho thẻ File Meta
-            file_meta = pydicom.Dataset()
-            file_meta.MediaStorageSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.2'  # RT Dose Storage
-            file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
-            file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
-            file_meta.ImplementationClassUID = pydicom.uid.generate_uid()
-            
-            # Tạo đối tượng FileDataset
-            rtdose_ds = pydicom.FileDataset(output_path, {}, file_meta=file_meta, preamble=b"\0" * 128)
-            
-            # Thêm các thẻ bắt buộc
-            rtdose_ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.481.2'  # RT Dose Storage
-            rtdose_ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
-            rtdose_ds.Modality = 'RTDOSE'
-            
-            # Thiết lập các thẻ khác
-            rtdose_ds.SeriesDescription = 'RT Dose'
-            rtdose_ds.SeriesInstanceUID = pydicom.uid.generate_uid()
-            rtdose_ds.DoseUnits = 'GY'
-            rtdose_ds.DoseType = 'PHYSICAL'
-            rtdose_ds.DoseComment = 'Dose calculated by QuangStation'
-            rtdose_ds.DoseSummationType = 'PLAN'
-            
-            # Thiết lập kích thước pixel
-            if hasattr(self, 'dose_spacing') and self.dose_spacing:
-                rtdose_ds.PixelSpacing = [self.dose_spacing[0], self.dose_spacing[1]]
-                rtdose_ds.SliceThickness = self.dose_spacing[2]
-            else:
-                # Giá trị mặc định
-                rtdose_ds.PixelSpacing = [2.0, 2.0]
-                rtdose_ds.SliceThickness = 2.0
-            
-            # Thiết lập vị trí voxel
-            if hasattr(self, 'dose_origin') and self.dose_origin:
-                rtdose_ds.ImagePositionPatient = self.dose_origin
-            else:
-                rtdose_ds.ImagePositionPatient = [0.0, 0.0, 0.0]
-            
-            # Thiết lập hướng voxel
-            rtdose_ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
-            
-            # Chuyển đổi dữ liệu liều sang dạng thích hợp
-            dose_array = self.current_dose_data
-            if isinstance(dose_array, dict) and 'dose_matrix' in dose_array:
-                dose_array = dose_array['dose_matrix']
-            
-            dose_array = np.array(dose_array)
-            
-            # Thiết lập kích thước dữ liệu
-            rtdose_ds.Rows = dose_array.shape[1]
-            rtdose_ds.Columns = dose_array.shape[2]
-            rtdose_ds.NumberOfFrames = dose_array.shape[0]
-            
-            # Thiết lập dịch thang màu
-            min_dose = np.min(dose_array)
-            max_dose = np.max(dose_array)
-            
-            # Chuyển đổi sang định dạng uint16 để lưu vào DICOM
-            dose_scaling = 1000.0  # Scaling để giữ độ chính xác
-            dose_array = (dose_array * dose_scaling).astype(np.uint16)
-            
-            # Thiết lập thông tin pixel
-            rtdose_ds.BitsAllocated = 16
-            rtdose_ds.BitsStored = 16
-            rtdose_ds.HighBit = 15
-            rtdose_ds.PixelRepresentation = 0  # unsigned
-            rtdose_ds.DoseGridScaling = 1.0 / dose_scaling
-            
-            # Tạo GridFrameOffsetVector
-            if hasattr(self, 'dose_positions') and self.dose_positions:
-                offsets = [pos - self.dose_positions[0] for pos in self.dose_positions]
-            else:
-                offsets = [i * rtdose_ds.SliceThickness for i in range(rtdose_ds.NumberOfFrames)]
-            
-            rtdose_ds.GridFrameOffsetVector = offsets
-            
-            # Thêm thông tin tham chiếu đến RT Plan
-            if hasattr(self, 'rtplan_uid'):
-                rtdose_ds.ReferencedRTPlanSequence = pydicom.Sequence()
-                ref_plan = pydicom.Dataset()
-                ref_plan.ReferencedSOPClassUID = '1.2.840.10008.5.1.4.1.1.481.5'  # RT Plan
-                ref_plan.ReferencedSOPInstanceUID = self.rtplan_uid
-                rtdose_ds.ReferencedRTPlanSequence.append(ref_plan)
-            
-            # Thiết lập dữ liệu pixel
-            rtdose_ds.PixelData = dose_array.tobytes()
-            
-            # Lưu file
-            rtdose_ds.save_as(output_path)
-            logger.info(f"Đã xuất RT Dose thành công: {output_path}")
-            
-            return True
-            
-        except Exception as error:
-            logger.error(f"Lỗi khi xuất RT Dose: {str(error)}", include_traceback=True)
             return False
     
     def get_patient_info(self) -> Optional[Dict[str, Any]]:

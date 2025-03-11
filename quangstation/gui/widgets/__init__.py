@@ -1,14 +1,27 @@
 """
-Module chứa các widget tùy chỉnh cho giao diện người dùng QuangStation.
+Module chứa các widget tùy chỉnh cho QuangStation V2.
 """
 
-from quangstation.gui.widgets.image_viewer import ImageViewer
+# Import các widget
+try:
+    from quangstation.gui.widgets.image_viewer import ImageViewer
+except ImportError:
+    pass
 
-__all__ = ['ImageViewer']
-
-# Thêm Viewer3D nếu VTK được cài đặt
 try:
     from quangstation.gui.widgets.viewer_3d import Viewer3D
-    __all__.append('Viewer3D')
 except ImportError:
-    pass 
+    pass
+
+try:
+    from quangstation.gui.widgets.dvh_viewer import DVHViewer
+except ImportError:
+    pass
+
+try:
+    from quangstation.gui.widgets.mpr_viewer import MPRViewer
+except ImportError:
+    pass
+
+# Export các widget
+__all__ = ['ImageViewer', 'Viewer3D', 'DVHViewer', 'MPRViewer'] 

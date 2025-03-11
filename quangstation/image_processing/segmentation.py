@@ -5,9 +5,9 @@ from skimage import measure, morphology, segmentation, filters, feature
 from scipy import ndimage
 from typing import Dict, List, Tuple, Optional, Union, Any
 import os
-import pydicom
 from datetime import datetime
 
+from quangstation.utils.external_integration import get_module
 from quangstation.utils.logging import get_logger
 from quangstation.contouring.contour_tools import ContourTools
 
@@ -16,6 +16,11 @@ Module này cung cấp công cụ phân vùng tự động và thủ công cho �
 Hỗ trợ nhiều thuật toán phân đoạn và tích hợp với ContourTools.
 """
 logger = get_logger("Segmentation")
+
+# Lấy module pydicom từ external_integration
+pydicom = get_module("pydicom")
+if not pydicom:
+    logger.error("Không thể import pydicom. Nhiều chức năng sẽ không hoạt động.")
 
 class Segmentation:
     """

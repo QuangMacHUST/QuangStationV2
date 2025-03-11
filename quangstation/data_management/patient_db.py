@@ -18,8 +18,12 @@ import shutil
 from quangstation.utils.logging import get_logger
 from quangstation.utils.config import config, get_config
 
-logger = get_logger(__name__)
+"""
+Module quản lý dữ liệu bệnh nhân cho QuangStation V2
+"""
 
+logger = get_logger(__name__)
+    
 class Patient:
     """Lớp đại diện cho thông tin bệnh nhân"""
     
@@ -341,25 +345,60 @@ class PatientDatabase:
         finally:
             conn.close()
     
-    def update_patient(self, patient: Patient) -> bool:
+    def update_patient(self, patient_id: str, patient_data: Dict[str, Any]) -> bool:
         """
         Cập nhật thông tin bệnh nhân
         
         Args:
-            patient: Đối tượng bệnh nhân cần cập nhật
+            patient_id: ID của bệnh nhân cần cập nhật
+            patient_data: Dictionary chứa thông tin cập nhật
             
         Returns:
             bool: True nếu cập nhật thành công, False nếu không tìm thấy bệnh nhân
         """
+        # Lấy thông tin bệnh nhân hiện tại
+        patient = self.get_patient(patient_id)
+        if not patient:
+            return False
+        
+        # Cập nhật thông tin
+        if 'name' in patient_data:
+            patient.demographics['name'] = patient_data['name']
+        if 'birth_date' in patient_data:
+            patient.demographics['birth_date'] = patient_data['birth_date']
+        if 'gender' in patient_data:
+            patient.demographics['gender'] = patient_data['gender']
+        if 'address' in patient_data:
+            patient.demographics['address'] = patient_data['address']
+        if 'phone' in patient_data:
+            patient.demographics['phone'] = patient_data['phone']
+        if 'email' in patient_data:
+            patient.demographics['email'] = patient_data['email']
+        if 'diagnosis' in patient_data:
+            patient.clinical_info['diagnosis'] = patient_data['diagnosis']
+        if 'diagnosis_date' in patient_data:
+            patient.clinical_info['diagnosis_date'] = patient_data['diagnosis_date']
+        if 'physician' in patient_data:
+            patient.clinical_info['physician'] = patient_data['physician']
+        if 'notes' in patient_data:
+            patient.clinical_info['notes'] = patient_data['notes']
+        
+        # Cập nhật dữ liệu bổ sung nếu có
+        if 'plans' in patient_data:
+            patient.plans.update(patient_data['plans'])
+        if 'images' in patient_data:
+            patient.images.update(patient_data['images'])
+        if 'structures' in patient_data:
+            patient.structures.update(patient_data['structures'])
+        
+        # Cập nhật thời gian sửa đổi
+        patient.modified_date = datetime.now().isoformat()
+        
+        # Lưu vào cơ sở dữ liệu
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         try:
-            # Kiểm tra bệnh nhân có tồn tại không
-            cursor.execute("SELECT patient_id FROM patients WHERE patient_id = ?", (patient.patient_id,))
-            if not cursor.fetchone():
-                return False
-            
             # Cập nhật thông tin trong bảng patients
             cursor.execute('''
             UPDATE patients SET
@@ -378,7 +417,7 @@ class PatientDatabase:
                 patient.clinical_info.get('physician', ''),
                 patient.clinical_info.get('notes', ''),
                 patient.modified_date,
-                patient.patient_id
+                patient_id
             ))
             
             conn.commit()
@@ -387,7 +426,7 @@ class PatientDatabase:
             self._save_patient_data(patient)
             
             # Cập nhật trong danh sách đã tải
-            self.loaded_patients[patient.patient_id] = patient
+            self.loaded_patients[patient_id] = patient
             
             logger.info(f"Đã cập nhật bệnh nhân: {patient}")
             return True
@@ -395,7 +434,7 @@ class PatientDatabase:
         except Exception as e:
             conn.rollback()
             logger.error(f"Lỗi khi cập nhật bệnh nhân: {str(e)}")
-            raise
+            return False
         finally:
             conn.close()
     
@@ -775,6 +814,96 @@ class PatientDatabase:
         
         # Nếu không tìm thấy, trả về dict rỗng
         return {}
+    
+    def insert_patient(self, patient_data: Dict[str, Any]) -> str:
+        """
+        Thêm bệnh nhân mới vào cơ sở dữ liệu
+        
+        Args:
+            patient_data: Dictionary chứa thông tin bệnh nhân
+            
+        Returns:
+            str: ID của bệnh nhân đã thêm
+        """
+        # Tạo đối tượng Patient từ dữ liệu
+        patient_id = patient_data.get('patient_id', str(uuid.uuid4()))
+        
+        patient = Patient(
+            patient_id=patient_id,
+            name=patient_data.get('name', ''),
+            birth_date=patient_data.get('birth_date', ''),
+            gender=patient_data.get('gender', ''),
+            address=patient_data.get('address', ''),
+            phone=patient_data.get('phone', ''),
+            email=patient_data.get('email', ''),
+            diagnosis=patient_data.get('diagnosis', ''),
+            diagnosis_date=patient_data.get('diagnosis_date', ''),
+            physician=patient_data.get('physician', ''),
+            notes=patient_data.get('notes', '')
+        )
+        
+        # Thêm dữ liệu bổ sung nếu có
+        if 'plans' in patient_data:
+            patient.plans = patient_data['plans']
+        if 'images' in patient_data:
+            patient.images = patient_data['images']
+        if 'structures' in patient_data:
+            patient.structures = patient_data['structures']
+        
+        # Thêm vào cơ sở dữ liệu
+        return self.add_patient(patient)
+    
+    def get_patient_details(self, patient_id: str) -> Dict[str, Any]:
+        """
+        Lấy thông tin chi tiết của bệnh nhân
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            
+        Returns:
+            Dict[str, Any]: Thông tin chi tiết của bệnh nhân, hoặc dict rỗng nếu không tìm thấy
+        """
+        patient = self.get_patient(patient_id)
+        if not patient:
+            return {}
+        
+        return patient.to_dict()
+    
+    def get_patient_folder(self, patient_id: str) -> str:
+        """
+        Lấy đường dẫn đến thư mục dữ liệu của bệnh nhân
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            
+        Returns:
+            str: Đường dẫn đến thư mục dữ liệu của bệnh nhân
+        """
+        patient_dir = os.path.join(self.patient_data_dir, patient_id)
+        os.makedirs(patient_dir, exist_ok=True)
+        return patient_dir
+    
+    def patient_exists(self, patient_id: str) -> bool:
+        """
+        Kiểm tra bệnh nhân có tồn tại trong cơ sở dữ liệu không
+        
+        Args:
+            patient_id: ID của bệnh nhân cần kiểm tra
+            
+        Returns:
+            bool: True nếu bệnh nhân tồn tại, False nếu không
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT patient_id FROM patients WHERE patient_id = ?", (patient_id,))
+            return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Lỗi khi kiểm tra bệnh nhân: {str(e)}")
+            return False
+        finally:
+            conn.close()
 
 # Tạo instance mặc định
 patient_db = PatientDatabase()

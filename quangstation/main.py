@@ -16,15 +16,17 @@ from typing import Dict, Any, Optional, List
 import threading
 import uuid
 from datetime import datetime
+import numpy as np
 
 # Import các module nội bộ
 from quangstation.utils.logging import get_logger, setup_exception_logging, log_system_info
 from quangstation.utils.config import GlobalConfig, get_config
-from quangstation.data_management.patient_db import PatientDatabase
+from quangstation.data_management.patient_db import PatientDatabase, Patient
 from quangstation.data_management.display import Display
 from quangstation.data_management.import_interface import ImportInterface
 from quangstation.data_management.session_management import SessionManager
 from quangstation.planning.plan_config import PlanConfig
+from quangstation.reporting.comprehensive_report import ComprehensiveReport
 
 class PatientManager:
     """Lớp quản lý thông tin bệnh nhân và tương tác với cơ sở dữ liệu"""
@@ -124,7 +126,8 @@ class PatientManager:
             
             # Cập nhật và lưu
             patient.modified_date = datetime.now().isoformat()
-            self.db.update_patient(patient)
+            patient_data = patient.to_dict()
+            self.db.update_patient(patient_id, patient_data)
             self.logger.info(f"Cập nhật bệnh nhân: {patient_id}")
         except Exception as error:
             self.logger.error(f"Lỗi cập nhật bệnh nhân: {str(error)}")
@@ -200,6 +203,141 @@ class PatientManager:
         except Exception as error:
             self.logger.error(f"Lỗi xóa bệnh nhân: {str(error)}")
             return False
+            
+    def create_plan(self, patient_id: str, plan_data: Dict[str, Any]) -> str:
+        """
+        Tạo kế hoạch mới cho bệnh nhân
+        
+        Args:
+            patient_id: ID bệnh nhân
+            plan_data: Dữ liệu kế hoạch
+            
+        Returns:
+            str: ID của kế hoạch mới tạo
+        """
+        try:
+            # Lấy thông tin bệnh nhân
+            patient = self.db.get_patient(patient_id)
+            if not patient:
+                raise ValueError(f"Không tìm thấy bệnh nhân với ID: {patient_id}")
+            
+            # Tạo ID kế hoạch mới
+            plan_id = plan_data.get('plan_id', str(uuid.uuid4()))
+            
+            # Thêm thông tin thời gian
+            if 'created_date' not in plan_data:
+                plan_data['created_date'] = datetime.now().isoformat()
+            plan_data['modified_date'] = datetime.now().isoformat()
+            
+            # Thêm kế hoạch vào bệnh nhân
+            patient.add_plan(plan_id, plan_data)
+            
+            # Lưu thay đổi
+            patient_data = patient.to_dict()
+            self.db.update_patient(patient_id, patient_data)
+            
+            self.logger.info(f"Đã tạo kế hoạch mới {plan_id} cho bệnh nhân {patient_id}")
+            return plan_id
+        except Exception as error:
+            self.logger.error(f"Lỗi tạo kế hoạch: {str(error)}")
+            raise
+            
+    def get_patient_plans(self, patient_id: str) -> List[Dict[str, Any]]:
+        """
+        Lấy danh sách kế hoạch của bệnh nhân
+        
+        Args:
+            patient_id: ID bệnh nhân
+            
+        Returns:
+            List[Dict]: Danh sách kế hoạch
+        """
+        try:
+            # Lấy thông tin bệnh nhân
+            patient = self.db.get_patient(patient_id)
+            if not patient:
+                return []
+            
+            # Chuyển từ dictionary sang list với plan_id
+            plans = []
+            for plan_id, plan_data in patient.plans.items():
+                plan_with_id = dict(plan_data)
+                plan_with_id['plan_id'] = plan_id
+                plans.append(plan_with_id)
+            
+            return plans
+        except Exception as error:
+            self.logger.error(f"Lỗi lấy danh sách kế hoạch: {str(error)}")
+            return []
+            
+    def update_plan(self, patient_id: str, plan_id: str, update_data: Dict[str, Any]) -> bool:
+        """
+        Cập nhật thông tin kế hoạch
+        
+        Args:
+            patient_id: ID bệnh nhân
+            plan_id: ID kế hoạch
+            update_data: Dữ liệu cập nhật
+            
+        Returns:
+            bool: True nếu cập nhật thành công, False nếu không
+        """
+        try:
+            # Lấy thông tin bệnh nhân
+            patient = self.db.get_patient(patient_id)
+            if not patient:
+                return False
+            
+            # Kiểm tra kế hoạch có tồn tại không
+            if plan_id not in patient.plans:
+                return False
+            
+            # Cập nhật dữ liệu
+            patient.plans[plan_id].update(update_data)
+            patient.plans[plan_id]['modified_date'] = datetime.now().isoformat()
+            
+            # Lưu thay đổi
+            patient_data = patient.to_dict()
+            self.db.update_patient(patient_id, patient_data)
+            
+            self.logger.info(f"Đã cập nhật kế hoạch {plan_id} cho bệnh nhân {patient_id}")
+            return True
+        except Exception as error:
+            self.logger.error(f"Lỗi cập nhật kế hoạch: {str(error)}")
+            return False
+            
+    def delete_plan(self, patient_id: str, plan_id: str) -> bool:
+        """
+        Xóa kế hoạch
+        
+        Args:
+            patient_id: ID bệnh nhân
+            plan_id: ID kế hoạch
+            
+        Returns:
+            bool: True nếu xóa thành công, False nếu không
+        """
+        try:
+            # Lấy thông tin bệnh nhân
+            patient = self.db.get_patient(patient_id)
+            if not patient:
+                return False
+            
+            # Xóa kế hoạch
+            if plan_id in patient.plans:
+                del patient.plans[plan_id]
+                
+                # Lưu thay đổi
+                patient_data = patient.to_dict()
+                self.db.update_patient(patient_id, patient_data)
+                
+                self.logger.info(f"Đã xóa kế hoạch {plan_id} của bệnh nhân {patient_id}")
+                return True
+            
+            return False
+        except Exception as error:
+            self.logger.error(f"Lỗi xóa kế hoạch: {str(error)}")
+            return False
 
 class MainApp:
     """
@@ -212,31 +350,35 @@ class MainApp:
         Args:
             root: Cửa sổ gốc Tkinter
         """
+        # Thiết lập cửa sổ chính
         self.root = root
         self.root.title("QuangStation V2 - Hệ thống Lập kế hoạch Xạ trị")
+        self.root.geometry("1200x800")
         
-        # Thiết lập icon
-        try:
-            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.ico")
-            if os.path.exists(icon_path):
-                self.root.iconbitmap(icon_path)
-        except Exception as error:
-            pass
-        
-        # Thiết lập theme
-        self.setup_theme()
-        
-        # Khởi tạo logger
+        # Thiết lập logger
         self.logger = get_logger("MainApp")
         
-        # Khởi tạo các thành phần quản lý dữ liệu (Model)
+        # Tạo status_var
+        self.status_var = tk.StringVar()
+        self.status_var.set("Sẵn sàng")
+        
+        # Khởi tạo các thành phần quản lý
         self.patient_manager = PatientManager()
         self.session_manager = SessionManager()
         
-        # Khởi tạo các biến trạng thái
+        # Khởi tạo Display khi cần, không phải lúc khởi tạo MainApp
+        self.display = None  # Sẽ khởi tạo sau khi chọn bệnh nhân
+        
+        # Khởi tạo ImportInterface với self.root và hàm callback
+        self.import_interface = ImportInterface(root=self.root, update_callback=self.update_patient_list)
+        
+        # Khởi tạo IntegrationManager
+        from quangstation.integration import IntegrationManager
+        self.integration_manager = IntegrationManager()
+        
+        # Dữ liệu hiện tại
         self.current_patient_id = None
         self.current_plan_id = None
-        self.current_display = None  # Khởi tạo biến current_display
         
         # Thiết lập giao diện người dùng (View)
         self.setup_ui()
@@ -283,11 +425,11 @@ class MainApp:
         self.create_menu()
         
         # Tạo frame chính
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # Tạo panedwindow để phân chia màn hình
-        self.main_pane = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.main_pane = ttk.PanedWindow(self.main_frame, orient=tk.HORIZONTAL)
         self.main_pane.pack(fill=tk.BOTH, expand=True)
         
         # Frame bên trái: danh sách bệnh nhân
@@ -296,15 +438,53 @@ class MainApp:
         
         # Frame bên phải: hiển thị dữ liệu
         self.display_frame = ttk.Frame(self.main_pane)
-        self.main_pane.add(self.display_frame, weight=4)
+        self.main_pane.add(self.display_frame, weight=3)
         
         # Tạo danh sách bệnh nhân
         self.create_patient_list()
         
+        # Tạo vùng hiển thị thông tin bệnh nhân
+        self.patient_info_label = ttk.Label(self.display_frame, text="Chưa chọn bệnh nhân", font=('Helvetica', 14, 'bold'))
+        self.patient_info_label.pack(anchor=tk.W, pady=10)
+        
+        # Tạo các tab cho hiển thị
+        self.display_notebook = ttk.Notebook(self.display_frame)
+        self.display_notebook.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Tab xem hình ảnh (MPR)
+        self.image_tab = ttk.Frame(self.display_notebook)
+        self.display_notebook.add(self.image_tab, text="Hình ảnh")
+        
+        # Tạo MPR viewer
+        try:
+            from quangstation.gui.widgets.mpr_viewer import MPRViewer
+            self.mpr_view = MPRViewer(self.image_tab)
+            self.mpr_view.pack(fill=tk.BOTH, expand=True)
+        except Exception as e:
+            self.logger.error(f"Không thể tạo MPR viewer: {e}")
+            ttk.Label(self.image_tab, text="Không thể tạo MPR viewer").pack(pady=50)
+            self.mpr_view = None
+        
+        # Tab xem DVH
+        self.dvh_tab = ttk.Frame(self.display_notebook)
+        self.display_notebook.add(self.dvh_tab, text="DVH")
+        
+        # Tạo DVH viewer
+        try:
+            from quangstation.gui.widgets.dvh_viewer import DVHViewer
+            self.dvh_view = DVHViewer(self.dvh_tab)
+            self.dvh_view.pack(fill=tk.BOTH, expand=True)
+        except Exception as e:
+            self.logger.error(f"Không thể tạo DVH viewer: {e}")
+            ttk.Label(self.dvh_tab, text="Không thể tạo DVH viewer").pack(pady=50)
+            self.dvh_view = None
+        
+        # Tab thông tin kế hoạch
+        self.plan_tab = ttk.Frame(self.display_notebook)
+        self.display_notebook.add(self.plan_tab, text="Kế hoạch")
+        
         # Thanh trạng thái
-        self.status_var = tk.StringVar()
-        self.status_var.set("Sẵn sàng")
-        self.status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar = ttk.Label(self.root, text="Sẵn sàng", relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def create_menu(self):
@@ -410,58 +590,64 @@ class MainApp:
         self.delete_patient_button.pack(side=tk.LEFT, padx=5)
 
     def update_patient_list(self):
-        """Cập nhật danh sách bệnh nhân từ database"""
-        # Xóa danh sách cũ
-        for item in self.patient_tree.get_children():
-            self.patient_tree.delete(item)
+        """Cập nhật danh sách bệnh nhân"""
+        # Xóa danh sách hiện tại
+        self.patient_listbox.delete(0, tk.END)
         
-        # Lấy danh sách bệnh nhân từ database
-        patients = self.patient_manager.db.get_all_patients()
+        # Lấy danh sách bệnh nhân
+        patients = self.patient_manager.get_all_patients()
         
-        # Thêm vào Treeview
+        # Thêm bệnh nhân vào listbox
         for patient in patients:
-            patient_id = patient[0]
-            name = patient[1]
-            date = patient[2]
-            self.patient_tree.insert("", tk.END, values=(patient_id, name, date))
+            display_name = f"{patient.demographics.get('name', 'Không có tên')} ({patient.patient_id})"
+            self.patient_listbox.insert(tk.END, display_name)
+            self.patient_listbox.itemconfig(tk.END, {'patient_id': patient.patient_id})
+    
+    def on_patient_selected(self, event):
+        """Xử lý sự kiện khi người dùng chọn bệnh nhân từ danh sách
         
-        self.logger.info(f"Đã tải {len(patients)} bệnh nhân")
-
-    def on_patient_select(self, event):
-        """Xử lý sự kiện khi chọn bệnh nhân trong danh sách"""
-        # Lấy item được chọn
-        selection = self.patient_tree.selection()
+        Args:
+            event: Sự kiện ListboxSelect
+        """
+        selection = self.patient_listbox.curselection()
         if not selection:
             return
         
-        # Lấy thông tin bệnh nhân
-        item = self.patient_tree.item(selection[0])
-        patient_id = item["values"][0]
+        index = selection[0]
+        patient_id = self.patient_listbox.itemcget(index, 'patient_id')
         
-        # Hiển thị dữ liệu bệnh nhân
-        self.display_data(patient_id)
-        self.current_patient_id = patient_id
+        if patient_id:
+            # Lấy thông tin chi tiết của bệnh nhân
+            patient = self.patient_manager.db.get_patient(patient_id)
+            
+            if patient:
+                # Cập nhật thông tin bệnh nhân lên giao diện
+                self.update_patient_details(patient)
+                
+                # Lấy danh sách kế hoạch của bệnh nhân
+                plans = self.patient_manager.get_patient_plans(patient_id)
+                
+                # Hiển thị danh sách kế hoạch
+                self.update_plan_list(plans)
+                
+                # Thiết lập phiên làm việc hiện tại
+                self.session_manager.update_current_session({'patient_id': patient_id})
+                
+                # Cập nhật trạng thái
+                self.status_var.set(f"Đã chọn bệnh nhân: {patient.demographics.get('name', 'Không có tên')}")
 
     def display_data(self, patient_id):
-        """Hiển thị dữ liệu bệnh nhân"""
-        if not patient_id:
-            return
-            
-        # Lấy thông tin bệnh nhân
-        patient_data = self.patient_manager.get_patient_details(patient_id)
-        if not patient_data:
-            messagebox.showerror("Lỗi", f"Không tìm thấy thông tin bệnh nhân {patient_id}")
-            return
-            
-        # Cập nhật thông tin bệnh nhân
-        self.patient_info_label.config(text=f"Bệnh nhân: {patient_data.get('name', 'Không tên')}")
+        """Hiển thị dữ liệu bệnh nhân
         
-        # Cập nhật danh sách kế hoạch
-        self.update_plan_list(patient_id)
-        
-        # Cập nhật trạng thái
-        self.current_patient_id = patient_id
-        self.logger.info(f"Đã hiển thị dữ liệu bệnh nhân {patient_id}")
+        Args:
+            patient_id: ID bệnh nhân
+        """
+        # Khởi tạo Display nếu chưa có
+        if self.display is None:
+            self.display = Display(self.root, patient_id, self.patient_manager.db)
+        else:
+            # Cập nhật bệnh nhân mới
+            self.display.update_patient(patient_id)
     
     def update_plan_info(self, plan_id):
         """Cập nhật thông tin kế hoạch trong giao diện"""
@@ -473,15 +659,15 @@ class MainApp:
         if not plan_data:
             self.logger.warning(f"Không tìm thấy thông tin kế hoạch {plan_id}")
             return
-            
-        # Xóa thông tin cũ
-        if hasattr(self, 'plan_info_frame'):
-            for widget in self.plan_info_frame.winfo_children():
-                widget.destroy()
-        else:
-            # Tạo frame nếu chưa có
+        
+        # Tạo frame nếu chưa có
+        if not hasattr(self, 'plan_info_frame'):
             self.plan_info_frame = ttk.Frame(self.main_frame)
             self.plan_info_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        else:
+            # Xóa thông tin cũ
+            for widget in self.plan_info_frame.winfo_children():
+                widget.destroy()
         
         # Hiển thị thông tin kế hoạch
         ttk.Label(self.plan_info_frame, text=f"Kế hoạch: {plan_data.get('name', 'Không tên')}", 
@@ -1084,194 +1270,273 @@ class MainApp:
             messagebox.showerror("Lỗi", f"Không thể xóa kế hoạch: {plan_name}. Vui lòng thử lại sau.")
 
     def auto_contour(self):
-        """Tạo contour tự động cho cấu trúc giải phẫu"""
+        """Tạo contour tự động với AI"""
+        # Kiểm tra xem đã chọn bệnh nhân và kế hoạch chưa
         if not self.current_patient_id:
-            messagebox.showwarning("Cảnh báo", "Vui lòng chọn bệnh nhân trước")
+            messagebox.showerror("Lỗi", "Vui lòng chọn bệnh nhân trước khi tạo contour tự động")
             return
-        
-        # Kiểm tra xem đã tải dữ liệu hình ảnh chưa
-        if not hasattr(self, 'current_display') or not self.current_display:
-            messagebox.showwarning("Cảnh báo", "Vui lòng tải dữ liệu hình ảnh trước")
+            
+        if not self.current_plan_id:
+            messagebox.showerror("Lỗi", "Vui lòng chọn kế hoạch trước khi tạo contour tự động")
             return
+            
+        # Kiểm tra xem có dữ liệu hình ảnh không
+        current_session = self.session_manager.get_current_session()
+        if not current_session or 'image_data' not in current_session:
+            messagebox.showerror("Lỗi", "Không tìm thấy dữ liệu hình ảnh. Vui lòng tải hình ảnh trước")
+            return
+            
+        # Tạo dialog cho auto contour
+        auto_dialog = tk.Toplevel(self.root)
+        auto_dialog.title("Phân đoạn Cấu trúc Tự động")
+        auto_dialog.geometry("500x600")
+        auto_dialog.transient(self.root)
+        auto_dialog.grab_set()
         
-        try:
-            # Tạo cửa sổ dialog
-            auto_dialog = tk.Toplevel(self.root)
-            auto_dialog.title("Phân đoạn cấu trúc tự động")
-            auto_dialog.geometry("500x600")
-            auto_dialog.resizable(False, False)
-            auto_dialog.transient(self.root)
-            auto_dialog.grab_set()
+        # Frame chính
+        main_frame = ttk.Frame(auto_dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Tiêu đề
+        ttk.Label(main_frame, text="Phân đoạn Tự động với AI", font=('Helvetica', 16, 'bold')).pack(pady=10)
+        
+        # Chọn mô hình AI
+        model_frame = ttk.LabelFrame(main_frame, text="Mô hình AI", padding="10")
+        model_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(model_frame, text="Loại mô hình:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        model_type_var = tk.StringVar(value="unet")
+        ttk.Combobox(model_frame, textvariable=model_type_var, values=["unet", "segnet", "custom"]).grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(model_frame, text="Đường dẫn mô hình (tùy chọn):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        model_path_var = tk.StringVar()
+        model_path_entry = ttk.Entry(model_frame, textvariable=model_path_var, width=30)
+        model_path_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        
+        def browse_model():
+            path = filedialog.askopenfilename(
+                title="Chọn mô hình",
+                filetypes=[("Model Files", "*.h5 *.pb *.onnx *.pt"), ("All Files", "*.*")]
+            )
+            if path:
+                model_path_var.set(path)
+        
+        ttk.Button(model_frame, text="Duyệt...", command=browse_model).grid(row=1, column=2, padx=5, pady=5)
+        
+        # Chọn cấu trúc để phân đoạn
+        struct_frame = ttk.LabelFrame(main_frame, text="Chọn cấu trúc để phân đoạn", padding="10")
+        struct_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        # Danh sách cấu trúc
+        organs = [
+            ("Brain", "brain"),
+            ("Brainstem", "brainstem"),
+            ("Spinal Cord", "spinal_cord"),
+            ("Left Parotid", "parotid_l"),
+            ("Right Parotid", "parotid_r"),
+            ("Left Eye", "eye_l"),
+            ("Right Eye", "eye_r"),
+            ("Left Lens", "lens_l"),
+            ("Right Lens", "lens_r"),
+            ("Left Optic Nerve", "optic_nerve_l"),
+            ("Right Optic Nerve", "optic_nerve_r"),
+            ("Optic Chiasm", "optic_chiasm"),
+            ("Pituitary", "pituitary"),
+            ("Left Cochlea", "cochlea_l"),
+            ("Right Cochlea", "cochlea_r"),
+            ("Mandible", "mandible"),
+            ("Larynx", "larynx"),
+            ("Left Lung", "lung_l"),
+            ("Right Lung", "lung_r"),
+            ("Heart", "heart"),
+            ("Liver", "liver"),
+            ("Left Kidney", "kidney_l"),
+            ("Right Kidney", "kidney_r"),
+            ("Stomach", "stomach"),
+            ("Bowel", "bowel"),
+            ("Bladder", "bladder"),
+            ("Rectum", "rectum"),
+            ("Prostate", "prostate"),
+            ("Body", "body")
+        ]
+        
+        # Tạo canvas với scrollbar
+        canvas = tk.Canvas(struct_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(struct_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Biến lưu trữ checkbox
+        organ_vars = {}
+        
+        # Thêm các checkbox
+        for i, (name, id_str) in enumerate(organs):
+            var = tk.BooleanVar(value=False)
+            organ_vars[id_str] = var
+            ttk.Checkbutton(scrollable_frame, text=name, variable=var).grid(row=i, column=0, sticky=tk.W, padx=5, pady=3)
+        
+        # Frame trạng thái
+        status_frame = ttk.LabelFrame(main_frame, text="Tiến trình", padding="10")
+        status_frame.pack(fill=tk.X, pady=10)
+        
+        status_var = tk.StringVar(value="Sẵn sàng phân đoạn")
+        ttk.Label(status_frame, textvariable=status_var).pack(fill=tk.X, pady=5)
+        
+        progress_var = tk.IntVar(value=0)
+        progress = ttk.Progressbar(status_frame, variable=progress_var, maximum=100)
+        progress.pack(fill=tk.X, pady=5)
+        
+        # Frame nút
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        # Hàm đóng dialog
+        def cancel():
+            auto_dialog.destroy()
+        
+        # Hàm xử lý sự kiện khi nhấn OK
+        def run_auto_segmentation():
+            # Lấy danh sách các cơ quan được chọn
+            selected_organs = [k for k, v in organ_vars.items() if v.get()]
             
-            # Tạo frame chứa các phần tử giao diện
-            main_frame = ttk.Frame(auto_dialog, padding=10)
-            main_frame.pack(fill=tk.BOTH, expand=True)
+            if not selected_organs:
+                messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất một cấu trúc để phân đoạn")
+                return
             
-            # Danh sách các cấu trúc có thể tự động phân đoạn
-            organ_frame = ttk.LabelFrame(main_frame, text="Chọn cấu trúc cần phân đoạn")
-            organ_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+            # Lấy thông tin mô hình
+            model_type = model_type_var.get()
+            model_path = model_path_var.get() if model_path_var.get() else None
             
-            # Danh sách cấu trúc giải phẫu
-            organs = [
-                ("Brain (Não)", "brain"),
-                ("Brainstem (Thân não)", "brainstem"),
-                ("Spinal Cord (Tủy sống)", "spinal_cord"),
-                ("Mandible (Xương hàm)", "mandible"),
-                ("Parotid L (Tuyến mang tai trái)", "parotid_l"),
-                ("Parotid R (Tuyến mang tai phải)", "parotid_r"),
-                ("Eyes (Mắt)", "eyes"),
-                ("Lens (Thủy tinh thể)", "lens"),
-                ("Optic Nerve (Dây thần kinh thị giác)", "optic_nerve"),
-                ("Optic Chiasm (Giao thoa thị giác)", "optic_chiasm"),
-                ("Lung L (Phổi trái)", "lung_l"),
-                ("Lung R (Phổi phải)", "lung_r"),
-                ("Heart (Tim)", "heart"),
-                ("Liver (Gan)", "liver"),
-                ("Stomach (Dạ dày)", "stomach"),
-                ("Kidneys (Thận)", "kidneys"),
-                ("Bladder (Bàng quang)", "bladder"),
-                ("Rectum (Trực tràng)", "rectum"),
-                ("Femur L (Xương đùi trái)", "femur_l"),
-                ("Femur R (Xương đùi phải)", "femur_r"),
-                ("Body (Đường viền cơ thể)", "body")
-            ]
-            
-            # Tạo frame cuộn cho danh sách cơ quan dài
-            scroll_frame = ttk.Frame(organ_frame)
-            scroll_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Tạo canvas và scrollbar
-            canvas = tk.Canvas(scroll_frame)
-            scrollbar = ttk.Scrollbar(scroll_frame, orient="vertical", command=canvas.yview)
-            scroll_content = ttk.Frame(canvas)
-            
-            # Cấu hình canvas
-            canvas.configure(yscrollcommand=scrollbar.set)
-            canvas.pack(side="left", fill="both", expand=True)
-            scrollbar.pack(side="right", fill=tk.Y)
-            canvas.create_window((0, 0), window=scroll_content, anchor="nw")
-            
-            # Biến để lưu các checkbutton
-            organ_vars = {}
-            
-            # Tạo checkbutton cho từng cơ quan
-            for i, (organ_name, organ_id) in enumerate(organs):
-                var = tk.BooleanVar(value=False)
-                organ_vars[organ_id] = var
-                ttk.Checkbutton(scroll_content, text=organ_name, variable=var).grid(
-                    row=i, column=0, sticky=tk.W, pady=2)
-            
-            # Cấu hình cuộn
-            scroll_content.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-            
-            # Frame chứa các tùy chọn
-            options_frame = ttk.LabelFrame(main_frame, text="Tùy chọn phân đoạn")
-            options_frame.pack(fill=tk.X, pady=10)
-            
-            # Tùy chọn mô hình AI
-            ttk.Label(options_frame, text="Mô hình AI:").grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
-            model_var = tk.StringVar(value="model_standard")
-            ttk.Combobox(options_frame, textvariable=model_var, 
-                        values=["model_standard", "model_fast", "model_high_quality"], 
-                        state="readonly", width=20).grid(row=0, column=1, pady=5, padx=5)
-            
-            # Tùy chọn độ chi tiết
-            ttk.Label(options_frame, text="Độ chi tiết:").grid(row=1, column=0, sticky=tk.W, pady=5, padx=5)
-            detail_var = tk.StringVar(value="medium")
-            ttk.Combobox(options_frame, textvariable=detail_var, 
-                        values=["low", "medium", "high"], 
-                        state="readonly", width=20).grid(row=1, column=1, pady=5, padx=5)
-            
-            # Thanh tiến trình
-            progress_var = tk.DoubleVar()
-            progress = ttk.Progressbar(main_frame, orient="horizontal", length=100, mode="determinate", variable=progress_var)
-            progress.pack(fill=tk.X, pady=10)
+            # Cập nhật UI
+            status_var.set("Đang phân đoạn... Vui lòng đợi")
             progress_var.set(0)
+            auto_dialog.update()
             
-            # Label hiển thị trạng thái
-            status_var = tk.StringVar(value="Sẵn sàng phân đoạn tự động")
-            status_label = ttk.Label(main_frame, textvariable=status_var)
-            status_label.pack(pady=5)
+            # Ẩn nút OK trong quá trình xử lý
+            btn_frame.grid_remove()
             
-            # Hàm thực hiện phân đoạn tự động
-            def run_auto_segmentation():
-                # Lấy danh sách các cơ quan được chọn
-                selected_organs = [organ_id for organ_id, var in organ_vars.items() if var.get()]
+            # Gọi hàm thực hiện phân đoạn tự động
+            self.create_auto_contours(selected_organs, model_type, model_path, status_var, progress_var, auto_dialog, btn_frame)
+        
+        cancel_button = ttk.Button(btn_frame, text="Hủy", command=cancel)
+        cancel_button.pack(side=tk.RIGHT, padx=5)
+        
+        ok_button = ttk.Button(btn_frame, text="Bắt đầu phân đoạn", command=run_auto_segmentation)
+        ok_button.pack(side=tk.RIGHT, padx=5)
+        
+    def create_auto_contours(self, selected_organs, model_type, model_path, status_var, progress_var, auto_dialog, btn_frame):
+        """
+        Thực hiện phân đoạn tự động và tạo contour
+        
+        Args:
+            selected_organs: Danh sách tên các cơ quan cần phân đoạn
+            model_type: Loại mô hình AI
+            model_path: Đường dẫn đến file mô hình (nếu có)
+            status_var: Biến StringVar để cập nhật trạng thái
+            progress_var: Biến IntVar để cập nhật tiến trình
+            auto_dialog: Dialog phân đoạn tự động
+            btn_frame: Frame chứa các nút điều khiển
+        """
+        try:
+            # Tạo đối tượng ContourTools nếu chưa có
+            from quangstation.contouring.contour_tools import ContourTools
+            
+            # Lấy dữ liệu từ phiên làm việc hiện tại
+            current_session = self.session_manager.get_current_session()
+            if not current_session or 'image_data' not in current_session:
+                raise ValueError("Không tìm thấy dữ liệu ảnh trong phiên làm việc hiện tại")
+            
+            # Chuẩn bị ContourTools
+            if not hasattr(self, 'contour_tools') or self.contour_tools is None:
+                # Lấy dữ liệu ảnh và thông tin không gian
+                image_data = current_session['image_data']
+                spacing = current_session.get('spacing', (1.0, 1.0, 1.0))
+                origin = current_session.get('origin', (0.0, 0.0, 0.0))
+                direction = current_session.get('direction', (1,0,0,0,1,0,0,0,1))
                 
-                if not selected_organs:
-                    messagebox.showwarning("Cảnh báo", "Vui lòng chọn ít nhất một cấu trúc để phân đoạn")
-                    return
+                # Khởi tạo ContourTools
+                self.contour_tools = ContourTools(
+                    image_data=image_data,
+                    spacing=spacing,
+                    origin=origin,
+                    direction=direction
+                )
                 
-                # Cập nhật UI
-                status_var.set("Đang phân đoạn... Vui lòng đợi")
-                progress_var.set(0)
+                # Nếu đã có cấu trúc contour, cập nhật vào contour_tools
+                if 'structures' in current_session:
+                    for struct_name, struct_data in current_session['structures'].items():
+                        if 'mask' in struct_data:
+                            self.contour_tools.add_structure(struct_name, struct_data['mask'])
+            
+            # Tạo contour cho từng cơ quan đã chọn
+            total_organs = len(selected_organs)
+            for i, organ in enumerate(selected_organs):
+                # Cập nhật trạng thái
+                status_var.set(f"Đang tạo contour cho {organ}...")
+                progress_var.set(int(20 + (i / total_organs) * 70))
                 auto_dialog.update()
                 
-                try:
-                    # Mô phỏng quá trình phân đoạn
-                    # Trong thực tế, đây sẽ là cuộc gọi đến module AI để phân đoạn
-                    total_organs = len(selected_organs)
-                    
-                    for i, organ_id in enumerate(selected_organs):
-                        # Cập nhật tiến độ
-                        progress_var.set((i / total_organs) * 100)
-                        status_var.set(f"Đang phân đoạn {organs[next(j for j, (_, oid) in enumerate(organs) if oid == organ_id)][0]}...")
-                        auto_dialog.update()
-                        
-                        # Mô phỏng thời gian xử lý
-                        import time
-                        time.sleep(0.5)  # Trong ứng dụng thực, đây sẽ là thời gian để AI xử lý
-                        
-                        # TODO: Tích hợp với ContourTools để tạo contour thật
-                        # Trong ứng dụng thực, đây sẽ là các đường viền do AI tạo ra
-                        try:
-                            # Tạo contour giả lập cho mục đích demo
-                            from quangstation.contouring.contour_tools import ContourTools
-                            
-                            # Lấy dữ liệu hình ảnh
-                            image_data = self.session_manager.get_image_data(self.current_patient_id, self.current_plan_id)
-                            
-                            if image_data is not None:
-                                # Tạo đối tượng ContourTools
-                                contour_tools = self.session_manager.get_contour_tools()
-                                
-                                if contour_tools is None:
-                                    # Tạo mới nếu chưa có
-                                    contour_tools = ContourTools(image_data)
-                                    self.session_manager.set_contour_tools(contour_tools)
-                                
-                                # Tạo contour cho cấu trúc
-                                contour_tools.add_structure(organs[next(j for j, (_, oid) in enumerate(organs) if oid == organ_id)][0])
-                                
-                                # Lưu contour vào session
-                                self.session_manager.save_contours()
-                        except Exception as contour_error:
-                            self.logger.error(f"Lỗi khi tạo contour: {str(contour_error)}")
-                    
-                    # Hoàn thành
-                    progress_var.set(100)
-                    status_var.set("Phân đoạn hoàn tất!")
-                    messagebox.showinfo("Thành công", f"Đã phân đoạn {total_organs} cấu trúc thành công")
-                    auto_dialog.destroy()
-                    
-                    # Ghi log
-                    self.logger.info(f"Đã phân đoạn tự động {total_organs} cấu trúc")
-                    
-                except Exception as error:
-                    status_var.set(f"Lỗi: {str(error)}")
-                    self.logger.error(f"Lỗi khi phân đoạn tự động: {str(error)}")
-                    messagebox.showerror("Lỗi", f"Không thể phân đoạn tự động: {str(error)}")
+                # Mô phỏng thời gian xử lý
+                import time
+                time.sleep(0.5)  # Trong ứng dụng thực, đây sẽ là thời gian để AI xử lý
+                
+                # Tự động tạo contour sử dụng AI hoặc thuật toán phân đoạn
+                if organ.lower() == "body":
+                    # Tạo contour body đơn giản bằng thresholding
+                    self.contour_tools.create_body_contour(threshold=-500)  # HU threshold cho body
+                else:
+                    # Sử dụng mô hình AI được chọn
+                    if model_path and os.path.exists(model_path):
+                        success = self.contour_tools.auto_segment_with_model(
+                            organ_name=organ,
+                            model_path=model_path,
+                            model_type=model_type
+                        )
+                    else:
+                        # Sử dụng phương pháp phân đoạn mặc định nếu không có mô hình
+                        success = self.contour_tools.auto_segment(organ)
             
-            # Frame chứa các nút
-            button_frame = ttk.Frame(main_frame)
-            button_frame.pack(fill=tk.X, pady=10)
+            # Lưu contours vào phiên làm việc hiện tại
+            self.save_contours()
             
-            ttk.Button(button_frame, text="Hủy", command=auto_dialog.destroy).pack(side=tk.RIGHT, padx=5)
-            ttk.Button(button_frame, text="Bắt đầu phân đoạn", command=run_auto_segmentation).pack(side=tk.RIGHT, padx=5)
+            # Cập nhật trạng thái
+            status_var.set("Hoàn thành phân đoạn tự động!")
+            progress_var.set(100)
+            auto_dialog.update()
             
-        except Exception as error:
-            self.logger.error(f"Lỗi khi mở công cụ phân đoạn tự động: {str(error)}")
-            messagebox.showerror("Lỗi", f"Không thể mở công cụ phân đoạn tự động: {str(error)}")
+            # Hiển thị thông báo thành công
+            messagebox.showinfo("Thành công", f"Đã tạo contour cho {total_organs} cơ quan")
+            
+            # Cập nhật hiển thị
+            self.display_data(self.current_patient_id)
+            
+            # Đóng dialog
+            auto_dialog.destroy()
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi tạo contour tự động: {str(e)}")
+            status_var.set(f"Lỗi: {str(e)}")
+            progress_var.set(0)
+            messagebox.showerror("Lỗi", f"Không thể tạo contour tự động: {str(e)}")
+            
+            # Hiển thị lại nút OK
+            btn_frame.grid()
+            ok_button = [child for child in btn_frame.winfo_children() if child.cget("text") == "Bắt đầu phân đoạn"]
+            if ok_button:
+                ok_button[0].config(state=tk.NORMAL)
+            auto_dialog.update()
 
     def calculate_dose(self):
         """Tính toán phân bố liều xạ trị"""
@@ -1351,6 +1616,41 @@ class MainApp:
                          values=["auto", "cuda:0", "cuda:1"], 
                          width=10).grid(row=6, column=1, sticky=tk.W, pady=5)
             
+            # Kỹ thuật xạ trị
+            ttk.Label(option_grid, text="Kỹ thuật xạ trị:").grid(row=7, column=0, sticky=tk.W, pady=5)
+            technique_var = tk.StringVar(value="VMAT")
+            ttk.Combobox(option_grid, textvariable=technique_var, 
+                         values=["3DCRT", "IMRT", "VMAT", "SBRT", "SRS"], 
+                         width=10).grid(row=7, column=1, sticky=tk.W, pady=5)
+            
+            # Bảng hiệu chỉnh và các tùy chọn khác
+            ttk.Label(option_grid, text="File hiệu chuẩn:").grid(row=8, column=0, sticky=tk.W, pady=5)
+            calibration_file_var = tk.StringVar()
+            calibration_entry = ttk.Entry(option_grid, textvariable=calibration_file_var, width=20)
+            calibration_entry.grid(row=8, column=1, sticky=tk.W, pady=5)
+            
+            # Hiệu chỉnh không đồng nhất
+            ttk.Label(option_grid, text="Hiệu chỉnh không đồng nhất:").grid(row=9, column=0, sticky=tk.W, pady=5)
+            hetero_correction_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(option_grid, variable=hetero_correction_var).grid(row=9, column=1, sticky=tk.W, pady=5)
+            
+            # Tùy chọn Monte Carlo
+            ttk.Label(option_grid, text="Số lịch sử MC:").grid(row=10, column=0, sticky=tk.W, pady=5)
+            mc_histories_var = tk.IntVar(value=10000)
+            ttk.Spinbox(option_grid, from_=1000, to=1000000, increment=1000, textvariable=mc_histories_var, width=10).grid(row=10, column=1, sticky=tk.W, pady=5)
+            
+            # Số lần lặp tối đa
+            ttk.Label(option_grid, text="Số lần lặp tối đa:").grid(row=11, column=0, sticky=tk.W, pady=5)
+            max_iterations_var = tk.IntVar(value=100)
+            ttk.Spinbox(option_grid, from_=10, to=1000, increment=10, textvariable=max_iterations_var, width=10).grid(row=11, column=1, sticky=tk.W, pady=5)
+            
+            # Độ phân giải
+            ttk.Label(option_grid, text="Độ phân giải (mm):").grid(row=12, column=0, sticky=tk.W, pady=5)
+            resolution_var = tk.DoubleVar(value=2.5)
+            ttk.Combobox(option_grid, textvariable=resolution_var, 
+                         values=[1.0, 2.0, 2.5, 3.0, 5.0], 
+                         width=10).grid(row=12, column=1, sticky=tk.W, pady=5)
+            
             # Thông tin ước tính
             info_frame = ttk.LabelFrame(main_frame, text="Thông tin ước tính")
             info_frame.pack(fill=tk.X, pady=10)
@@ -1393,89 +1693,144 @@ class MainApp:
                 dose_dialog.update()
                 
                 try:
-                    # TODO: Tích hợp với module tính liều thực tế
-                    # Mô phỏng quá trình tính toán
+                    # Tích hợp với module tính liều thực tế
+                    from quangstation.dose_calculation.dose_engine_wrapper import DoseCalculator
                     
-                    # Tích hợp với module tính liều thực
-                    from quangstation.dose_calculation.dose_calculator import DoseCalculator
+                    # Lấy dữ liệu từ phiên làm việc hiện tại
+                    current_session = self.session_manager.get_current_session()
+                    if not current_session:
+                        raise ValueError("Không tìm thấy phiên làm việc hiện tại")
                     
-                    # Lấy dữ liệu cần thiết
-                    image_data = self.session_manager.get_image_data(self.current_patient_id, self.current_plan_id)
-                    structures = self.session_manager.get_structure_data(self.current_patient_id, self.current_plan_id)
-                    plan_config = self.session_manager.get_plan_config(self.current_patient_id, self.current_plan_id)
-                    
-                    if image_data is not None and structures is not None and plan_config is not None:
-                        # Tạo đối tượng tính liều
-                        calculator = DoseCalculator(algorithm=algorithm)
-                        
-                        # Thiết lập dữ liệu đầu vào
-                        calculator.set_image_data(image_data)
-                        calculator.set_structures(structures)
-                        calculator.set_plan_config(plan_config)
-                    
-                    # Mô phỏng các bước tính liều
-                    steps = [
-                        ("Đang tải dữ liệu CT...", 5, 10),
-                        ("Đang chuẩn bị hình học mô giả...", 10, 25),
-                        ("Đang tính toán liều chùm tia 1/3...", 25, 40),
-                        ("Đang tính toán liều chùm tia 2/3...", 40, 60),
-                        ("Đang tính toán liều chùm tia 3/3...", 60, 80),
-                        ("Đang tính tổng liều...", 80, 90),
-                        ("Đang lưu kết quả...", 90, 100)
-                    ]
-                    
-                    # Mô phỏng tiến trình tính toán
-                    import time
-                    for step_text, start_progress, end_progress in steps:
-                        status_var.set(step_text)
-                        for i in range(start_progress, end_progress):
-                            progress_var.set(i)
-                            dose_dialog.update()
-                            time.sleep(0.05)  # Mô phỏng thời gian xử lý
-                    
-                    # Hoàn thành tính toán
-                    progress_var.set(100)
-                    status_var.set("Tính toán hoàn tất!")
-                    
-                    # Hiển thị thông báo thành công
-                    messagebox.showinfo("Thành công", "Đã tính toán liều xạ trị thành công.")
-                    
-                    # Lưu kết quả vào session
-                    import numpy as np
-                    dose_data = np.random.rand(100, 100, 100) * 70  # Tạo dữ liệu giả
-                    dose_metadata = {
-                        "algorithm": algorithm,
-                        "grid_size": grid_size,
-                        "calculation_time": "00:02:34",
-                        "calculation_date": datetime.now().isoformat()
-                    }
-                    
-                    # Lưu vào session
-                    self.session_manager.save_dose_calculation(
-                        dose_data=dose_data,
-                        dose_metadata=dose_metadata
+                    # Khởi tạo bộ tính toán liều với thuật toán được chọn
+                    dose_calculator = DoseCalculator(
+                        algorithm=algorithm,
+                        resolution_mm=float(grid_size_var.get())
                     )
                     
-                    # Ghi log
-                    self.logger.info(f"Đã tính toán liều thành công với thuật toán {algorithm}")
+                    # Thiết lập dữ liệu bệnh nhân (ảnh CT)
+                    if 'image_data' not in current_session:
+                        raise ValueError("Không tìm thấy dữ liệu ảnh trong phiên làm việc hiện tại")
                     
-                    # Đóng dialog
-                    dose_dialog.destroy()
+                    # Cập nhật trạng thái
+                    status_var.set("Đang thiết lập dữ liệu bệnh nhân...")
+                    progress_var.set(10)
+                    dose_dialog.update()
                     
-                    # TODO: Cập nhật giao diện hiển thị liều
+                    # Thiết lập dữ liệu CT và spacing
+                    image_data = current_session['image_data']
+                    spacing = current_session.get('spacing', (1.0, 1.0, 1.0))
+                    dose_calculator.set_patient_data(image_data, spacing)
+                    
+                    # Thiết lập bảng chuyển đổi HU sang mật độ
+                    calibration_file = calibration_file_var.get()
+                    if calibration_file and os.path.exists(calibration_file):
+                        dose_calculator.set_hu_to_density_file(calibration_file)
+                    
+                    # Bật/tắt hiệu chỉnh không đồng nhất
+                    dose_calculator.set_heterogeneity_correction(hetero_correction_var.get())
+                    
+                    # Thiết lập các cấu trúc
+                    if 'structures' in current_session:
+                        status_var.set("Đang thiết lập cấu trúc...")
+                        progress_var.set(15)
+                        dose_dialog.update()
+                        
+                        for struct_name, struct_data in current_session['structures'].items():
+                            if 'mask' in struct_data:
+                                dose_calculator.add_structure(struct_name, struct_data['mask'])
+                    
+                    # Thiết lập các chùm tia
+                    if 'beams' in current_session:
+                        status_var.set("Đang thiết lập chùm tia...")
+                        progress_var.set(20)
+                        dose_dialog.update()
+                        
+                        for beam in current_session['beams']:
+                            dose_calculator.add_beam(beam)
+                    else:
+                        # Tạo chùm tia mặc định nếu không có
+                        default_beam = {
+                            'iso_center': [
+                                image_data.shape[0] // 2,
+                                image_data.shape[1] // 2,
+                                image_data.shape[2] // 2
+                            ],
+                            'gantry_angle': 0,
+                            'collimator_angle': 0,
+                            'couch_angle': 0,
+                            'sad': 1000,  # mm
+                            'field_size': [100, 100],  # mm
+                            'energy': 6,  # MV
+                            'dose_rate': 600,  # MU/min
+                            'mu': 100
+                        }
+                        dose_calculator.add_beam(default_beam)
+                    
+                    # Thiết lập các tùy chọn tính toán
+                    options = {
+                        'grid_size': int(grid_size_var.get()),
+                        'max_iterations': int(max_iterations_var.get()),
+                        'monte_carlo_histories': int(mc_histories_var.get()) if algorithm_var.get() == 'monte_carlo' else 0,
+                        'dose_grid_resolution': float(resolution_var.get())
+                    }
+                    dose_calculator.set_calculation_options(options)
+                    
+                    # Tính toán liều
+                    status_var.set("Đang tính toán liều...")
+                    progress_var.set(30)
+                    dose_dialog.update()
+                    
+                    # Tính toán liều với kỹ thuật được chọn
+                    technique = technique_var.get()
+                    structures = {}
+                    if 'structures' in current_session:
+                        structures = current_session['structures']
+                    
+                    dose_matrix = dose_calculator.calculate_dose(technique=technique, structures=structures)
+                    
+                    # Cập nhật giá trị liều tối đa
+                    max_dose = np.max(dose_matrix)
+                    current_session['max_dose'] = float(max_dose)
+                    
+                    # Lưu ma trận liều vào phiên làm việc
+                    current_session['dose_matrix'] = dose_matrix
+                    
+                    # Cập nhật thông tin kế hoạch với liều đã tính
+                    if 'plans' not in current_session:
+                        current_session['plans'] = {}
+                    
+                    if self.current_plan_id not in current_session['plans']:
+                        current_session['plans'][self.current_plan_id] = {}
+                    
+                    current_session['plans'][self.current_plan_id]['has_dose'] = True
+                    current_session['plans'][self.current_plan_id]['max_dose'] = float(max_dose)
+                    current_session['plans'][self.current_plan_id]['dose_algorithm'] = algorithm_var.get()
+                    current_session['plans'][self.current_plan_id]['technique'] = technique_var.get()
+                    
+                    # Cập nhật phiên làm việc
+                    self.session_manager.update_current_session(current_session)
+                    
+                    # Cập nhật trạng thái
+                    status_var.set("Hoàn thành tính toán liều!")
+                    progress_var.set(100)
+                    
+                    # Hiển thị thông tin liều
+                    messagebox.showinfo("Thành công", f"Đã tính toán liều thành công!\nLiều tối đa: {max_dose:.2f} Gy")
+                    
+                    # Cập nhật hiển thị liều
                     self.update_dose_display()
+
+                except Exception as e:
+                    self.logger.error(f"Lỗi khi tính toán liều: {str(e)}")
+                    status_var.set(f"Lỗi: {str(e)}")
+                    progress_var.set(0)
+                    messagebox.showerror("Lỗi", f"Không thể tính toán liều: {str(e)}")
+                finally:
+                    # Ghi log
+                    self.logger.info(f"Đã tính toán liều với thuật toán {algorithm_var.get()}")
                     
-                    # Hiển thị DVH nếu có
-                    if hasattr(self, 'dvh_view') and self.dvh_view:
-                        self.dvh_view.update_dvh()
-                    
-                    # Hiển thị thông báo thành công
-                    messagebox.showinfo("Thành công", "Đã tính toán liều thành công!")
-                    
-                except Exception as error:
-                    status_var.set(f"Lỗi: {str(error)}")
-                    self.logger.error(f"Lỗi khi tính toán liều: {str(error)}")
-                    messagebox.showerror("Lỗi", f"Không thể tính toán liều: {str(error)}")
+                    # Đóng dialog sau khi hoàn thành
+                    dose_dialog.destroy()
             
             # Frame chứa các nút
             button_frame = ttk.Frame(main_frame)
@@ -1921,38 +2276,99 @@ class MainApp:
     
     def update_dose_display(self):
         """Cập nhật hiển thị liều sau khi tính toán hoặc tối ưu hóa"""
+        if not self.current_patient_id or not self.current_plan_id:
+            return
+        
         try:
+            # Lấy phiên làm việc hiện tại
+            current_session = self.session_manager.get_current_session()
+            if not current_session:
+                return
+            
             # Kiểm tra xem có dữ liệu liều không
-            if not self.session_manager.has_dose_calculation(self.current_patient_id, self.current_plan_id):
+            if 'dose_matrix' not in current_session:
+                self.logger.warning("Không tìm thấy dữ liệu liều trong phiên làm việc hiện tại")
                 return
+            
+            # Lấy ma trận liều
+            dose_matrix = current_session['dose_matrix']
+            
+            # Cập nhật hiển thị liều trên các view MPR
+            if hasattr(self, 'mpr_view') and self.mpr_view:
+                # Thiết lập dữ liệu liều cho MPR view
+                self.mpr_view.set_dose_data(dose_matrix)
                 
-            # Lấy dữ liệu liều
-            dose_data = self.session_manager.get_dose_data(self.current_patient_id, self.current_plan_id)
-            if not dose_data:
-                return
+                # Cập nhật màu sắc và thông số hiển thị liều
+                if 'plans' in current_session and self.current_plan_id in current_session['plans']:
+                    plan_data = current_session['plans'][self.current_plan_id]
+                    max_dose = plan_data.get('max_dose', np.max(dose_matrix) if dose_matrix is not None else 0)
+                    self.mpr_view.set_dose_display_params(
+                        max_dose=max_dose,
+                        colormap='jet',
+                        alpha=0.5
+                    )
                 
-            # Cập nhật hiển thị liều trong các view
-            if hasattr(self, 'axial_view') and self.axial_view:
-                self.axial_view.update_dose_display(dose_data)
+                # Kích hoạt hiển thị liều
+                self.mpr_view.toggle_dose_display(True)
                 
-            if hasattr(self, 'sagittal_view') and self.sagittal_view:
-                self.sagittal_view.update_dose_display(dose_data)
-                
-            if hasattr(self, 'coronal_view') and self.coronal_view:
-                self.coronal_view.update_dose_display(dose_data)
-                
-            # Cập nhật hiển thị DVH nếu có
-            if hasattr(self, 'dvh_view') and self.dvh_view:
-                self.dvh_view.update_dvh()
-                
-            # Cập nhật thông tin kế hoạch
-            self.display_data(self.current_patient_id)
+                # Cập nhật hiển thị
+                self.mpr_view.update_display()
+            
+            # Cập nhật histogram liều-thể tích nếu có
+            self.update_dvh_display()
             
             self.logger.info("Đã cập nhật hiển thị liều")
             
         except Exception as e:
             self.logger.error(f"Lỗi khi cập nhật hiển thị liều: {str(e)}")
-    
+            
+    def update_dvh_display(self):
+        """Cập nhật hiển thị histogram liều-thể tích (DVH)"""
+        if not self.current_patient_id or not self.current_plan_id:
+            return
+        
+        try:
+            # Lấy phiên làm việc hiện tại
+            current_session = self.session_manager.get_current_session()
+            if not current_session:
+                return
+            
+            # Kiểm tra xem có dữ liệu liều không
+            if 'dose_matrix' not in current_session or 'structures' not in current_session:
+                return
+            
+            # Lấy ma trận liều và cấu trúc
+            dose_matrix = current_session['dose_matrix']
+            structures = current_session['structures']
+            
+            # Tính toán và hiển thị DVH nếu có giao diện DVH
+            if hasattr(self, 'dvh_view') and self.dvh_view:
+                dvhs = {}
+                
+                # Tính DVH cho từng cấu trúc
+                for struct_name, struct_data in structures.items():
+                    if 'mask' in struct_data:
+                        # Lấy mask của cấu trúc
+                        mask = struct_data['mask']
+                        
+                        # Tính DVH
+                        doses = dose_matrix[mask > 0]
+                        if len(doses) > 0:
+                            # Tạo histogram
+                            hist, bin_edges = np.histogram(doses, bins=100, range=(0, np.max(dose_matrix)))
+                            dvhs[struct_name] = {
+                                'hist': hist,
+                                'bin_edges': bin_edges,
+                                'color': struct_data.get('color', (1.0, 0.0, 0.0))
+                            }
+                
+                # Cập nhật hiển thị DVH
+                self.dvh_view.set_dvh_data(dvhs)
+                self.dvh_view.update_display()
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi cập nhật hiển thị DVH: {str(e)}")
+
     def create_report(self, output_path):
         """
         Tạo báo cáo kế hoạch xạ trị
@@ -2094,7 +2510,7 @@ class MainApp:
         self.menu_file.entryconfig("Xuất kế hoạch", command=self.export_plan)
         
         # Các sự kiện bệnh nhân
-        self.patient_tree.bind('<<TreeviewSelect>>', self.on_patient_select)
+        self.patient_tree.bind('<<TreeviewSelect>>', self.on_patient_selected)
         self.menu_patient.entryconfig("Thêm bệnh nhân mới", command=self.add_new_patient)
         self.menu_patient.entryconfig("Xóa bệnh nhân", command=self.delete_patient)
         
@@ -2115,6 +2531,422 @@ class MainApp:
         
         # Ghi log
         self.logger.info("Đã thiết lập các trình xử lý sự kiện")
+
+    def save_contours(self):
+        """
+        Lưu các contour từ contour_tools vào phiên làm việc hiện tại
+        """
+        if not hasattr(self, 'contour_tools') or self.contour_tools is None:
+            self.logger.warning("Không thể lưu contours: contour_tools chưa được khởi tạo")
+            return
+        
+        try:
+            # Lấy phiên làm việc hiện tại
+            current_session = self.session_manager.get_current_session()
+            if not current_session:
+                self.logger.warning("Không tìm thấy phiên làm việc hiện tại")
+                return
+            
+            # Nếu không có key 'structures' trong session, tạo mới
+            if 'structures' not in current_session:
+                current_session['structures'] = {}
+            
+            # Lấy contours từ contour_tools và lưu vào session
+            for struct_name, contour_data in self.contour_tools.contours.items():
+                # Chuyển đổi contour thành mask nếu cần
+                if 'mask' not in contour_data:
+                    mask = self.contour_tools.contour_to_mask(struct_name)
+                else:
+                    mask = contour_data['mask']
+                
+                # Lưu vào structures của session
+                current_session['structures'][struct_name] = {
+                    'mask': mask,
+                    'color': self.contour_tools.colors.get(struct_name, (1.0, 0.0, 0.0)),  # Mặc định là màu đỏ
+                    'name': struct_name,
+                    'type': 'ORGAN' if struct_name.startswith('PTV') or struct_name.startswith('CTV') else 'ORGAN',
+                    'modified_date': datetime.now().isoformat()
+                }
+            
+            # Cập nhật phiên làm việc
+            self.session_manager.update_current_session(current_session)
+            
+            self.logger.info(f"Đã lưu {len(self.contour_tools.contours)} contours vào phiên làm việc")
+            return True
+        except Exception as e:
+            self.logger.error(f"Lỗi khi lưu contours: {str(e)}")
+            return False
+            
+    def has_contours(self):
+        """
+        Kiểm tra xem có contours trong phiên làm việc hiện tại không
+        
+        Returns:
+            bool: True nếu có contours, False nếu không
+        """
+        current_session = self.session_manager.get_current_session()
+        if not current_session or 'structures' not in current_session:
+            return False
+        return len(current_session['structures']) > 0
+    
+    def get_contour_tools(self):
+        """
+        Lấy đối tượng ContourTools
+        
+        Returns:
+            ContourTools: Đối tượng ContourTools hoặc None nếu chưa khởi tạo
+        """
+        return self.contour_tools if hasattr(self, 'contour_tools') else None
+    
+    def set_contour_tools(self, contour_tools):
+        """
+        Thiết lập đối tượng ContourTools
+        
+        Args:
+            contour_tools: Đối tượng ContourTools mới
+        """
+        self.contour_tools = contour_tools
+
+    def show_dvh(self):
+        """Hiển thị Histogram Liều-Thể tích (DVH)"""
+        if not self.current_patient_id or not self.current_plan_id:
+            messagebox.showwarning("Cảnh báo", "Vui lòng chọn bệnh nhân và kế hoạch trước khi xem DVH")
+            return
+            
+        # Kiểm tra xem kế hoạch đã có dữ liệu liều chưa
+        current_session = self.session_manager.get_current_session()
+        if not current_session or 'dose_matrix' not in current_session:
+            messagebox.showwarning("Cảnh báo", "Chưa có dữ liệu liều cho kế hoạch này. Vui lòng tính liều trước khi xem DVH.")
+            return
+            
+        # Chuyển đến tab DVH
+        self.display_notebook.select(self.dvh_tab)
+        
+        # Cập nhật hiển thị DVH
+        self.update_dvh_display()
+        
+    def update_plan_list(self, plans):
+        """Cập nhật danh sách kế hoạch của bệnh nhân
+        
+        Args:
+            plans: Danh sách các kế hoạch điều trị
+        """
+        # Tạo plan_listbox nếu chưa tồn tại
+        if not hasattr(self, 'plan_listbox'):
+            # Tạo frame chứa danh sách kế hoạch
+            plan_frame = ttk.LabelFrame(self.patient_frame, text="Kế hoạch")
+            plan_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Tạo Listbox và thanh cuộn
+            plan_scroll = ttk.Scrollbar(plan_frame)
+            self.plan_listbox = tk.Listbox(plan_frame, yscrollcommand=plan_scroll.set)
+            plan_scroll.config(command=self.plan_listbox.yview)
+            
+            self.plan_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            plan_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+            
+            # Sự kiện khi chọn kế hoạch
+            self.plan_listbox.bind('<<ListboxSelect>>', self.on_plan_selected)
+        else:
+            # Xóa danh sách kế hoạch cũ
+            self.plan_listbox.delete(0, tk.END)
+        
+        # Thêm kế hoạch vào listbox
+        if plans:
+            for plan in plans:
+                plan_name = plan.get('name', f"Kế hoạch {plan.get('plan_id', '')}")
+                self.plan_listbox.insert(tk.END, plan_name)
+                # Lưu plan_id như một thuộc tính của mục trong listbox
+                self.plan_listbox.itemconfig(tk.END, {'plan_id': plan.get('plan_id', '')})
+    
+    def on_plan_selected(self, event):
+        """Xử lý sự kiện khi người dùng chọn kế hoạch từ danh sách
+        
+        Args:
+            event: Sự kiện ListboxSelect
+        """
+        selection = self.plan_listbox.curselection()
+        if not selection:
+            return
+        
+        index = selection[0]
+        plan_id = self.plan_listbox.itemcget(index, 'plan_id')
+        
+        if not plan_id:
+            return
+        
+        # Lấy thông tin phiên làm việc hiện tại
+        current_session = self.session_manager.get_current_session()
+        if not current_session:
+            return
+        
+        patient_id = current_session.get('patient_id')
+        if not patient_id:
+            return
+        
+        # Lấy thông tin chi tiết kế hoạch
+        plan_details = self.patient_manager.get_plan_details(patient_id, plan_id)
+        
+        if plan_details:
+            # Cập nhật kế hoạch hiện tại trong phiên làm việc
+            self.session_manager.update_current_session({'plan_id': plan_id})
+            
+            # Cập nhật hiển thị thông tin kế hoạch
+            self.update_plan_details(plan_details)
+            
+            # Cập nhật hiển thị dữ liệu volume và cấu trúc
+            if 'ct_series_uid' in plan_details:
+                self.load_ct_data(patient_id, plan_details['ct_series_uid'])
+            
+            if 'structures' in plan_details:
+                self.load_structures(patient_id, plan_details['structures'])
+            
+            # Cập nhật trạng thái
+            self.status_var.set(f"Đã chọn kế hoạch: {plan_details.get('name', 'Không tên')}")
+    
+    def get_patient_plans(self, patient_id):
+        """
+        Lấy danh sách kế hoạch của bệnh nhân
+        
+        Args:
+            patient_id: ID bệnh nhân
+            
+        Returns:
+            List[Dict]: Danh sách kế hoạch
+        """
+        # Kiểm tra xem đã khởi tạo session_manager chưa
+        if not hasattr(self, "session_manager") or not self.session_manager:
+            return []
+            
+        # Lấy danh sách kế hoạch từ phiên làm việc hiện tại
+        try:
+            patient = self.patient_manager.db.get_patient(patient_id)
+            if not patient:
+                return []
+                
+            # Lấy danh sách kế hoạch từ Patient object
+            plans = []
+            for plan_id, plan_data in patient.plans.items():
+                # Thêm plan_id vào dữ liệu
+                plan_data_with_id = dict(plan_data)
+                plan_data_with_id["plan_id"] = plan_id
+                plans.append(plan_data_with_id)
+                
+            return plans
+        except Exception as e:
+            self.logger.error(f"Lỗi khi lấy danh sách kế hoạch: {str(e)}")
+            return []
+
+    def search_patients(self):
+        """Tìm kiếm bệnh nhân theo từ khóa"""
+        # Lấy từ khóa tìm kiếm
+        search_text = self.search_entry.get().strip()
+        
+        # Nếu không có từ khóa, hiển thị tất cả
+        if not search_text:
+            # Nếu không có từ khóa, hiển thị tất cả
+            self.update_patient_list()
+            return
+        
+        # Tạo patient_listbox nếu chưa có
+        if not hasattr(self, 'patient_listbox'):
+            self._create_patient_listbox()
+        
+        # Xóa danh sách hiện tại
+        self.patient_listbox.delete(0, tk.END)
+        
+        # Tìm kiếm với từ khóa
+        results = self.patient_manager.search_patients(search_text=search_text)
+        
+        # Hiển thị kết quả
+        for patient in results:
+            display_text = f"{patient.get('name', 'Không tên')} (ID: {patient.get('patient_id', 'N/A')})"
+            self.patient_listbox.insert(tk.END, display_text)
+            # Lưu ID bệnh nhân vào item
+            self.patient_listbox.itemconfig(tk.END, {'patient_id': patient.get('patient_id')})
+        
+        # Cập nhật trạng thái
+        self.status_bar.config(text=f"Tìm thấy {len(results)} kết quả cho '{search_text}'")
+        
+        # Ghi log
+        self.logger.info(f"Tìm kiếm bệnh nhân với từ khóa: {search_text}, {len(results)} kết quả")
+    
+    def _create_patient_listbox(self):
+        """Tạo patient_listbox nếu chưa có"""
+        # Tạo frame chứa danh sách bệnh nhân
+        patient_list_frame = ttk.LabelFrame(self.patient_frame, text="Danh sách bệnh nhân")
+        patient_list_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        # Tạo Listbox và Scrollbar
+        self.patient_listbox = tk.Listbox(patient_list_frame, height=15)
+        patient_scroll = ttk.Scrollbar(patient_list_frame, orient="vertical", command=self.patient_listbox.yview)
+        self.patient_listbox.configure(yscrollcommand=patient_scroll.set)
+        
+        self.patient_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        patient_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Thêm sự kiện khi chọn bệnh nhân
+        self.patient_listbox.bind('<<ListboxSelect>>', self.on_patient_selected)
+
+    def update_patient_details(self, patient):
+        """Cập nhật hiển thị thông tin chi tiết bệnh nhân
+        
+        Args:
+            patient: Đối tượng bệnh nhân
+        """
+        # Tạo hoặc cập nhật frame thông tin bệnh nhân
+        if not hasattr(self, 'patient_info_frame'):
+            self.patient_info_frame = ttk.LabelFrame(self.patient_frame, text="Thông tin bệnh nhân")
+            self.patient_info_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            # Tạo grid layout cho thông tin
+            for i in range(4):
+                self.patient_info_frame.columnconfigure(i, weight=1)
+            
+            # Tạo các nhãn
+            ttk.Label(self.patient_info_frame, text="ID:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+            self.patient_id_label = ttk.Label(self.patient_info_frame, text="")
+            self.patient_id_label.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.patient_info_frame, text="Họ tên:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+            self.patient_name_label = ttk.Label(self.patient_info_frame, text="")
+            self.patient_name_label.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.patient_info_frame, text="Ngày sinh:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+            self.patient_dob_label = ttk.Label(self.patient_info_frame, text="")
+            self.patient_dob_label.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.patient_info_frame, text="Giới tính:").grid(row=1, column=2, sticky=tk.W, padx=5, pady=2)
+            self.patient_gender_label = ttk.Label(self.patient_info_frame, text="")
+            self.patient_gender_label.grid(row=1, column=3, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.patient_info_frame, text="Chẩn đoán:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
+            self.patient_diagnosis_label = ttk.Label(self.patient_info_frame, text="")
+            self.patient_diagnosis_label.grid(row=2, column=1, columnspan=3, sticky=tk.W, padx=5, pady=2)
+        
+        # Cập nhật thông tin
+        self.patient_id_label.config(text=patient.patient_id)
+        self.patient_name_label.config(text=patient.demographics.get('name', ''))
+        self.patient_dob_label.config(text=patient.demographics.get('birth_date', ''))
+        self.patient_gender_label.config(text=patient.demographics.get('gender', ''))
+        self.patient_diagnosis_label.config(text=patient.clinical_info.get('diagnosis', ''))
+    
+    def update_plan_details(self, plan_details):
+        """Cập nhật hiển thị thông tin chi tiết kế hoạch
+        
+        Args:
+            plan_details: Thông tin chi tiết kế hoạch
+        """
+        # Tạo hoặc cập nhật frame thông tin kế hoạch
+        if not hasattr(self, 'plan_info_frame'):
+            self.plan_info_frame = ttk.LabelFrame(self.patient_frame, text="Thông tin kế hoạch")
+            self.plan_info_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            # Tạo grid layout cho thông tin
+            for i in range(4):
+                self.plan_info_frame.columnconfigure(i, weight=1)
+            
+            # Tạo các nhãn
+            ttk.Label(self.plan_info_frame, text="Tên kế hoạch:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+            self.plan_name_label = ttk.Label(self.plan_info_frame, text="")
+            self.plan_name_label.grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.plan_info_frame, text="Kỹ thuật:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+            self.plan_technique_label = ttk.Label(self.plan_info_frame, text="")
+            self.plan_technique_label.grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.plan_info_frame, text="Ngày tạo:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+            self.plan_date_label = ttk.Label(self.plan_info_frame, text="")
+            self.plan_date_label.grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.plan_info_frame, text="Trạng thái:").grid(row=1, column=2, sticky=tk.W, padx=5, pady=2)
+            self.plan_status_label = ttk.Label(self.plan_info_frame, text="")
+            self.plan_status_label.grid(row=1, column=3, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(self.plan_info_frame, text="Mô tả:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
+            self.plan_description_label = ttk.Label(self.plan_info_frame, text="")
+            self.plan_description_label.grid(row=2, column=1, columnspan=3, sticky=tk.W, padx=5, pady=2)
+        
+        # Cập nhật thông tin
+        self.plan_name_label.config(text=plan_details.get('name', ''))
+        self.plan_technique_label.config(text=plan_details.get('technique', ''))
+        self.plan_date_label.config(text=plan_details.get('created_date', ''))
+        self.plan_status_label.config(text=plan_details.get('status', 'Mới'))
+        self.plan_description_label.config(text=plan_details.get('description', ''))
+    
+    def load_ct_data(self, patient_id, series_uid):
+        """Tải dữ liệu hình ảnh CT
+        
+        Args:
+            patient_id: ID bệnh nhân
+            series_uid: UID của series CT
+        """
+        try:
+            # Giả lập tải dữ liệu CT do PatientDatabase không có phương thức get_volume
+            # Thực tế sẽ cần thực hiện điều này trong PatientDatabase
+            self.logger.info(f"Giả lập tải dữ liệu CT cho bệnh nhân {patient_id}, series {series_uid}")
+            
+            # Tạo dữ liệu giả lập
+            import numpy as np
+            volume_data = np.zeros((100, 100, 100), dtype=np.float32)
+            
+            # Cập nhật vào phiên làm việc hiện tại
+            self.session_manager.update_current_session({'ct_volume': volume_data})
+            
+            # Hiển thị dữ liệu CT trên MPR viewer
+            if hasattr(self, 'mpr_view'):
+                self.mpr_view.set_volume(volume_data)
+        except Exception as e:
+            self.logger.error(f"Lỗi khi tải dữ liệu CT: {str(e)}")
+    
+    def load_structures(self, patient_id, structure_set_uid):
+        """Tải dữ liệu cấu trúc
+        
+        Args:
+            patient_id: ID bệnh nhân
+            structure_set_uid: UID của bộ cấu trúc
+        """
+        try:
+            # Giả lập tải dữ liệu cấu trúc do PatientDatabase không có phương thức get_rt_struct
+            # Thực tế sẽ cần thực hiện điều này trong PatientDatabase
+            self.logger.info(f"Giả lập tải dữ liệu cấu trúc cho bệnh nhân {patient_id}")
+            
+            # Tạo dữ liệu giả lập
+            import numpy as np
+            
+            # Tạo một số cấu trúc mẫu
+            structures = {
+                "PTV": {
+                    "mask": np.zeros((100, 100, 100), dtype=bool),
+                    "color": (1.0, 0.0, 0.0)  # Đỏ
+                },
+                "OAR1": {
+                    "mask": np.zeros((100, 100, 100), dtype=bool),
+                    "color": (0.0, 1.0, 0.0)  # Xanh lá
+                }
+            }
+            
+            # Điền một số giá trị cho mask
+            structures["PTV"]["mask"][40:60, 40:60, 40:60] = True
+            structures["OAR1"]["mask"][30:40, 30:40, 30:40] = True
+            
+            # Cập nhật vào phiên làm việc hiện tại
+            self.session_manager.update_current_session({'structures': structures})
+            
+            # Hiển thị dữ liệu cấu trúc trên MPR viewer
+            if hasattr(self, 'mpr_view'):
+                # Tạo dictionary đúng định dạng cho MPR viewer
+                structure_data = {}
+                structure_colors = {}
+                
+                for struct_id, struct_info in structures.items():
+                    if 'mask' in struct_info and 'color' in struct_info:
+                        structure_data[struct_id] = {'mask': struct_info['mask']}
+                        structure_colors[struct_id] = struct_info['color']
+                
+                self.mpr_view.set_structures(structure_data, structure_colors)
+        except Exception as e:
+            self.logger.error(f"Lỗi khi tải dữ liệu cấu trúc: {str(e)}")
 
 def main():
     """Hàm chính để khởi động ứng dụng"""

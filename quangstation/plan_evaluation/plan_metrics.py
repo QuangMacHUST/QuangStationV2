@@ -13,7 +13,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from quangstation.utils.logging import get_logger
-from quangstation.plan_evaluation.dvh import calculate_dvh
+from quangstation.plan_evaluation.dvh import DVHCalculator
 
 logger = get_logger(__name__)
 
@@ -28,8 +28,8 @@ class PlanQualityMetrics:
         Khởi tạo với dữ liệu từ kế hoạch
         
         Args:
-            dose_matrix: Ma trận liều 3D
-            structures: Từ điển chứa các cấu trúc (name: mask)
+            dose_matrix: Ma trận 3D chứa dữ liệu liều
+            structures: Dictionary của các cấu trúc {name: mask}
             prescribed_dose: Liều kê toa (Gy)
             target_name: Tên cấu trúc đích (PTV)
         """
@@ -44,13 +44,13 @@ class PlanQualityMetrics:
             raise ValueError(f"Cấu trúc đích {target_name} không tồn tại!")
         
         # Tính DVH cho tất cả các cấu trúc
-        self.dvh_data = {}
+        dvh_calculator = DVHCalculator()
+        dvh_calculator.set_dose_data(dose_matrix)
+        
         for name, struct_mask in structures.items():
-            struct_dose = dose_matrix * struct_mask
-            doses_in_structure = struct_dose[struct_mask > 0]
-            if doses_in_structure.size > 0:
-                dvh = calculate_dvh(doses_in_structure, name)
-                self.dvh_data[name] = dvh
+            dvh_calculator.add_structure(name, struct_mask)
+        
+        self.dvh_data = dvh_calculator.calculate_dvh_for_all()
         
         logger.info(f"Đã khởi tạo đánh giá chất lượng cho kế hoạch với liều {prescribed_dose}Gy")
     

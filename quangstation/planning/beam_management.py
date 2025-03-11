@@ -8,11 +8,13 @@ Module quản lý chùm tia và bộ collimator đa lá (MLC) cho QuangStation V
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union, Any
 import copy
+import math
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 from quangstation.utils.logging import get_logger
-logger = get_logger("BeamManagement")
+
+logger = get_logger(__name__)
 
 class MLCModel:
     """Lớp cơ sở cho các mô hình MLC khác nhau"""

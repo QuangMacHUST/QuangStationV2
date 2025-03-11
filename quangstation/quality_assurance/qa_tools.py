@@ -7,13 +7,14 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional
 import os
 import json
+import math
 from datetime import datetime
 
 from quangstation.utils.logging import get_logger
 from quangstation.utils.config import get_config
 from quangstation.plan_evaluation.dvh import DVHCalculator
 
-logger = get_logger("QualityAssurance")
+logger = get_logger(__name__)
 
 class PlanQA:
     """Lớp kiểm soát chất lượng kế hoạch xạ trị"""
@@ -250,6 +251,39 @@ class PlanQA:
                                 organ_result['passed'] = False
                         except ValueError:
                             logger.warning(f"Không thể phân tích ràng buộc '{constraint_name}'")
+                
+                # Kiểm tra các ràng buộc DxCC
+                for constraint_name, constraint_value in organ_constraints.items():
+                    if constraint_name.startswith('D') and constraint_name.endswith('cc'):
+                        try:
+                            volume_cc = float(constraint_name[1:-2])  # Bỏ 'D' và 'cc'
+                            dose_limit = constraint_value
+                            
+                            # Chuyển đổi cc sang voxel
+                            voxel_volume = np.prod(self.dose_data.voxel_size) / 1000  # cm³
+                            volume_voxels = volume_cc / voxel_volume
+                            
+                            # Sắp xếp liều giảm dần và lấy giá trị trung bình trên số voxel tương ứng
+                            sorted_dose = np.sort(self.dose_data[structure > 0])[::-1]
+                            if len(sorted_dose) >= volume_voxels:
+                                actual_dose = np.mean(sorted_dose[:int(volume_voxels)])
+                            else:
+                                actual_dose = 0.0
+                            
+                            dose_passed = actual_dose <= dose_limit
+                            
+                            organ_result['constraint_results'][constraint_name] = {
+                                'limit': dose_limit,
+                                'actual': actual_dose,
+                                'passed': dose_passed
+                            }
+                            
+                            if not dose_passed:
+                                organ_result['passed'] = False
+                                
+                        except ValueError:
+                            logger.warning(f"Không thể phân tích ràng buộc {constraint_name}")
+                            continue
                 
                 # Cập nhật trạng thái chung
                 if not organ_result['passed']:
@@ -502,6 +536,162 @@ class PlanQA:
             results['error'] = str(error)
             return results
     
+    def check_plan_quality(self) -> Dict:
+        """
+        Kiểm tra chất lượng tổng thể của kế hoạch
+        
+        Returns:
+            Dict kết quả kiểm tra chất lượng
+        """
+        results = {
+            'test_name': 'Plan Quality',
+            'passed': True,
+            'metrics': {},
+            'warnings': []
+        }
+        
+        try:
+            # Kiểm tra độ đồng nhất liều trên PTV
+            for target_name, structure in self.structures.items():
+                if 'PTV' in target_name.upper():
+                    dvh_result = self.dvh_data[target_name]
+                    
+                    # Tính HI (Homogeneity Index)
+                    d2 = self._get_dose_at_volume_percent(dvh_result, 2)
+                    d98 = self._get_dose_at_volume_percent(dvh_result, 98)
+                    d50 = self._get_dose_at_volume_percent(dvh_result, 50)
+                    
+                    if d50 > 0:
+                        hi = (d2 - d98) / d50
+                    else:
+                        hi = float('inf')
+                    
+                    # Tính CI (Conformity Index)
+                    prescription_dose = self.plan_data.get('prescription_dose', 0)
+                    if prescription_dose > 0:
+                        v95 = self._get_volume_at_dose_percent(dvh_result, 0.95 * prescription_dose)
+                        total_volume = np.sum(structure)
+                        target_volume = total_volume * (v95 / 100.0)
+                        
+                        # Tính thể tích nhận 95% liều kê toa
+                        dose_mask = self.dose_data >= (0.95 * prescription_dose)
+                        treated_volume = np.sum(dose_mask)
+                        
+                        if target_volume > 0:
+                            ci = (treated_volume * treated_volume) / (total_volume * target_volume)
+                        else:
+                            ci = float('inf')
+                    else:
+                        ci = float('inf')
+                    
+                    # Lưu kết quả
+                    results['metrics'][target_name] = {
+                        'HI': hi,
+                        'CI': ci,
+                        'D2': d2,
+                        'D50': d50,
+                        'D98': d98
+                    }
+                    
+                    # Đánh giá kết quả
+                    if hi > 0.2:  # Ngưỡng HI thường < 0.2
+                        results['warnings'].append(
+                            f"Độ đồng nhất liều trên {target_name} cao (HI = {hi:.2f})"
+                        )
+                        results['passed'] = False
+                    
+                    if ci > 1.2:  # Ngưỡng CI thường < 1.2
+                        results['warnings'].append(
+                            f"Độ phù hợp liều trên {target_name} thấp (CI = {ci:.2f})"
+                        )
+                        results['passed'] = False
+            
+            # Kiểm tra gradient liều
+            if len(results['metrics']) > 0:
+                for target_name in results['metrics']:
+                    # Tính gradient liều xung quanh PTV
+                    structure = self.structures[target_name]
+                    dilated = self._dilate_structure(structure, margin_mm=10)
+                    shell = dilated & ~structure
+                    
+                    if np.sum(shell) > 0:
+                        shell_dose = self.dose_data[shell]
+                        gradient = (np.max(shell_dose) - np.min(shell_dose)) / 10  # Gy/mm
+                        
+                        results['metrics'][target_name]['dose_gradient'] = gradient
+                        
+                        if gradient > 1.0:  # Ngưỡng gradient thường < 1 Gy/mm
+                            results['warnings'].append(
+                                f"Gradient liều xung quanh {target_name} cao ({gradient:.2f} Gy/mm)"
+                            )
+                            results['passed'] = False
+            
+            return results
+            
+        except Exception as error:
+            logger.error(f"Lỗi khi kiểm tra chất lượng kế hoạch: {str(error)}")
+            results['error'] = str(error)
+            return results
+
+    def _get_dose_at_volume_percent(self, dvh_result: Dict, volume_percent: float) -> float:
+        """
+        Lấy giá trị liều tại phần trăm thể tích nhất định từ DVH
+        
+        Args:
+            dvh_result: Kết quả DVH
+            volume_percent: Phần trăm thể tích (%)
+            
+        Returns:
+            float: Giá trị liều (Gy)
+        """
+        try:
+            volume_bins = dvh_result['cumulative']['volume']
+            dose_bins = dvh_result['cumulative']['dose']
+            
+            # Tìm chỉ số bin gần với phần trăm thể tích nhất
+            idx = np.abs(volume_bins - volume_percent).argmin()
+            
+            if idx < len(dose_bins):
+                return dose_bins[idx]
+            else:
+                return 0.0
+                
+        except Exception:
+            return 0.0
+
+    def _dilate_structure(self, structure: np.ndarray, margin_mm: float) -> np.ndarray:
+        """
+        Giãn nở cấu trúc với lề xác định
+        
+        Args:
+            structure: Ma trận cấu trúc
+            margin_mm: Lề giãn nở (mm)
+            
+        Returns:
+            np.ndarray: Cấu trúc sau khi giãn nở
+        """
+        from scipy import ndimage
+        
+        # Chuyển đổi mm sang voxel
+        voxel_size = self.dose_data.voxel_size
+        margin_voxels = [
+            int(round(margin_mm / voxel_size[0])),
+            int(round(margin_mm / voxel_size[1])),
+            int(round(margin_mm / voxel_size[2]))
+        ]
+        
+        # Tạo kernel giãn nở
+        kernel = np.ones((
+            2 * margin_voxels[0] + 1,
+            2 * margin_voxels[1] + 1,
+            2 * margin_voxels[2] + 1
+        ))
+        
+        # Thực hiện giãn nở
+        dilated = ndimage.binary_dilation(structure, kernel)
+        
+        return dilated
+
     def run_all_checks(self, target_name: str, prescription_dose: float, 
                       oar_constraints: Dict[str, Dict]) -> Dict:
         """

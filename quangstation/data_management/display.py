@@ -12,20 +12,20 @@ import cv2
 from scipy.ndimage import zoom
 from vtk.util.numpy_support import numpy_to_vtk
 
-# Import image_loader từ module image_processing
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from quangstation.utils.logging import get_logger
 from quangstation.image_processing.image_loader import ImageLoader
 from quangstation.contouring.contour_tools import ContourTools
+from quangstation.data_models.image_data import ImageData
+from quangstation.data_models.structure_data import StructureSet
+from quangstation.data_models.dose_data import DoseData
+
+logger = get_logger(__name__)
 
 """
 Module này hiển thị ảnh 3d và các lát cắt 2d từ dữ liệu đã phân loại từ DICOM_PARSER
     """
 class Display:
     def __init__(self, root, patient_id, db):
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        dose_slice = np.zeros_like(self.volume[0])
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        structure_mask = np.zeros_like(self.volume)
         """Khởi tạo giao diện hiển thị"""
         self.root = root
         self.patient_id = patient_id
@@ -825,8 +825,6 @@ class Display:
             bool: True nếu tải thành công, False nếu thất bại
         """
         try:
-            from quangstation.utils.logging import get_logger
-            logger = get_logger("Display")
             logger.info(f"Đang tải dữ liệu từ thư mục: {directory}")
             
             # Khởi tạo ImageLoader cải tiến
@@ -918,7 +916,6 @@ class Display:
                 return False
                 
         except Exception as error:
-            import traceback
             logger.error(f"Lỗi khi tải dữ liệu: {str(error)}")
             logger.error(traceback.format_exc())
             return False
@@ -1463,8 +1460,6 @@ class Display:
         return dvh_obj
     
     def plot_dvh(self, dvh_data_list):
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        structure_mask = np.zeros_like(self.volume)
         """Vẽ biểu đồ DVH từ danh sách dữ liệu DVH"""
         if not dvh_data_list:
             return
@@ -1564,8 +1559,6 @@ class Display:
         return mask
     
     def find_nearest_slice(self, z_position):
-        # Giá trị mặc định để tránh lỗi "biến chưa được khởi tạo"
-        structure_mask = np.zeros_like(self.volume)
         """Tìm slice gần nhất với vị trí z cho trước"""
         if self.metadata is None or 'slices' not in self.metadata:
             return 0
@@ -1595,8 +1588,6 @@ class Display:
             self.mpr_views_initialized = True
             
         if self.volume is None or not hasattr(self, 'image_loader'):
-            from quangstation.utils.logging import get_logger
-            logger = get_logger("Display")
             logger.warning("Không thể cập nhật MPR views: dữ liệu ảnh hoặc ImageLoader chưa được khởi tạo")
             return
             
@@ -1630,9 +1621,6 @@ class Display:
             self._update_mpr_indicators(slice_indices)
             
         except Exception as error:
-            import traceback
-            from quangstation.utils.logging import get_logger
-            logger = get_logger("Display")
             logger.error(f"Lỗi khi cập nhật MPR views: {str(error)}")
             logger.error(traceback.format_exc())
     
@@ -2039,14 +2027,14 @@ class Display:
             bool: True nếu thành công, False nếu thất bại
         """
         if not self.image_data:
-            self.logger.error("Cần tải dữ liệu hình ảnh trước khi tải RT Structure")
+            logger.error("Cần tải dữ liệu hình ảnh trước khi tải RT Structure")
             return False
         
         if filepath is None and self.dicom_parser and self.dicom_parser.rt_struct:
             filepath = self.dicom_parser.rt_struct
         
         if not filepath or not os.path.exists(filepath):
-            self.logger.error(f"Không tìm thấy file RT Structure: {filepath}")
+            logger.error(f"Không tìm thấy file RT Structure: {filepath}")
             return False
         
         if self.contour_tools is None:
@@ -2058,7 +2046,7 @@ class Display:
             success = self.contour_tools.import_from_dicom_rtstruct(filepath)
             
             if success:
-                self.logger.info(f"Đã tải RT Structure từ {filepath}")
+                logger.info(f"Đã tải RT Structure từ {filepath}")
                 self.rt_struct_loaded = True
                 
                 # Cập nhật danh sách cấu trúc
@@ -2079,19 +2067,18 @@ class Display:
                 self.update_display()
                 return True
             else:
-                self.logger.error(f"Không thể tải RT Structure từ {filepath}")
+                logger.error(f"Không thể tải RT Structure từ {filepath}")
                 return False
         
         except Exception as error:
-            self.logger.error(f"Lỗi khi tải RT Structure: {str(error)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
+            logger.error(f"Lỗi khi tải RT Structure: {str(error)}")
+            logger.error(traceback.format_exc())
             return False
             
     def initialize_contour_tools(self):
         """Khởi tạo công cụ contour với dữ liệu hình ảnh hiện tại."""
         if not self.image_data:
-            self.logger.error("Không có dữ liệu hình ảnh để khởi tạo contour")
+            logger.error("Không có dữ liệu hình ảnh để khởi tạo contour")
             return
         
         try:
@@ -2130,9 +2117,8 @@ class Display:
                 if patient_info:
                     self.contour_tools.set_patient_info(patient_info)
             
-            self.logger.info("Đã khởi tạo ContourTools")
+            logger.info("Đã khởi tạo ContourTools")
             
         except Exception as error:
-            self.logger.error(f"Lỗi khi khởi tạo ContourTools: {str(error)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
+            logger.error(f"Lỗi khi khởi tạo ContourTools: {str(error)}")
+            logger.error(traceback.format_exc())

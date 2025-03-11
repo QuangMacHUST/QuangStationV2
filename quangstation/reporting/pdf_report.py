@@ -19,6 +19,10 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.lineplots import LinePlot
 from reportlab.graphics.charts.textlabels import Label
 
+from quangstation.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 class PDFReport:
     """
     Lớp tạo báo cáo PDF cho kế hoạch xạ trị QuangStation V2.

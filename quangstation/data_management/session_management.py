@@ -43,6 +43,7 @@ class SessionManager:
         self.workspace_dir = workspace_dir
         self.current_patient_id = None
         self.current_plan_id = None
+        self.current_session = None  # Thêm biến lưu trữ phiên hiện tại
         self.db = PatientDatabase()
         
         # Tạo thư mục workspace nếu chưa tồn tại
@@ -100,11 +101,11 @@ class SessionManager:
             ds.PatientID = self.current_patient_id
             
             # Lấy thông tin bệnh nhân
-            patient_info = self.db.get_patient_info(self.current_patient_id)
-            if patient_info:
-                # Trích xuất tên bệnh nhân từ trường 'name'
+            try:
+                patient_info = self.db.get_patient_details(self.current_patient_id)
                 patient_name = patient_info.get('name', 'Unknown')
-            else:
+            except Exception as e:
+                logger.error(f"Lỗi khi lấy thông tin bệnh nhân: {str(e)}")
                 patient_name = 'Unknown'
                 
             ds.PatientName = patient_name
@@ -294,7 +295,7 @@ class SessionManager:
             logger.error(f"Lỗi khi lưu metadata kế hoạch: {str(error)}")
             return None
     
-    def save_contours(self, contours_data):
+    def save_contours_dicom(self, contours_data):
         """Lưu dữ liệu contour dưới dạng DICOM"""
         if not self.current_patient_id or not self.current_plan_id:
             raise ValueError("Chưa tạo phiên làm việc")
@@ -530,7 +531,7 @@ class SessionManager:
                 patient_dir = os.path.join(self.workspace_dir, item)
                 if os.path.isdir(patient_dir):
                     # Lấy thông tin bệnh nhân từ database nếu có
-                    patient_info = self.db.get_patient_info(item)
+                    patient_info = self.db.get_patient_details(item)
                     if patient_info:
                         patients.append(patient_info)
                     else:
@@ -1096,3 +1097,92 @@ class SessionManager:
                 logger.error(f"Lỗi khi đọc plan_config.json: {str(error)}")
         
         return None
+    
+    def get_current_session(self):
+        """
+        Lấy phiên làm việc hiện tại
+        
+        Returns:
+            Dict hoặc None: Dữ liệu phiên làm việc hiện tại hoặc None nếu chưa có phiên nào
+        """
+        if self.current_patient_id and self.current_plan_id:
+            # Nếu chưa load session, load từ file
+            if self.current_session is None:
+                self.load_session(self.current_patient_id, self.current_plan_id)
+            return self.current_session
+        return None
+    
+    def update_current_session(self, session_data):
+        """
+        Cập nhật phiên làm việc hiện tại và lưu vào file
+        
+        Args:
+            session_data: Dữ liệu phiên làm việc mới
+            
+        Returns:
+            bool: True nếu cập nhật thành công, False nếu thất bại
+        """
+        if self.current_patient_id is None or self.current_plan_id is None:
+            logger.error("Không có phiên làm việc hiện tại để cập nhật")
+            return False
+        
+        try:
+            # Cập nhật biến session
+            self.current_session = session_data
+            
+            # Lưu dữ liệu vào các file
+            session_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
+            if not os.path.exists(session_dir):
+                os.makedirs(session_dir)
+            
+            # Lưu metadata
+            if 'plan_metadata' in session_data:
+                metadata_file = os.path.join(session_dir, 'plan_metadata.json')
+                with open(metadata_file, 'w') as f:
+                    json.dump(session_data['plan_metadata'], f, indent=2)
+            
+            # Lưu contours
+            if 'structures' in session_data:
+                # Chỉ lưu thông tin cơ bản, không lưu mask (quá lớn)
+                contours_data = {}
+                for struct_id, struct_data in session_data['structures'].items():
+                    contours_data[struct_id] = {
+                        'name': struct_data.get('name', ''),
+                        'color': struct_data.get('color', [1.0, 0.0, 0.0]),
+                        'type': struct_data.get('type', 'ORGAN'),
+                        'modified_date': struct_data.get('modified_date', datetime.datetime.now().isoformat())
+                    }
+                
+                contours_file = os.path.join(session_dir, 'contours.json')
+                with open(contours_file, 'w') as f:
+                    json.dump(contours_data, f, indent=2)
+                
+                # Lưu mask vào file riêng (dạng nén numpy)
+                for struct_id, struct_data in session_data['structures'].items():
+                    if 'mask' in struct_data:
+                        mask_file = os.path.join(session_dir, f'mask_{struct_id}.npz')
+                        np.savez_compressed(mask_file, mask=struct_data['mask'])
+            
+            # Lưu dose matrix nếu có
+            if 'dose_matrix' in session_data:
+                dose_file = os.path.join(session_dir, 'dose_matrix.npz')
+                np.savez_compressed(dose_file, dose=session_data['dose_matrix'])
+            
+            # Lưu thông tin kế hoạch
+            if 'plans' in session_data and self.current_plan_id in session_data['plans']:
+                plan_file = os.path.join(session_dir, 'plan_data.json')
+                with open(plan_file, 'w') as f:
+                    json.dump(session_data['plans'][self.current_plan_id], f, indent=2)
+            
+            # Lưu thông tin beams
+            if 'beams' in session_data:
+                beams_file = os.path.join(session_dir, 'beams.json')
+                with open(beams_file, 'w') as f:
+                    json.dump(session_data['beams'], f, indent=2)
+            
+            logger.info(f"Đã cập nhật phiên làm việc: {self.current_patient_id}/{self.current_plan_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi cập nhật phiên làm việc: {str(e)}")
+            return False

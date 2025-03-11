@@ -17,11 +17,10 @@ import requests
 import tempfile
 from zipfile import ZipFile
 from tqdm import tqdm
-import logging
 
 from quangstation.utils.logging import get_logger
 
-logger = get_logger("AutoSegmentation")
+logger = get_logger(__name__)
 
 # Kiểm tra các thư viện học sâu có sẵn
 try:
@@ -41,41 +40,40 @@ class SegmentationModel:
         self.model_path = model_path
         self.model = None
         self.device = "cpu"
-        self.logger = get_logger(__name__)
         
         # Kiểm tra GPU
         try:
             if torch.cuda.is_available():
                 self.device = "cuda"
-                self.logger.info("Phát hiện GPU, sử dụng CUDA cho phân đoạn tự động")
+                logger.info("Phát hiện GPU, sử dụng CUDA cho phân đoạn tự động")
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 self.device = "mps"  # Apple Silicon GPU
-                self.logger.info("Phát hiện Apple GPU, sử dụng MPS cho phân đoạn tự động")
+                logger.info("Phát hiện Apple GPU, sử dụng MPS cho phân đoạn tự động")
         except ImportError:
-            self.logger.warning("Không tìm thấy PyTorch, sẽ sử dụng CPU cho phân đoạn tự động")
+            logger.warning("Không tìm thấy PyTorch, sẽ sử dụng CPU cho phân đoạn tự động")
         except Exception as error:
-            self.logger.error(f"Lỗi khi kiểm tra GPU: {str(error)}")
+            logger.error(f"Lỗi khi kiểm tra GPU: {str(error)}")
     
     def load_model(self):
         """Tải mô hình từ file"""
         try:
             if not HAS_TORCH:
-                self.logger.warning("PyTorch không có sẵn. Không thể tải mô hình.")
+                logger.warning("PyTorch không có sẵn. Không thể tải mô hình.")
                 return False
             
             if not self.model_path or not os.path.exists(self.model_path):
-                self.logger.error(f"Không tìm thấy file mô hình: {self.model_path}")
+                logger.error(f"Không tìm thấy file mô hình: {self.model_path}")
                 return False
             
             # Tải mô hình
             self.model = torch.load(self.model_path, map_location=self.device)
             self.model.eval()  # Đặt ở chế độ đánh giá
             
-            self.logger.info(f"Đã tải mô hình từ {self.model_path}")
+            logger.info(f"Đã tải mô hình từ {self.model_path}")
             return True
             
         except Exception as error:
-            self.logger.error(f"Lỗi khi tải mô hình: {str(error)}")
+            logger.error(f"Lỗi khi tải mô hình: {str(error)}")
             return False
     
     def preprocess(self, image: np.ndarray) -> Union[np.ndarray, torch.Tensor]:
@@ -90,7 +88,7 @@ class SegmentationModel:
             Tensor hoặc numpy array đã được tiền xử lý
         """
         import torch
-        self.logger.debug(f"Tiền xử lý hình ảnh kích thước: {image.shape}")
+        logger.debug(f"Tiền xử lý hình ảnh kích thước: {image.shape}")
         
         # 1. Chuẩn hóa giá trị HU về khoảng [-1, 1]
         # Thông thường HU trong khoảng [-1000, 3000]
@@ -133,7 +131,7 @@ class SegmentationModel:
         # 4. Chuyển đổi thành tensor PyTorch
         processed_tensor = torch.from_numpy(processed_image).float().to(self.device)
         
-        self.logger.debug(f"Kết quả tiền xử lý: tensor kích thước {processed_tensor.shape}")
+        logger.debug(f"Kết quả tiền xử lý: tensor kích thước {processed_tensor.shape}")
         self.original_shape = current_shape  # Lưu lại kích thước gốc để sử dụng trong postprocessing
         
         return processed_tensor
@@ -174,7 +172,7 @@ class SegmentationModel:
             return output
             
         except Exception as error:
-            self.logger.error(f"Lỗi khi thực hiện phân đoạn: {str(error)}")
+            logger.error(f"Lỗi khi thực hiện phân đoạn: {str(error)}")
             raise
 
 class UNetModel(SegmentationModel):
@@ -201,7 +199,7 @@ class UNetModel(SegmentationModel):
                         self.std = config.get("std", self.std)
                         self.input_size = tuple(config.get("input_size", self.input_size))
                 except Exception as error:
-                    self.logger.warning(f"Không thể tải cấu hình mô hình: {str(error)}")
+                    logger.warning(f"Không thể tải cấu hình mô hình: {str(error)}")
     
     def preprocess(self, image: np.ndarray) -> Union[np.ndarray, torch.Tensor]:
         """Tiền xử lý hình ảnh cho mô hình UNet."""
@@ -245,9 +243,10 @@ class UNetModel(SegmentationModel):
             return input_tensor
             
         except ImportError as error:
-            self.logger.error(f"Lỗi import thư viện khi tiền xử lý: {str(error)}")
+            logger.error(f"Lỗi import thư viện khi tiền xử lý: {str(error)}")
             raise
         except Exception as error:
+            logger.error(f"Lỗi khi tiền xử lý hình ảnh: {str(error)}")
             self.logger.error(f"Lỗi khi tiền xử lý hình ảnh: {str(error)}")
             raise
 

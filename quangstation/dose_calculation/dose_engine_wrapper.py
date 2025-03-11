@@ -12,13 +12,15 @@ import time
 import importlib
 from datetime import datetime
 
+from quangstation.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 try:
     from quangstation.dose_calculation._dose_engine import CollapsedConeConvolution, PencilBeam, AAA, AcurosXB
     HAS_CPP_MODULE = True
 except ImportError:
     HAS_CPP_MODULE = False
-    from quangstation.utils.logging import get_logger
-    logger = get_logger("DoseCalculation")
     logger.warning("Không thể import module C++ _dose_engine. Sử dụng phiên bản Python thuần túy.")
 
 class DoseCalculator:
@@ -54,11 +56,10 @@ class DoseCalculator:
         self.heterogeneity_correction = True
         self.options = {}
         self.advanced_algorithm = None
-        self.logger = get_logger(__name__)
         self.use_cpp = True  # Mặc định sẽ cố gắng sử dụng module C++ nếu có
         
-        self.logger.info(f"Khởi tạo bộ tính toán liều với thuật toán {algorithm}, "
-                        f"độ phân giải {resolution_mm} mm")
+        logger.info(f"Khởi tạo bộ tính toán liều với thuật toán {algorithm}, "
+                    f"độ phân giải {resolution_mm} mm")
 
     def set_patient_data(self, image_data: np.ndarray, spacing: List[float]):
         """
@@ -82,8 +83,8 @@ class DoseCalculator:
         
         # Ước tính bộ nhớ đang sử dụng
         memory_mb = image_data.nbytes / (1024 * 1024)
-        self.logger.info(f"Đã thiết lập dữ liệu bệnh nhân kích thước {image_data.shape}, "
-                        f"bộ nhớ: {memory_mb:.1f} MB")
+        logger.info(f"Đã thiết lập dữ liệu bệnh nhân kích thước {image_data.shape}, "
+                    f"bộ nhớ: {memory_mb:.1f} MB")
         
         # Reset dữ liệu liều
         self.dose_matrix = None
@@ -103,7 +104,7 @@ class DoseCalculator:
             raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
             
         self.hu_to_density_file = file_path
-        self.logger.info(f"Đã thiết lập file chuyển đổi HU sang mật độ: {file_path}")
+        logger.info(f"Đã thiết lập file chuyển đổi HU sang mật độ: {file_path}")
 
     def set_heterogeneity_correction(self, enabled: bool):
         """
@@ -113,7 +114,7 @@ class DoseCalculator:
             enabled: True để bật, False để tắt
         """
         self.heterogeneity_correction = enabled
-        self.logger.info(f"{'Bật' if enabled else 'Tắt'} hiệu chỉnh không đồng nhất")
+        logger.info(f"{'Bật' if enabled else 'Tắt'} hiệu chỉnh không đồng nhất")
 
     def set_calculation_options(self, options: Dict[str, Any]):
         """
@@ -123,7 +124,7 @@ class DoseCalculator:
             options: Dictionary các tùy chọn
         """
         self.options.update(options)
-        self.logger.info(f"Đã cập nhật tùy chọn tính toán: {options}")
+        logger.info(f"Đã cập nhật tùy chọn tính toán: {options}")
         
         # Cập nhật cấu hình cho thuật toán tiên tiến nếu đã được khởi tạo
         if self.advanced_algorithm is not None:
@@ -137,7 +138,7 @@ class DoseCalculator:
             beam_data: Thông tin chùm tia
         """
         getattr(self, "beams", {}).append(beam_data.copy())
-        self.logger.info(f"Đã thêm chùm tia {beam_data.get('id', len(getattr(self, "beams", {})))}")
+        logger.info(f"Đã thêm chùm tia {beam_data.get('id', len(getattr(self, "beams", {})))}")
         
         # Thêm chùm tia vào thuật toán tiên tiến nếu đã được khởi tạo
         if self.advanced_algorithm is not None:
@@ -155,7 +156,7 @@ class DoseCalculator:
             raise ValueError(f"Kích thước mask ({mask.shape}) không khớp với kích thước ảnh ({self.image_data.shape})")
             
         self.structures[name] = mask.astype(bool)
-        self.logger.info(f"Đã thêm cấu trúc {name}")
+        logger.info(f"Đã thêm cấu trúc {name}")
         
         # Thêm cấu trúc vào thuật toán tiên tiến nếu đã được khởi tạo
         if self.advanced_algorithm is not None:
@@ -174,65 +175,65 @@ class DoseCalculator:
         """
         # Khởi tạo hẹn giờ để đo thời gian tính toán
         start_time = datetime.now()
-        self.logger.info(f"Bắt đầu tính toán liều với thuật toán {self.algorithm} lúc {start_time.strftime('%H:%M:%S')}")
+        logger.info(f"Bắt đầu tính toán liều với thuật toán {self.algorithm} lúc {start_time.strftime('%H:%M:%S')}")
         
         # Kiểm tra thiết lập dữ liệu
         if self.image_data is None:
-            self.logger.error("Chưa thiết lập dữ liệu hình ảnh")
+            logger.error("Chưa thiết lập dữ liệu hình ảnh")
             return None
             
         # Nếu có technique, thiết lập beams từ technique
         if technique is not None:
-            self.logger.info(f"Sử dụng kỹ thuật xạ trị: {technique}")
+            logger.info(f"Sử dụng kỹ thuật xạ trị: {technique}")
             try:
                 if hasattr(technique, 'get_beams'):
                     new_beams = technique.get_beams()
                     if new_beams:
                         self.beams = new_beams
-                        self.logger.info(f"Đã thiết lập {len(new_beams)} chùm tia từ kỹ thuật {technique}")
+                        logger.info(f"Đã thiết lập {len(new_beams)} chùm tia từ kỹ thuật {technique}")
                     else:
-                        self.logger.warning(f"Kỹ thuật {technique} không cung cấp chùm tia nào")
+                        logger.warning(f"Kỹ thuật {technique} không cung cấp chùm tia nào")
             except Exception as error:
-                self.logger.error(f"Lỗi khi lấy chùm tia từ kỹ thuật: {str(error)}")
+                logger.error(f"Lỗi khi lấy chùm tia từ kỹ thuật: {str(error)}")
         
         # Thêm cấu trúc nếu được cung cấp
         if structures is not None:
-            self.logger.info(f"Nhận được {len(structures)} cấu trúc để tính toán")
+            logger.info(f"Nhận được {len(structures)} cấu trúc để tính toán")
             try:
                 for name, mask in structures.items():
                     self.add_structure(name, mask)
             except Exception as error:
-                self.logger.error(f"Lỗi khi thêm cấu trúc: {str(error)}")
+                logger.error(f"Lỗi khi thêm cấu trúc: {str(error)}")
         
         # Kiểm tra xem có chùm tia nào không
         if not getattr(self, "beams", {}):
-            self.logger.error("Không có chùm tia nào để tính toán liều")
+            logger.error("Không có chùm tia nào để tính toán liều")
             return None
             
         # Tính toán liều dựa trên phương pháp được chọn
-        self.logger.info(f"Bắt đầu tính toán liều với thuật toán {self.algorithm}")
+        logger.info(f"Bắt đầu tính toán liều với thuật toán {self.algorithm}")
         
         result = None
         try:
             # Kiểm tra xem có thể sử dụng C++ không
             use_cpp = self._has_cpp_extension() and self.use_cpp
             if use_cpp:
-                self.logger.info("Sử dụng phiên bản C++ để tính toán")
+                logger.info("Sử dụng phiên bản C++ để tính toán")
                 result = self._calculate_dose_cpp()
             else:
-                self.logger.info("Sử dụng phiên bản Python thuần túy để tính toán")
+                logger.info("Sử dụng phiên bản Python thuần túy để tính toán")
                 result = self._calculate_dose_python()
                 
             # Kiểm tra kết quả
             if result is None:
-                self.logger.error("Không thể tính toán liều (kết quả là None)")
+                logger.error("Không thể tính toán liều (kết quả là None)")
                 return None
                 
             # Ghi log thông tin
             elapsed_time = (datetime.now() - start_time).total_seconds()
-            self.logger.info(f"Tính toán liều hoàn tất trong {elapsed_time:.2f} giây")
-            self.logger.info(f"Kích thước ma trận liều: {result.shape}")
-            self.logger.info(f"Liều tối thiểu: {np.min(result):.4f}, Liều tối đa: {np.max(result):.4f}, Liều trung bình: {np.mean(result):.4f}")
+            logger.info(f"Tính toán liều hoàn tất trong {elapsed_time:.2f} giây")
+            logger.info(f"Kích thước ma trận liều: {result.shape}")
+            logger.info(f"Liều tối thiểu: {np.min(result):.4f}, Liều tối đa: {np.max(result):.4f}, Liều trung bình: {np.mean(result):.4f}")
             
             # Lưu kết quả
             self.dose_matrix = result
@@ -250,8 +251,8 @@ class DoseCalculator:
             
         except Exception as error:
             import traceback
-            self.logger.error(f"Lỗi khi tính toán liều: {str(error)}")
-            self.logger.error(traceback.format_exc())
+            logger.error(f"Lỗi khi tính toán liều: {str(error)}")
+            logger.error(traceback.format_exc())
             
             # Cập nhật thông tin về lỗi
             self.calculation_info['error'] = str(error)
@@ -289,7 +290,7 @@ class DoseCalculator:
                 module_name = "quangstation.dose_calculation._dose_engine"
                 class_name = "ConvolutionSuperposition"
             else:
-                self.logger.warning(f"Thuật toán không rõ: {self.algorithm}. Thử truy cập module base.")
+                logger.warning(f"Thuật toán không rõ: {self.algorithm}. Thử truy cập module base.")
                 module_name = "quangstation.dose_calculation._dose_engine"
                 class_name = "DoseAlgorithm"
             
@@ -298,17 +299,17 @@ class DoseCalculator:
             getattr(module, class_name)
             
             # Nếu không lỗi, có extension C++
-            self.logger.info(f"Đã tìm thấy extension C++ cho thuật toán {self.algorithm}")
+            logger.info(f"Đã tìm thấy extension C++ cho thuật toán {self.algorithm}")
             return True
         except (ImportError, AttributeError) as e:
-            self.logger.info(f"Không tìm thấy extension C++ cho thuật toán {self.algorithm}: {str(e)}")
+            logger.info(f"Không tìm thấy extension C++ cho thuật toán {self.algorithm}: {str(e)}")
             
             # Nếu ta đã cấu hình sử dụng C++ nhưng không tìm thấy, ghi log cảnh báo
             if self.use_cpp:
-                self.logger.warning("Đã cấu hình sử dụng C++ nhưng không tìm thấy extension, sẽ sử dụng Python thuần túy")
+                logger.warning("Đã cấu hình sử dụng C++ nhưng không tìm thấy extension, sẽ sử dụng Python thuần túy")
             return False
         except Exception as error:
-            self.logger.error(f"Lỗi không xác định khi kiểm tra extension C++: {str(error)}")
+            logger.error(f"Lỗi không xác định khi kiểm tra extension C++: {str(error)}")
             return False
     
     def _calculate_dose_cpp(self) -> np.ndarray:
@@ -338,32 +339,32 @@ class DoseCalculator:
             else:
                 raise ValueError(f"Thuật toán C++ không được hỗ trợ: {self.algorithm}")
             
-            self.logger.info(f"Đang khởi tạo thuật toán C++ {class_name} từ module {module_name}")
+            logger.info(f"Đang khởi tạo thuật toán C++ {class_name} từ module {module_name}")
             
             # Động thử import module
             try:
                 module = importlib.import_module(module_name)
                 algorithm_class = getattr(module, class_name)
             except (ImportError, AttributeError) as e:
-                self.logger.warning(f"Không thể import module C++ {module_name}.{class_name}: {str(e)}")
-                self.logger.info("Chuyển sang bản Python thuần túy")
+                logger.warning(f"Không thể import module C++ {module_name}.{class_name}: {str(e)}")
+                logger.info("Chuyển sang bản Python thuần túy")
                 return self._calculate_dose_python()
             
             # Ghi log bắt đầu tính toán
             start_time = datetime.now()
-            self.logger.info(f"Bắt đầu tính toán liều với thuật toán C++ {class_name} lúc {start_time.isoformat()}")
+            logger.info(f"Bắt đầu tính toán liều với thuật toán C++ {class_name} lúc {start_time.isoformat()}")
             
             # Khởi tạo thuật toán
             algo = algorithm_class(resolution=self.resolution_mm)
             
             # Thiết lập file chuyển đổi HU nếu có
             if hasattr(algo, 'set_hu_to_ed_conversion_file') and self.hu_to_density_file:
-                self.logger.info(f"Thiết lập file chuyển đổi HU-ED: {self.hu_to_density_file}")
+                logger.info(f"Thiết lập file chuyển đổi HU-ED: {self.hu_to_density_file}")
                 algo.set_hu_to_ed_conversion_file(self.hu_to_density_file)
             
             # Thiết lập hiệu chỉnh không đồng nhất nếu có
             if hasattr(algo, 'set_heterogeneity_correction'):
-                self.logger.info(f"Thiết lập hiệu chỉnh không đồng nhất: {self.heterogeneity_correction}")
+                logger.info(f"Thiết lập hiệu chỉnh không đồng nhất: {self.heterogeneity_correction}")
                 algo.set_heterogeneity_correction(self.heterogeneity_correction)
             
             # Thiết lập các tùy chọn khác nếu có
@@ -429,14 +430,14 @@ class DoseCalculator:
         
         # Kiểm tra nếu không có chùm tia
         if not getattr(self, "beams", {}):
-            self.logger.error("Không có chùm tia nào để tính toán liều")
+            logger.error("Không có chùm tia nào để tính toán liều")
             return dose_matrix
             
         # Tính toán liều cho từng chùm tia
-        self.logger.info(f"Tính toán liều cho {len(getattr(self, "beams", {}))} chùm tia")
+        logger.info(f"Tính toán liều cho {len(getattr(self, "beams", {}))} chùm tia")
         
         for i, beam in enumerate(getattr(self, "beams", {})):
-            self.logger.info(f"Tính toán liều cho chùm tia {i+1}/{len(getattr(self, "beams", {}))}")
+            logger.info(f"Tính toán liều cho chùm tia {i+1}/{len(getattr(self, "beams", {}))}")
             
             # Lấy thông số chùm tia
             gantry_angle = beam.get('gantry_angle', 0.0)
@@ -505,7 +506,7 @@ class DoseCalculator:
                                             field_size=field_size, mlc=mlc, wedge=wedge)
             else:
                 # Mặc định sử dụng pencil beam
-                self.logger.warning(f"Thuật toán {self.algorithm} không được hỗ trợ trong Python thuần túy. Sử dụng Pencil Beam.")
+                logger.warning(f"Thuật toán {self.algorithm} không được hỗ trợ trong Python thuần túy. Sử dụng Pencil Beam.")
                 self._calculate_simple_pencil_beam(dose_matrix, self.image_data, self.spacing, 
                                                isocenter_idx, source_direction, energy, weight,
                                                field_size=field_size, mlc=mlc, wedge=wedge)
@@ -531,7 +532,7 @@ class DoseCalculator:
                 if dose_at_norm > 0:
                     scale_factor = prescribed_dose / dose_at_norm
                     dose_matrix *= scale_factor
-                    self.logger.info(f"Đã chuẩn hóa liều tại điểm ({norm_point}) thành {prescribed_dose} Gy")
+                    logger.info(f"Đã chuẩn hóa liều tại điểm ({norm_point}) thành {prescribed_dose} Gy")
             elif 'normalization_volume' in self.options and 'normalization_percent' in self.options:
                 # Chuẩn hóa theo thể tích (ví dụ: D95 = prescribed_dose)
                 norm_volume_name = self.options['normalization_volume']
@@ -552,9 +553,9 @@ class DoseCalculator:
                         if dose_at_percentile > 0:
                             scale_factor = prescribed_dose / dose_at_percentile
                             dose_matrix *= scale_factor
-                            self.logger.info(f"Đã chuẩn hóa D{norm_percent} của {norm_volume_name} thành {prescribed_dose} Gy")
+                            logger.info(f"Đã chuẩn hóa D{norm_percent} của {norm_volume_name} thành {prescribed_dose} Gy")
                 
-        self.logger.info("Đã hoàn thành tính toán liều bằng Python thuần túy")
+        logger.info("Đã hoàn thành tính toán liều bằng Python thuần túy")
         
         return dose_matrix
     
@@ -624,7 +625,7 @@ class DoseCalculator:
         # Cộng vào ma trận liều
         dose_matrix += beam_dose
         
-        self.logger.info(f"Đã tính toán liều cho chùm {energy}MV với thuật toán Pencil Beam")
+        logger.info(f"Đã tính toán liều cho chùm {energy}MV với thuật toán Pencil Beam")
 
     def _calculate_simple_aaa(self, dose_matrix, image_data, spacing, iso_idx, source_direction, energy, weight, **kwargs):
         """Tính toán liều bằng thuật toán AAA đơn giản."""
@@ -706,7 +707,7 @@ class DoseCalculator:
         # Cộng vào ma trận liều
         dose_matrix += beam_dose
         
-        self.logger.info(f"Đã tính toán liều cho chùm {energy}MV với thuật toán AAA")
+        logger.info(f"Đã tính toán liều cho chùm {energy}MV với thuật toán AAA")
 
     def _calculate_simple_acuros(self, dose_matrix, image_data, spacing, iso_idx, source_direction, energy, weight, **kwargs):
         """Tính toán liều bằng thuật toán Acuros đơn giản."""
@@ -844,7 +845,7 @@ class DoseCalculator:
         # Cộng vào ma trận liều
         dose_matrix += beam_dose
         
-        self.logger.info(f"Đã tính toán liều cho chùm {energy}MV với thuật toán Acuros XB")
+        logger.info(f"Đã tính toán liều cho chùm {energy}MV với thuật toán Acuros XB")
 
     def _simple_hu_to_density(self, hu_value):
         """Chuyển đổi HU sang mật độ điện tử (đơn giản)."""
@@ -860,41 +861,38 @@ class DoseCalculator:
             return 1.5 + 0.0003 * (hu_value - 1000)
 
     def _initialize_advanced_algorithm(self):
-        """Khởi tạo thuật toán tính toán liều tiên tiến."""
+        """Khởi tạo thuật toán tiên tiến"""
         try:
-            from quangstation.dose_calculation.advanced_algorithms import create_dose_algorithm
+            # Import động module thuật toán tiên tiến
+            module_name = f"quangstation.dose_calculation.advanced_algorithms"
+            module = importlib.import_module(module_name)
             
-            if self.algorithm == self.ALGO_GRID_BASED:
-                self.advanced_algorithm = create_dose_algorithm('grid_based', 
-                                                              resolution_mm=self.resolution_mm)
-            elif self.algorithm == self.ALGO_CONVOLUTION:
-                self.advanced_algorithm = create_dose_algorithm('convolution_superposition')
+            # Lấy lớp thuật toán phù hợp
+            if self.algorithm == self.ALGO_COLLAPSED_CONE:
+                algorithm_class = module.CollapsedConeConvolution
+            elif self.algorithm == self.ALGO_AAA:
+                algorithm_class = module.AAA
             elif self.algorithm == self.ALGO_ACUROS_XB:
-                self.advanced_algorithm = create_dose_algorithm('acuros_xb')
+                algorithm_class = module.AcurosXB
             else:
-                return
+                algorithm_class = module.DoseAlgorithm
                 
-            # Thiết lập dữ liệu bệnh nhân
-            if self.image_data is not None:
-                self.advanced_algorithm.set_patient_data(self.image_data, self.spacing)
-                
-            # Thiết lập cấu hình
-            self.advanced_algorithm.set_configuration(self.options)
+            # Khởi tạo thuật toán
+            self.advanced_algorithm = algorithm_class()
             
-            # Thêm cấu trúc đã có
-            for name, mask in self.structures.items():
-                self.advanced_algorithm.add_structure(name, mask)
-                
-            # Thêm chùm tia đã có
-            for beam in getattr(self, "beams", {}):
+            # Thiết lập dữ liệu
+            self.advanced_algorithm.set_image_data(self.image_data, self.spacing)
+            
+            # Thêm các chùm tia
+            for beam in self.beams:
                 self.advanced_algorithm.add_beam(beam)
                 
-            self.logger.info(f"Đã khởi tạo thuật toán tiên tiến: {self.algorithm}")
+            logger.info(f"Đã khởi tạo thuật toán tiên tiến: {self.algorithm}")
             
-        except ImportError as e:
-            self.logger.warning(f"Không thể khởi tạo thuật toán tiên tiến: {str(e)}")
+        except ImportError as error:
+            logger.warning(f"Không thể khởi tạo thuật toán tiên tiến: {str(error)}")
         except Exception as error:
-            self.logger.error(f"Lỗi khi khởi tạo thuật toán tiên tiến: {str(e)}")
+            logger.error(f"Lỗi khi khởi tạo thuật toán tiên tiến: {str(error)}")
 
     def _calculate_with_advanced_algorithm(self) -> np.ndarray:
         """Tính toán liều với thuật toán tiên tiến."""
@@ -902,7 +900,7 @@ class DoseCalculator:
             self._initialize_advanced_algorithm()
             
         if self.advanced_algorithm is None:
-            self.logger.warning(f"Không thể khởi tạo thuật toán tiên tiến {self.algorithm}, "
+            logger.warning(f"Không thể khởi tạo thuật toán tiên tiến {self.algorithm}, "
                                    "chuyển sang AAA đơn giản")
             # Sử dụng AAA đơn giản thay thế
             dose_matrix = np.zeros_like(self.image_data, dtype=np.float32)
@@ -939,9 +937,9 @@ class DoseCalculator:
             dose_matrix = self.advanced_algorithm.calculate()
             return dose_matrix
         except Exception as error:
-            self.logger.error(f"Lỗi khi tính toán liều với thuật toán tiên tiến: {str(error)}")
+            logger.error(f"Lỗi khi tính toán liều với thuật toán tiên tiến: {str(error)}")
             # Sử dụng AAA đơn giản thay thế
-            self.logger.info("Chuyển sang AAA đơn giản")
+            logger.info("Chuyển sang AAA đơn giản")
             
             dose_matrix = np.zeros_like(self.image_data, dtype=np.float32)
             for i, beam in enumerate(getattr(self, "beams", {})):
@@ -1006,17 +1004,17 @@ class DoseCalculator:
                 mc.set_isocenter(isocenter_idx)
                 
             # Tính toán liều
-            self.logger.info(f"Bắt đầu tính toán Monte Carlo với {num_particles} hạt")
+            logger.info(f"Bắt đầu tính toán Monte Carlo với {num_particles} hạt")
             dose_matrix, uncertainty = mc.calculate_dose()
             
-            self.logger.info(f"Đã hoàn thành tính toán Monte Carlo (độ không chắc chắn: {uncertainty:.2f}%)")
+            logger.info(f"Đã hoàn thành tính toán Monte Carlo (độ không chắc chắn: {uncertainty:.2f}%)")
             
             return dose_matrix
             
-        except ImportError as e:
-            self.logger.warning(f"Không thể tính toán Monte Carlo: {str(error)}")
+        except ImportError as error:
+            logger.warning(f"Không thể tính toán Monte Carlo: {str(error)}")
             # Sử dụng AAA đơn giản thay thế
-            self.logger.info("Chuyển sang AAA đơn giản")
+            logger.info("Chuyển sang AAA đơn giản")
             
             dose_matrix = np.zeros_like(self.image_data, dtype=np.float32)
             for i, beam in enumerate(getattr(self, "beams", {})):
@@ -1049,9 +1047,9 @@ class DoseCalculator:
             return dose_matrix
             
         except Exception as error:
-            self.logger.error(f"Lỗi khi tính toán Monte Carlo: {str(error)}")
+            logger.error(f"Lỗi khi tính toán Monte Carlo: {str(error)}")
             # Sử dụng AAA đơn giản thay thế
-            self.logger.info("Chuyển sang AAA đơn giản")
+            logger.info("Chuyển sang AAA đơn giản")
             
             dose_matrix = np.zeros_like(self.image_data, dtype=np.float32)
             for i, beam in enumerate(getattr(self, "beams", {})):

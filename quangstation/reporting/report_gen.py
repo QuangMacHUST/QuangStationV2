@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
+from typing import Dict, List, Tuple, Optional, Union, Any
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.units import inch, cm
@@ -27,7 +28,7 @@ import html
 from quangstation.plan_evaluation.dvh import DVHCalculator
 from quangstation.utils.logging import get_logger
 
-logger = get_logger("ReportGenerator")
+logger = get_logger(__name__)
 
 class TreatmentReport:
     """Lớp tạo báo cáo điều trị chi tiết"""

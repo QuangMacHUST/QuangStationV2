@@ -7,6 +7,9 @@ import uuid
 from quangstation.data_management.patient_db import PatientDatabase, Patient
 from quangstation.utils.logging_config import get_logger
 
+"""
+Module quản lý giao diện bệnh nhân trong QuangStation V2
+"""
 class PatientManagerGUI:
     """
     Giao diện quản lý bệnh nhân trong QuangStation V2

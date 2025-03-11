@@ -6,12 +6,18 @@ import time
 from datetime import datetime
 from pathlib import Path
 import glob
-import pydicom
 
-from quangstation.data_management.dicom_parser import DICOMParser
+from quangstation.utils.external_integration import get_module
+from quangstation.io.dicom_parser import DICOMParser
 from quangstation.data_management.patient_db import PatientDatabase, Patient
 from quangstation.data_management.session_management import SessionManager
 from quangstation.image_processing.image_loader import ImageLoader
+from quangstation.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+# Lấy module pydicom từ external_integration
+pydicom = get_module("pydicom")
 
 """
 Module này tạo giao diện nhập dữ liệu DICOM
@@ -34,6 +40,11 @@ class ImportInterface:
         self.is_importing = False
         self.current_task = ""
         self.progress_value = 0
+        
+        # Kiểm tra xem pydicom có sẵn không
+        if not pydicom:
+            logger.error("Không thể nhập DICOM vì thiếu thư viện pydicom")
+            messagebox.showerror("Lỗi", "Không thể nhập DICOM vì thiếu thư viện pydicom")
         
         # Tạo giao diện
         self.create_widgets()

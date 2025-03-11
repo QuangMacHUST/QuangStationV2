@@ -27,7 +27,7 @@ class PlanDesignWindow:
     """
     
     def __init__(self, parent, patient_id: str, structures: Dict[str, np.ndarray] = None, 
-                 callback: Callable = None):
+                 callback: Callable = None, plan_id: str = None, plan_data: Dict[str, Any] = None):
         """
         Khởi tạo cửa sổ thiết kế kế hoạch.
         
@@ -36,19 +36,25 @@ class PlanDesignWindow:
             patient_id: ID bệnh nhân
             structures: Dictionary các cấu trúc {name: mask}
             callback: Hàm callback khi đóng cửa sổ
+            plan_id: ID kế hoạch (nếu chỉnh sửa kế hoạch hiện có)
+            plan_data: Dữ liệu kế hoạch (nếu chỉnh sửa kế hoạch hiện có)
         """
         self.parent = parent
         self.patient_id = patient_id
         self.structures = structures if structures else {}
         self.callback = callback
+        self.plan_id = plan_id
         
         # Biến lưu trữ dữ liệu
-        self.plan_data = {
-            'plan_name': f"Plan_{patient_id}",
-            'beams': [],
-            'technique': '3DCRT',
-            'dose_algorithm': 'CCC'
-        }
+        if plan_data:
+            self.plan_data = plan_data
+        else:
+            self.plan_data = {
+                'plan_name': f"Plan_{patient_id}",
+                'beams': [],
+                'technique': '3DCRT',
+                'dose_algorithm': 'CCC'
+            }
         self.dose_data = None
         self.dvh_data = {}
         

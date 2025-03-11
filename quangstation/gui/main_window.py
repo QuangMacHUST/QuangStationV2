@@ -807,6 +807,40 @@ class MainWindow:
         """Mở công cụ sao lưu dữ liệu"""
         messagebox.showinfo("Thông báo", "Chức năng đang được phát triển")
 
+    def show_dvh(self):
+        """Hiển thị biểu đồ DVH"""
+        if hasattr(self, 'current_plan_window') and self.current_plan_window:
+            self.current_plan_window.show_dvh()
+        else:
+            messagebox.showinfo("Thông báo", "Vui lòng mở cửa sổ thiết kế kế hoạch trước.")
+    
+    def kbp_optimize(self):
+        """Mở chức năng tối ưu hóa dựa trên kiến thức (KBP)"""
+        if hasattr(self, 'current_plan_window') and self.current_plan_window:
+            self.current_plan_window.kbp_optimize()
+        else:
+            messagebox.showinfo("Thông báo", "Vui lòng mở cửa sổ thiết kế kế hoạch trước.")
+    
+    def open_kbp_trainer(self):
+        """Mở công cụ huấn luyện mô hình KBP"""
+        try:
+            from quangstation.gui.dialogs.kbp_trainer_dialog import KBPTrainerDialog
+            from quangstation.optimization.kbp_optimizer import KnowledgeBasedPlanningOptimizer
+            
+            # Khởi tạo optimizer
+            optimizer = KnowledgeBasedPlanningOptimizer()
+            
+            # Tạo và hiển thị dialog
+            dialog = KBPTrainerDialog(self.root, optimizer)
+            
+        except Exception as e:
+            self.logger.error(f"Lỗi khi mở công cụ huấn luyện KBP: {str(e)}")
+            messagebox.showerror("Lỗi", f"Không thể mở công cụ huấn luyện KBP: {str(e)}")
+
+    def create_report(self):
+        """Tạo báo cáo kế hoạch xạ trị"""
+        messagebox.showinfo("Thông báo", "Chức năng đang được phát triển")
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = MainWindow(root)

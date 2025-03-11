@@ -25,6 +25,8 @@ import threading
 
 from quangstation.utils.logging import get_logger
 
+""" Module hiển thị MLC chuyển động cho QuangStation V2"""
+
 logger = get_logger(__name__)
 
 class MLCAnimation:

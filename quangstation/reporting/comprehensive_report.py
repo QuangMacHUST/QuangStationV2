@@ -12,10 +12,121 @@ import tempfile
 import shutil
 from datetime import datetime
 from typing import Dict, List, Any, Optional
+import matplotlib.pyplot as plt
 
 from quangstation.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+class ComprehensiveReport:
+    """
+    Lớp tạo báo cáo tổng hợp cho kế hoạch xạ trị.
+    """
+    
+    def __init__(self, patient_info: Dict[str, Any], plan_info: Dict[str, Any], 
+                 structures: Dict[str, Any] = None, dose_data: Dict[str, Any] = None):
+        """
+        Khởi tạo báo cáo tổng hợp
+        
+        Args:
+            patient_info: Thông tin bệnh nhân
+            plan_info: Thông tin kế hoạch
+            structures: Dữ liệu cấu trúc
+            dose_data: Dữ liệu liều
+        """
+        self.patient_info = patient_info or {}
+        self.plan_info = plan_info or {}
+        self.structures = structures or {}
+        self.dose_data = dose_data or {}
+        self.included_sections = [
+            "patient_info", "plan_info", "dvh", "dose_metrics", 
+            "qa_results", "kbp_results", "conformity_indices", "homogeneity_indices"
+        ]
+        self.images = {}  # Danh sách hình ảnh để thêm vào báo cáo
+        self.logger = get_logger("ComprehensiveReport")
+    
+    def generate(self, output_path: str, format: str = "pdf") -> str:
+        """
+        Tạo báo cáo tổng hợp
+        
+        Args:
+            output_path: Đường dẫn file báo cáo đầu ra
+            format: Định dạng file ('pdf', 'html', 'docx', 'json')
+            
+        Returns:
+            Đường dẫn file báo cáo đã tạo
+        """
+        # Chuẩn bị dữ liệu
+        data = {
+            "patient_info": self.patient_info,
+            "plan_info": self.plan_info,
+            "structures": self.structures,
+            "dose_data": self.dose_data,
+            "included_sections": self.included_sections,
+            "generated_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "images": self.images
+        }
+        
+        # Gọi hàm tạo báo cáo
+        return create_comprehensive_report(
+            output_path=output_path,
+            format=format,
+            patient_data=self.patient_info,
+            plan_data=self.plan_info,
+            included_sections=self.included_sections
+        )
+    
+    def add_image(self, image_path: str, title: str = None) -> None:
+        """
+        Thêm hình ảnh vào báo cáo
+        
+        Args:
+            image_path: Đường dẫn file hình ảnh
+            title: Tiêu đề hình ảnh
+        """
+        if not os.path.exists(image_path):
+            self.logger.warning(f"Không tìm thấy file hình ảnh: {image_path}")
+            return
+            
+        title = title or os.path.basename(image_path)
+        self.images[title] = image_path
+        self.logger.info(f"Đã thêm hình ảnh: {title}")
+    
+    def generate_pdf(self, output_path: str) -> str:
+        """
+        Tạo báo cáo dạng PDF
+        
+        Args:
+            output_path: Đường dẫn file báo cáo đầu ra
+            
+        Returns:
+            Đường dẫn file báo cáo đã tạo
+        """
+        return self.generate(output_path, format="pdf")
+    
+    def generate_docx(self, output_path: str) -> str:
+        """
+        Tạo báo cáo dạng DOCX
+        
+        Args:
+            output_path: Đường dẫn file báo cáo đầu ra
+            
+        Returns:
+            Đường dẫn file báo cáo đã tạo
+        """
+        return self.generate(output_path, format="docx")
+    
+    def generate_html(self, output_path: str) -> str:
+        """
+        Tạo báo cáo dạng HTML
+        
+        Args:
+            output_path: Đường dẫn file báo cáo đầu ra
+            
+        Returns:
+            Đường dẫn file báo cáo đã tạo
+        """
+        return self.generate(output_path, format="html")
 
 def create_comprehensive_report(
     output_path: str,
@@ -121,8 +232,8 @@ def create_comprehensive_report(
         logger.info(f"Đã tạo báo cáo tổng hợp tại: {result_path}")
         return result_path
     
-    except Exception as e:
-        logger.error(f"Lỗi khi tạo báo cáo tổng hợp: {str(e)}")
+    except Exception as error:
+        logger.error(f"Lỗi khi tạo báo cáo tổng hợp: {str(error)}")
         raise
 
 
@@ -422,8 +533,8 @@ def _create_html_comprehensive_report(output_path: str, data: Dict[str, Any], te
         
         return output_path
     
-    except Exception as e:
-        logger.error(f"Lỗi khi tạo báo cáo HTML tổng hợp: {str(e)}")
+    except Exception as error:
+        logger.error(f"Lỗi khi tạo báo cáo HTML tổng hợp: {str(error)}")
         raise
 
 
@@ -446,8 +557,8 @@ def _create_pdf_comprehensive_report(output_path: str, data: Dict[str, Any], tem
             shutil.copy2(html_path, output_html_path)
             return output_html_path
     
-    except Exception as e:
-        logger.error(f"Lỗi khi tạo báo cáo PDF tổng hợp: {str(e)}")
+    except Exception as error:
+        logger.error(f"Lỗi khi tạo báo cáo PDF tổng hợp: {str(error)}")
         raise
 
 
@@ -618,6 +729,6 @@ def _create_docx_comprehensive_report(output_path: str, data: Dict[str, Any], te
         
         return output_path
     
-    except Exception as e:
-        logger.error(f"Lỗi khi tạo báo cáo DOCX tổng hợp: {str(e)}")
+    except Exception as error:
+        logger.error(f"Lỗi khi tạo báo cáo DOCX tổng hợp: {str(error)}")
         raise 
