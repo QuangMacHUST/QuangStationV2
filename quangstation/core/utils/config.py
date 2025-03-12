@@ -306,8 +306,19 @@ class GlobalConfig:
 config = GlobalConfig()
 
 # Hàm tiện ích
-def get_config(key: str, default=None):
-    """Lấy giá trị cấu hình"""
+def get_config(key: str = None, default=None):
+    """
+    Lấy giá trị cấu hình
+    
+    Args:
+        key: Khóa cấu hình (nếu None, trả về đối tượng cấu hình)
+        default: Giá trị mặc định nếu không tìm thấy khóa
+        
+    Returns:
+        Giá trị cấu hình hoặc đối tượng cấu hình nếu key=None
+    """
+    if key is None:
+        return config
     return config.get(key, default)
 
 def set_config(key: str, value: Any):

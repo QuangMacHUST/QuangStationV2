@@ -1205,5 +1205,33 @@ class DoseCalculator:
             self.logger.error(f"Lỗi khi tải ma trận liều: {str(error)}")
             raise
 
+    def calculate(self, patient_id=None, beams=None, algorithm=None, structures=None) -> np.ndarray:
+        """
+        Phương thức wrapper để tương thích với các mã gọi hiện tại trong PlanDesignView.
+        
+        Args:
+            patient_id: ID bệnh nhân (không sử dụng, chỉ để tương thích API)
+            beams: Danh sách chùm tia
+            algorithm: Thuật toán sử dụng
+            structures: Dictionary các cấu trúc {name: mask}
+        
+        Returns:
+            np.ndarray: Ma trận liều 3D
+        """
+        logger.info(f"Gọi phương thức calculate với algorithm={algorithm}")
+        
+        # Cập nhật thuật toán nếu được chỉ định
+        if algorithm:
+            self.algorithm = algorithm
+        
+        # Cập nhật danh sách chùm tia nếu được chỉ định
+        if beams:
+            self.beams = []
+            for beam in beams:
+                self.add_beam(beam)
+        
+        # Gọi phương thức tính toán chính
+        return self.calculate_dose(structures=structures)
+
 # Tạo instance mặc định
 default_calculator = DoseCalculator()

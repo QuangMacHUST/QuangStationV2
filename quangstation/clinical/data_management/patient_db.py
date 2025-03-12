@@ -49,6 +49,8 @@ class Patient:
         self.clinical_info = {
             'diagnosis': kwargs.get('diagnosis', ''),
             'diagnosis_date': kwargs.get('diagnosis_date', ''),
+            'cancer_type': kwargs.get('cancer_type', ''),
+            'stage': kwargs.get('stage', ''),
             'physician': kwargs.get('physician', ''),
             'notes': kwargs.get('notes', '')
         }
@@ -60,7 +62,7 @@ class Patient:
         for key, value in kwargs.items():
             if key not in ['patient_id', 'created_date', 'modified_date', 'name', 'birth_date', 
                           'gender', 'address', 'phone', 'email', 'diagnosis', 'diagnosis_date', 
-                          'physician', 'notes']:
+                          'cancer_type', 'stage', 'physician', 'notes']:
                 setattr(self, key, value)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -91,7 +93,7 @@ class Patient:
                 self.demographics[key] = kwargs[key]
         
         # Cập nhật thông tin clinical_info
-        for key in ['diagnosis', 'diagnosis_date', 'physician', 'notes']:
+        for key in ['diagnosis', 'diagnosis_date', 'cancer_type', 'stage', 'physician', 'notes']:
             if key in kwargs:
                 self.clinical_info[key] = kwargs[key]
         
@@ -190,38 +192,30 @@ class Patient:
 
 
 class PatientDatabase:
-    """Lớp quản lý dữ liệu bệnh nhân"""
+    """Lớp quản lý cơ sở dữ liệu bệnh nhân"""
     
     def __init__(self, db_path: str = None):
         """
         Khởi tạo cơ sở dữ liệu bệnh nhân
         
         Args:
-            db_path: Đường dẫn đến file cơ sở dữ liệu (nếu không cung cấp sẽ sử dụng đường dẫn mặc định)
+            db_path: Đường dẫn tới file cơ sở dữ liệu (nếu None, sử dụng đường dẫn mặc định từ cấu hình)
         """
-        # Xác định đường dẫn cơ sở dữ liệu
-        self.db_path = db_path or os.path.join(
-            get_config().get('data_dir', os.path.expanduser('~/.quangstation/data')),
-            'patient_db.sqlite'
-        )
+        # Lấy đường dẫn cơ sở dữ liệu từ cấu hình nếu không được cung cấp
+        config = get_config()
+        self.db_path = db_path or config.get("database.path")
+        self.data_dir = os.path.join(config.get("workspace.root_dir"), "patients")
         
-        # Tạo thư mục chứa cơ sở dữ liệu nếu chưa tồn tại
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        # Đảm bảo thư mục dữ liệu tồn tại
+        os.makedirs(self.data_dir, exist_ok=True)
         
-        # Khởi tạo kết nối cơ sở dữ liệu
+        # Khởi tạo cơ sở dữ liệu nếu chưa tồn tại
         self._init_database()
         
-        # Đường dẫn thư mục lưu trữ dữ liệu bệnh nhân
-        self.patient_data_dir = os.path.join(
-            get_config().get('data_dir', os.path.expanduser('~/.quangstation/data')),
-            'patients'
-        )
-        os.makedirs(self.patient_data_dir, exist_ok=True)
-        
-        # Dữ liệu bệnh nhân đã tải
+        # Chuẩn bị câu lệnh SQL
+        self._prepare_statements()
         self.loaded_patients = {}
-        
-        logger.info(f"Khởi tạo PatientDatabase tại {self.db_path}")
+        self.patient_data_dir = self.data_dir
     
     def _init_database(self) -> None:
         """Khởi tạo cấu trúc cơ sở dữ liệu nếu chưa tồn tại"""
@@ -240,6 +234,8 @@ class PatientDatabase:
             email TEXT,
             diagnosis TEXT,
             diagnosis_date TEXT,
+            cancer_type TEXT,
+            stage TEXT,
             physician TEXT,
             notes TEXT,
             created_date TEXT,
@@ -291,6 +287,41 @@ class PatientDatabase:
         conn.commit()
         conn.close()
     
+    def _prepare_statements(self) -> None:
+        """Chuẩn bị các câu lệnh SQL thường dùng"""
+        self.insert_patient_stmt = '''
+        INSERT OR REPLACE INTO patients (
+            patient_id, name, birth_date, gender, address, phone, email,
+            diagnosis, diagnosis_date, cancer_type, stage, physician, notes, created_date, modified_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''
+        
+        self.update_patient_stmt = '''
+        UPDATE patients SET
+            name = ?, birth_date = ?, gender = ?, address = ?, phone = ?, email = ?,
+            diagnosis = ?, diagnosis_date = ?, cancer_type = ?, stage = ?, physician = ?, notes = ?,
+            modified_date = ?
+        WHERE patient_id = ?
+        '''
+        
+        self.insert_plan_stmt = '''
+        INSERT OR REPLACE INTO plans (
+            plan_id, patient_id, name, description, status, created_date, modified_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        '''
+        
+        self.insert_image_stmt = '''
+        INSERT OR REPLACE INTO images (
+            image_id, patient_id, modality, description, created_date, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        '''
+        
+        self.insert_structure_stmt = '''
+        INSERT OR REPLACE INTO structures (
+            structure_id, patient_id, name, type, color, created_date, modified_date
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        '''
+    
     def add_patient(self, patient: Patient) -> str:
         """
         Thêm bệnh nhân vào cơ sở dữ liệu
@@ -306,12 +337,7 @@ class PatientDatabase:
         
         try:
             # Thêm vào bảng patients
-            cursor.execute('''
-            INSERT OR REPLACE INTO patients (
-                patient_id, name, birth_date, gender, address, phone, email,
-                diagnosis, diagnosis_date, physician, notes, created_date, modified_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
+            cursor.execute(self.insert_patient_stmt, (
                 patient.patient_id,
                 patient.demographics.get('name', ''),
                 patient.demographics.get('birth_date', ''),
@@ -321,6 +347,8 @@ class PatientDatabase:
                 patient.demographics.get('email', ''),
                 patient.clinical_info.get('diagnosis', ''),
                 patient.clinical_info.get('diagnosis_date', ''),
+                patient.clinical_info.get('cancer_type', ''),
+                patient.clinical_info.get('stage', ''),
                 patient.clinical_info.get('physician', ''),
                 patient.clinical_info.get('notes', ''),
                 patient.created_date,
@@ -342,356 +370,345 @@ class PatientDatabase:
             conn.rollback()
             logger.error(f"Lỗi khi thêm bệnh nhân: {str(e)}")
             raise
-        finally:
-            conn.close()
     
-    def update_patient(self, patient_id: str, patient_data: Dict[str, Any]) -> bool:
+    def _save_patient_data(self, patient: Patient) -> None:
+        """
+        Lưu dữ liệu chi tiết của bệnh nhân vào file JSON
+        
+        Args:
+            patient: Đối tượng bệnh nhân
+        """
+        patient_dir = os.path.join(self.data_dir, patient.patient_id)
+        os.makedirs(patient_dir, exist_ok=True)
+        
+        # Lưu thông tin chung
+        with open(os.path.join(patient_dir, 'info.json'), 'w', encoding='utf-8') as f:
+            json.dump(patient.to_dict(), f, indent=4)
+        
+        # Lưu các dữ liệu lớn
+        for data_type, data in [('plans', patient.plans), ('structures', patient.structures), ('images', patient.images)]:
+            data_dir = os.path.join(patient_dir, data_type)
+            os.makedirs(data_dir, exist_ok=True)
+            
+            for key, value in data.items():
+                with open(os.path.join(data_dir, f'{key}.json'), 'w', encoding='utf-8') as f:
+                    json.dump(value, f, indent=4)
+    
+    def get_patient(self, patient_id: str):
+        """Trả về đối tượng Patient từ loaded_patients nếu tồn tại, ngược lại trả về None"""
+        return self.loaded_patients.get(patient_id)
+    
+    def patient_exists(self, patient_id: str) -> bool:
+        """
+        Kiểm tra xem bệnh nhân có tồn tại trong cơ sở dữ liệu hay không
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            
+        Returns:
+            bool: True nếu bệnh nhân tồn tại, False nếu không
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT 1 FROM patients WHERE patient_id = ?", (patient_id,))
+        return cursor.fetchone() is not None
+    
+    def update_patient(self, patient: Patient) -> bool:
         """
         Cập nhật thông tin bệnh nhân
         
         Args:
-            patient_id: ID của bệnh nhân cần cập nhật
-            patient_data: Dictionary chứa thông tin cập nhật
+            patient: Đối tượng Patient cần cập nhật
             
         Returns:
-            bool: True nếu cập nhật thành công, False nếu không tìm thấy bệnh nhân
+            True nếu cập nhật thành công, False nếu thất bại
         """
-        # Lấy thông tin bệnh nhân hiện tại
-        patient = self.get_patient(patient_id)
-        if not patient:
-            return False
-        
-        # Cập nhật thông tin
-        if 'name' in patient_data:
-            patient.demographics['name'] = patient_data['name']
-        if 'birth_date' in patient_data:
-            patient.demographics['birth_date'] = patient_data['birth_date']
-        if 'gender' in patient_data:
-            patient.demographics['gender'] = patient_data['gender']
-        if 'address' in patient_data:
-            patient.demographics['address'] = patient_data['address']
-        if 'phone' in patient_data:
-            patient.demographics['phone'] = patient_data['phone']
-        if 'email' in patient_data:
-            patient.demographics['email'] = patient_data['email']
-        if 'diagnosis' in patient_data:
-            patient.clinical_info['diagnosis'] = patient_data['diagnosis']
-        if 'diagnosis_date' in patient_data:
-            patient.clinical_info['diagnosis_date'] = patient_data['diagnosis_date']
-        if 'physician' in patient_data:
-            patient.clinical_info['physician'] = patient_data['physician']
-        if 'notes' in patient_data:
-            patient.clinical_info['notes'] = patient_data['notes']
-        
-        # Cập nhật dữ liệu bổ sung nếu có
-        if 'plans' in patient_data:
-            patient.plans.update(patient_data['plans'])
-        if 'images' in patient_data:
-            patient.images.update(patient_data['images'])
-        if 'structures' in patient_data:
-            patient.structures.update(patient_data['structures'])
-        
-        # Cập nhật thời gian sửa đổi
-        patient.modified_date = datetime.now().isoformat()
-        
-        # Lưu vào cơ sở dữ liệu
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         try:
-            # Cập nhật thông tin trong bảng patients
-            cursor.execute('''
-            UPDATE patients SET
-                name = ?, birth_date = ?, gender = ?, address = ?, phone = ?, email = ?,
-                diagnosis = ?, diagnosis_date = ?, physician = ?, notes = ?, modified_date = ?
-            WHERE patient_id = ?
-            ''', (
-                patient.demographics.get('name', ''),
-                patient.demographics.get('birth_date', ''),
-                patient.demographics.get('gender', ''),
-                patient.demographics.get('address', ''),
-                patient.demographics.get('phone', ''),
-                patient.demographics.get('email', ''),
-                patient.clinical_info.get('diagnosis', ''),
-                patient.clinical_info.get('diagnosis_date', ''),
-                patient.clinical_info.get('physician', ''),
-                patient.clinical_info.get('notes', ''),
-                patient.modified_date,
-                patient_id
-            ))
-            
-            conn.commit()
-            
-            # Lưu dữ liệu chi tiết vào file JSON
-            self._save_patient_data(patient)
-            
-            # Cập nhật trong danh sách đã tải
-            self.loaded_patients[patient_id] = patient
-            
-            logger.info(f"Đã cập nhật bệnh nhân: {patient}")
-            return True
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Lỗi khi cập nhật bệnh nhân: {str(e)}")
-            return False
-        finally:
-            conn.close()
-    
-    def delete_patient(self, patient_id: str) -> bool:
-        """
-        Xóa bệnh nhân khỏi cơ sở dữ liệu
-        
-        Args:
-            patient_id: ID của bệnh nhân cần xóa
-            
-        Returns:
-            bool: True nếu xóa thành công, False nếu không tìm thấy bệnh nhân
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        try:
-            # Kiểm tra bệnh nhân có tồn tại không
-            cursor.execute("SELECT patient_id FROM patients WHERE patient_id = ?", (patient_id,))
-            if not cursor.fetchone():
+            # Kiểm tra xem bệnh nhân có tồn tại không
+            if not self.patient_exists(patient.patient_id):
+                logger.error(f"Không thể cập nhật: Bệnh nhân {patient.patient_id} không tồn tại")
                 return False
             
-            # Xóa các dữ liệu liên quan
-            cursor.execute("DELETE FROM plans WHERE patient_id = ?", (patient_id,))
-            cursor.execute("DELETE FROM images WHERE patient_id = ?", (patient_id,))
-            cursor.execute("DELETE FROM structures WHERE patient_id = ?", (patient_id,))
+            # Cập nhật ngày sửa đổi
+            patient.modified_date = datetime.now().isoformat()
             
-            # Xóa bệnh nhân
-            cursor.execute("DELETE FROM patients WHERE patient_id = ?", (patient_id,))
+            # Cập nhật bệnh nhân trong cơ sở dữ liệu
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # Lấy dữ liệu bệnh nhân để chuẩn bị câu lệnh cập nhật
+            patient_data = patient.to_dict()
+            
+            # Lấy thông tin cơ bản
+            patient_id = patient_data.pop('patient_id')
+            created_date = patient_data.pop('created_date', None)
+            modified_date = patient_data.pop('modified_date')
+            
+            # Lấy các thông tin khác
+            demographics = patient_data.get('demographics', {})
+            clinical_info = patient_data.get('clinical_info', {})
+            
+            # Thực hiện cập nhật
+            cursor.execute(
+                """
+                UPDATE patients 
+                SET modified_date = ?,
+                    name = ?,
+                    birth_date = ?,
+                    gender = ?,
+                    address = ?,
+                    phone = ?,
+                    email = ?,
+                    diagnosis = ?,
+                    diagnosis_date = ?
+                WHERE patient_id = ?
+                """,
+                (
+                    modified_date,
+                    demographics.get('name', ''),
+                    demographics.get('birth_date', ''),
+                    demographics.get('gender', ''),
+                    demographics.get('address', ''),
+                    demographics.get('phone', ''),
+                    demographics.get('email', ''),
+                    clinical_info.get('diagnosis', ''),
+                    clinical_info.get('diagnosis_date', ''),
+                    patient_id
+                )
+            )
             
             conn.commit()
+            conn.close()
             
-            # Xóa thư mục dữ liệu của bệnh nhân
-            patient_dir = os.path.join(self.patient_data_dir, patient_id)
-            if os.path.exists(patient_dir):
-                shutil.rmtree(patient_dir)
+            # Lưu dữ liệu chi tiết của bệnh nhân
+            self._save_patient_data(patient)
             
-            # Xóa khỏi danh sách đã tải
-            if patient_id in self.loaded_patients:
-                del self.loaded_patients[patient_id]
+            logger.info(f"Đã cập nhật thông tin bệnh nhân {patient_id}")
             
-            logger.info(f"Đã xóa bệnh nhân: {patient_id}")
             return True
+        except Exception as error:
+            logger.error(f"Lỗi khi cập nhật bệnh nhân: {error}")
+            return False
+    
+    def insert_volume(self, patient_id: str, modality: str, volume_data: Any, metadata: Dict[str, Any]) -> str:
+        """
+        Chèn dữ liệu khối vào cơ sở dữ liệu
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            modality: Loại hình ảnh (CT, MRI, PET,...)
+            volume_data: Dữ liệu khối (numpy array)
+            metadata: Metadata của khối
             
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Lỗi khi xóa bệnh nhân: {str(e)}")
+        Returns:
+            ID của khối đã chèn
+        """
+        try:
+            # Tạo ID khối
+            volume_id = f"{modality.lower()}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Đảm bảo thư mục bệnh nhân tồn tại
+            patient_dir = os.path.join(self.data_dir, patient_id)
+            os.makedirs(patient_dir, exist_ok=True)
+            
+            # Thư mục lưu trữ khối
+            volume_dir = os.path.join(patient_dir, "volumes")
+            os.makedirs(volume_dir, exist_ok=True)
+            
+            # Lưu metadata
+            metadata_path = os.path.join(volume_dir, f"{volume_id}_metadata.json")
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=4)
+            
+            # Lưu dữ liệu khối (sử dụng numpy để lưu)
+            import numpy as np
+            volume_path = os.path.join(volume_dir, f"{volume_id}_data.npy")
+            np.save(volume_path, volume_data)
+            
+            # Cập nhật cơ sở dữ liệu
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Chèn metadata cơ bản vào bảng volumes
+            cursor.execute(
+                "INSERT INTO volumes (volume_id, patient_id, modality, create_date, metadata_path, data_path) VALUES (?, ?, ?, ?, ?, ?)",
+                (volume_id, patient_id, modality, datetime.now().isoformat(), metadata_path, volume_path)
+            )
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Đã lưu khối {modality} cho bệnh nhân {patient_id}")
+            
+            return volume_id
+        except Exception as error:
+            logger.error(f"Lỗi khi lưu khối {modality}: {error}")
+            raise
+    
+    def insert_rt_struct(self, patient_id: str, structures_data: Dict[str, Any]) -> str:
+        """
+        Chèn dữ liệu cấu trúc RT vào cơ sở dữ liệu
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            structures_data: Dữ liệu cấu trúc RT
+            
+        Returns:
+            ID của cấu trúc RT đã chèn
+        """
+        try:
+            # Tạo ID cấu trúc
+            struct_id = f"rtstruct_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Đảm bảo thư mục bệnh nhân tồn tại
+            patient_dir = os.path.join(self.data_dir, patient_id)
+            os.makedirs(patient_dir, exist_ok=True)
+            
+            # Thư mục lưu trữ cấu trúc
+            struct_dir = os.path.join(patient_dir, "structures")
+            os.makedirs(struct_dir, exist_ok=True)
+            
+            # Lưu dữ liệu cấu trúc
+            struct_path = os.path.join(struct_dir, f"{struct_id}.json")
+            with open(struct_path, 'w', encoding='utf-8') as f:
+                json.dump(structures_data, f, indent=4)
+            
+            # Cập nhật cơ sở dữ liệu
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Chèn metadata cơ bản vào bảng structures
+            cursor.execute(
+                "INSERT INTO structures (structure_id, patient_id, create_date, data_path) VALUES (?, ?, ?, ?)",
+                (struct_id, patient_id, datetime.now().isoformat(), struct_path)
+            )
+            
+            # Thêm thông tin chi tiết cho từng cấu trúc
+            for struct_name, struct_info in structures_data.items():
+                if isinstance(struct_info, dict) and 'type' in struct_info:
+                    cursor.execute(
+                        "INSERT INTO structure_details (structure_id, name, type, color) VALUES (?, ?, ?, ?)",
+                        (struct_id, struct_name, struct_info.get('type', 'UNKNOWN'), struct_info.get('color', '#FFFFFF'))
+                    )
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Đã lưu cấu trúc RT cho bệnh nhân {patient_id}")
+            
+            return struct_id
+        except Exception as error:
+            logger.error(f"Lỗi khi lưu cấu trúc RT: {error}")
+            raise
+    
+    def insert_rt_plan(self, patient_id: str, plan_data: Dict[str, Any]) -> str:
+        """
+        Chèn dữ liệu kế hoạch RT vào cơ sở dữ liệu
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            plan_data: Dữ liệu kế hoạch RT
+            
+        Returns:
+            ID của kế hoạch RT đã chèn
+        """
+        try:
+            # Tạo ID kế hoạch
+            plan_id = f"rtplan_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Đảm bảo thư mục bệnh nhân tồn tại
+            patient_dir = os.path.join(self.data_dir, patient_id)
+            os.makedirs(patient_dir, exist_ok=True)
+            
+            # Thư mục lưu trữ kế hoạch
+            plan_dir = os.path.join(patient_dir, "plans")
+            os.makedirs(plan_dir, exist_ok=True)
+            
+            # Lưu dữ liệu kế hoạch
+            plan_path = os.path.join(plan_dir, f"{plan_id}.json")
+            with open(plan_path, 'w', encoding='utf-8') as f:
+                json.dump(plan_data, f, indent=4)
+            
+            # Cập nhật cơ sở dữ liệu
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Lấy tên kế hoạch nếu có
+            plan_name = plan_data.get('label', 'Không có tên')
+            
+            # Chèn metadata cơ bản vào bảng plans
+            cursor.execute(
+                "INSERT INTO plans (plan_id, patient_id, plan_name, create_date, data_path) VALUES (?, ?, ?, ?, ?)",
+                (plan_id, patient_id, plan_name, datetime.now().isoformat(), plan_path)
+            )
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Đã lưu kế hoạch RT cho bệnh nhân {patient_id}")
+            
+            return plan_id
+        except Exception as error:
+            logger.error(f"Lỗi khi lưu kế hoạch RT: {error}")
+            raise
+    
+    def insert_rt_dose(self, patient_id: str, dose_data: Any, dose_metadata: Dict[str, Any]) -> str:
+        """
+        Chèn dữ liệu liều RT vào cơ sở dữ liệu
+        
+        Args:
+            patient_id: ID của bệnh nhân
+            dose_data: Dữ liệu liều RT (numpy array)
+            dose_metadata: Metadata của liều RT
+            
+        Returns:
+            ID của liều RT đã chèn
+        """
+        try:
+            # Tạo ID liều
+            dose_id = f"rtdose_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # Đảm bảo thư mục bệnh nhân tồn tại
+            patient_dir = os.path.join(self.data_dir, patient_id)
+            os.makedirs(patient_dir, exist_ok=True)
+            
+            # Thư mục lưu trữ liều
+            dose_dir = os.path.join(patient_dir, "doses")
+            os.makedirs(dose_dir, exist_ok=True)
+            
+            # Lưu metadata
+            metadata_path = os.path.join(dose_dir, f"{dose_id}_metadata.json")
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(dose_metadata, f, indent=4)
+            
+            # Lưu dữ liệu liều (sử dụng numpy để lưu)
+            import numpy as np
+            dose_path = os.path.join(dose_dir, f"{dose_id}_data.npy")
+            np.save(dose_path, dose_data)
+            
+            # Cập nhật cơ sở dữ liệu
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Chèn metadata cơ bản vào bảng doses
+            cursor.execute(
+                "INSERT INTO doses (dose_id, patient_id, create_date, metadata_path, data_path) VALUES (?, ?, ?, ?, ?)",
+                (dose_id, patient_id, datetime.now().isoformat(), metadata_path, dose_path)
+            )
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Đã lưu liều RT cho bệnh nhân {patient_id}")
+            
+            return dose_id
+        except Exception as error:
+            logger.error(f"Lỗi khi lưu liều RT: {error}")
             raise
         finally:
             conn.close()
-    
-    def get_patient(self, patient_id: str) -> Optional[Patient]:
-        """
-        Lấy thông tin bệnh nhân
-        
-        Args:
-            patient_id: ID của bệnh nhân cần lấy
-            
-        Returns:
-            Patient: Đối tượng bệnh nhân, hoặc None nếu không tìm thấy
-        """
-        # Kiểm tra đã tải chưa
-        if patient_id in self.loaded_patients:
-            return self.loaded_patients[patient_id]
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        try:
-            # Lấy thông tin cơ bản từ cơ sở dữ liệu
-            cursor.execute('''
-            SELECT name, birth_date, gender, address, phone, email,
-                   diagnosis, diagnosis_date, physician, notes, created_date, modified_date
-            FROM patients
-            WHERE patient_id = ?
-            ''', (patient_id,))
-            
-            row = cursor.fetchone()
-            if not row:
-                return None
-            
-            # Tạo đối tượng Patient
-            name, birth_date, gender, address, phone, email, diagnosis, diagnosis_date, physician, notes, created_date, modified_date = row
-            
-            patient = Patient(
-                patient_id=patient_id,
-                name=name,
-                birth_date=birth_date,
-                gender=gender,
-                address=address,
-                phone=phone,
-                email=email,
-                diagnosis=diagnosis,
-                diagnosis_date=diagnosis_date,
-                physician=physician,
-                notes=notes,
-                created_date=created_date,
-                modified_date=modified_date
-            )
-            
-            # Tải dữ liệu chi tiết
-            self._load_patient_data(patient)
-            
-            # Lưu vào danh sách đã tải
-            self.loaded_patients[patient_id] = patient
-            
-            return patient
-            
-        except Exception as e:
-            logger.error(f"Lỗi khi lấy thông tin bệnh nhân: {str(e)}")
-            return None
-        finally:
-            conn.close()
-    
-    def get_all_patients(self) -> List[Dict[str, Any]]:
-        """
-        Lấy danh sách tất cả bệnh nhân (chỉ thông tin cơ bản)
-        
-        Returns:
-            List[Dict]: Danh sách thông tin cơ bản của các bệnh nhân
-        """
-        conn = sqlite3.connect(self.db_path)
-        
-        try:
-            # Lấy danh sách tất cả bệnh nhân
-            query = '''
-            SELECT patient_id, name, birth_date, gender, diagnosis, diagnosis_date, physician, created_date, modified_date
-            FROM patients
-            ORDER BY name
-            '''
-            
-            # Sử dụng pandas để dễ xử lý dữ liệu
-            df = pd.read_sql_query(query, conn)
-            
-            # Chuyển thành list of dicts
-            patients = df.to_dict('records')
-            
-            return patients
-            
-        except Exception as e:
-            logger.error(f"Lỗi khi lấy danh sách bệnh nhân: {str(e)}")
-            return []
-        finally:
-            conn.close()
-    
-    def search_patients(self, query: str) -> List[Dict[str, Any]]:
-        """
-        Tìm kiếm bệnh nhân theo từ khóa
-        
-        Args:
-            query: Từ khóa tìm kiếm
-            
-        Returns:
-            List[Dict]: Danh sách thông tin cơ bản của các bệnh nhân thỏa mãn
-        """
-        conn = sqlite3.connect(self.db_path)
-        
-        try:
-            # Tìm kiếm bệnh nhân trong các trường name, diagnosis, physician
-            search_query = f"%{query}%"
-            sql_query = '''
-            SELECT patient_id, name, birth_date, gender, diagnosis, diagnosis_date, physician, created_date, modified_date
-            FROM patients
-            WHERE name LIKE ? OR diagnosis LIKE ? OR physician LIKE ?
-            ORDER BY name
-            '''
-            
-            # Sử dụng pandas để dễ xử lý dữ liệu
-            df = pd.read_sql_query(sql_query, conn, params=(search_query, search_query, search_query))
-            
-            # Chuyển thành list of dicts
-            patients = df.to_dict('records')
-            
-            return patients
-            
-        except Exception as e:
-            logger.error(f"Lỗi khi tìm kiếm bệnh nhân: {str(e)}")
-            return []
-        finally:
-            conn.close()
-    
-    def _save_patient_data(self, patient: Patient) -> None:
-        """
-        Lưu dữ liệu chi tiết của bệnh nhân vào file
-        
-        Args:
-            patient: Đối tượng bệnh nhân cần lưu
-        """
-        # Tạo thư mục cho bệnh nhân
-        patient_dir = os.path.join(self.patient_data_dir, patient.patient_id)
-        os.makedirs(patient_dir, exist_ok=True)
-        
-        # Lưu thông tin cơ bản vào file patient_info.json
-        patient_info_file = os.path.join(patient_dir, 'patient_info.json')
-        with open(patient_info_file, 'w') as f:
-            json.dump(patient.to_dict(), f, indent=2)
-        
-        # Lưu danh sách plan_ids vào file plans.json
-        plans_file = os.path.join(patient_dir, 'plans.json')
-        with open(plans_file, 'w') as f:
-            json.dump(list(patient.plans.keys()), f, indent=2)
-        
-        # Lưu danh sách image_ids vào file images.json
-        images_file = os.path.join(patient_dir, 'images.json')
-        with open(images_file, 'w') as f:
-            json.dump(list(patient.images.keys()), f, indent=2)
-        
-        # Lưu danh sách structure_ids vào file structures.json
-        structures_file = os.path.join(patient_dir, 'structures.json')
-        with open(structures_file, 'w') as f:
-            json.dump(list(patient.structures.keys()), f, indent=2)
-        
-        # Tạo thư mục cho các thành phần
-        plans_dir = os.path.join(patient_dir, 'plans')
-        os.makedirs(plans_dir, exist_ok=True)
-        
-        images_dir = os.path.join(patient_dir, 'images')
-        os.makedirs(images_dir, exist_ok=True)
-        
-        structures_dir = os.path.join(patient_dir, 'structures')
-        os.makedirs(structures_dir, exist_ok=True)
-        
-        # Lưu dữ liệu chi tiết từng plan
-        for plan_id, plan_data in patient.plans.items():
-            plan_file = os.path.join(plans_dir, f'{plan_id}.json')
-            with open(plan_file, 'w') as f:
-                json.dump(plan_data, f, indent=2)
-        
-        # Lưu dữ liệu chi tiết từng image (metadata)
-        for image_id, image_data in patient.images.items():
-            # Lưu metadata vào file JSON
-            image_meta_file = os.path.join(images_dir, f'{image_id}_meta.json')
-            with open(image_meta_file, 'w') as f:
-                # Chỉ lưu metadata, không lưu dữ liệu hình ảnh
-                meta_data = {k: v for k, v in image_data.items() if k != 'data'}
-                json.dump(meta_data, f, indent=2)
-            
-            # Dữ liệu hình ảnh (nếu có) sẽ được lưu dưới dạng binary hoặc numpy array
-            if 'data' in image_data and image_data['data'] is not None:
-                import numpy as np
-                image_data_file = os.path.join(images_dir, f'{image_id}_data.npy')
-                np.save(image_data_file, image_data['data'])
-        
-        # Lưu dữ liệu chi tiết từng structure
-        for structure_id, structure_data in patient.structures.items():
-            # Lưu metadata vào file JSON
-            structure_meta_file = os.path.join(structures_dir, f'{structure_id}_meta.json')
-            with open(structure_meta_file, 'w') as f:
-                # Chỉ lưu metadata, không lưu mask
-                meta_data = {k: v for k, v in structure_data.items() if k != 'mask'}
-                json.dump(meta_data, f, indent=2)
-            
-            # Dữ liệu mask (nếu có) sẽ được lưu dưới dạng numpy array
-            if 'mask' in structure_data and structure_data['mask'] is not None:
-                import numpy as np
-                mask_file = os.path.join(structures_dir, f'{structure_id}_mask.npy')
-                np.save(mask_file, structure_data['mask'])
     
     def _load_patient_data(self, patient: Patient) -> None:
         """
@@ -838,6 +855,8 @@ class PatientDatabase:
             email=patient_data.get('email', ''),
             diagnosis=patient_data.get('diagnosis', ''),
             diagnosis_date=patient_data.get('diagnosis_date', ''),
+            cancer_type=patient_data.get('cancer_type', ''),
+            stage=patient_data.get('stage', ''),
             physician=patient_data.get('physician', ''),
             notes=patient_data.get('notes', '')
         )
@@ -882,28 +901,6 @@ class PatientDatabase:
         patient_dir = os.path.join(self.patient_data_dir, patient_id)
         os.makedirs(patient_dir, exist_ok=True)
         return patient_dir
-    
-    def patient_exists(self, patient_id: str) -> bool:
-        """
-        Kiểm tra bệnh nhân có tồn tại trong cơ sở dữ liệu không
-        
-        Args:
-            patient_id: ID của bệnh nhân cần kiểm tra
-            
-        Returns:
-            bool: True nếu bệnh nhân tồn tại, False nếu không
-        """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("SELECT patient_id FROM patients WHERE patient_id = ?", (patient_id,))
-            return cursor.fetchone() is not None
-        except Exception as e:
-            logger.error(f"Lỗi khi kiểm tra bệnh nhân: {str(e)}")
-            return False
-        finally:
-            conn.close()
 
 # Tạo instance mặc định
 patient_db = PatientDatabase()

@@ -14,6 +14,8 @@ import numpy as np
 from quangstation.clinical.data_management.patient_db import PatientDatabase
 import time
 from quangstation.core.utils.logging import get_logger
+import sqlite3
+from typing import List, Dict, Any
 
 # Sửa lỗi import pydicom
 try:
@@ -690,499 +692,82 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Lỗi khi xuất kế hoạch: {str(e)}")
             return False
-    
-    def duplicate_plan(self, patient_id, plan_id, new_plan_name=None):
+            
+    def get_sessions_for_patient(self, patient_id: str) -> List[Dict[str, Any]]:
         """
-        Tạo bản sao của một kế hoạch
+        Lấy danh sách các phiên làm việc cho một bệnh nhân
         
         Args:
-            patient_id (str): ID của bệnh nhân
-            plan_id (str): ID của kế hoạch cần sao chép
-            new_plan_name (str, optional): Tên mới cho bản sao kế hoạch
+            patient_id: ID của bệnh nhân
             
         Returns:
-            str: ID của kế hoạch mới nếu thành công, None nếu thất bại
+            List[Dict[str, Any]]: Danh sách các phiên làm việc
         """
         try:
-            # Tạo phiên làm việc mới
-            self.create_new_session(patient_id)
-            new_plan_id = self.current_plan_id
+            # Danh sách kết quả
+            sessions = []
             
-            # Đường dẫn đến kế hoạch nguồn và đích
-            source_plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-            target_plan_dir = os.path.join(self.workspace_dir, patient_id, new_plan_id)
-            
-            if not os.path.exists(source_plan_dir):
-                raise FileNotFoundError(f"Không tìm thấy kế hoạch nguồn: {plan_id}")
-            
-            # Sao chép các file từ kế hoạch nguồn sang kế hoạch đích
-            for item in os.listdir(source_plan_dir):
-                src_path = os.path.join(source_plan_dir, item)
-                dst_path = os.path.join(target_plan_dir, item)
+            # Lấy đường dẫn thư mục bệnh nhân
+            patient_dir = os.path.join(self.workspace_dir, patient_id)
+            if not os.path.exists(patient_dir):
+                return []
                 
-                if os.path.isfile(src_path):
-                    shutil.copy2(src_path, dst_path)
-                elif os.path.isdir(src_path):
-                    # Sao chép thư mục con (như screenshots)
-                    if not os.path.exists(dst_path):
-                        os.makedirs(dst_path)
+            # Kiểm tra các thư mục con là các phiên làm việc
+            for plan_id in os.listdir(patient_dir):
+                plan_dir = os.path.join(patient_dir, plan_id)
+                if not os.path.isdir(plan_dir):
+                    continue
                     
-                    for file_item in os.listdir(src_path):
-                        src_file = os.path.join(src_path, file_item)
-                        dst_file = os.path.join(dst_path, file_item)
-                        if os.path.isfile(src_file):
-                            shutil.copy2(src_file, dst_file)
-            
-            # Cập nhật metadata
-            metadata_json_file = os.path.join(target_plan_dir, "plan_metadata.json")
-            if os.path.exists(metadata_json_file):
-                # Đọc metadata
-                with open(metadata_json_file, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
+                # Lấy metadata của phiên làm việc
+                metadata_file = os.path.join(plan_dir, "plan_metadata.json")
+                session_data = {}
                 
-                # Cập nhật thông tin
-                metadata['plan_id'] = new_plan_id
+                if os.path.exists(metadata_file):
+                    # Đọc metadata từ file JSON
+                    try:
+                        with open(metadata_file, 'r', encoding='utf-8') as f:
+                            session_data = json.load(f)
+                    except Exception as e:
+                        logger.error(f"Lỗi khi đọc metadata của phiên làm việc {plan_id}: {str(e)}")
+                        session_data = {}
                 
-                # Cập nhật tên kế hoạch nếu được cung cấp
-                if new_plan_name:
-                    metadata['plan_name'] = new_plan_name
-                else:
-                    # Mặc định thêm "- Bản sao" vào tên
-                    metadata['plan_name'] = metadata.get('plan_name', 'Kế hoạch') + " - Bản sao"
-                
-                # Cập nhật thời gian sửa đổi
-                metadata['modified_at'] = datetime.datetime.now().isoformat()
-                
-                # Ghi lại metadata
-                with open(metadata_json_file, 'w', encoding='utf-8') as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-            
-            # Ghi log
-            logger.info(f"Đã sao chép kế hoạch {plan_id} thành kế hoạch mới {new_plan_id}")
-            
-            return new_plan_id
-            
-        except Exception as error:
-            logger.error(f"Lỗi khi sao chép kế hoạch: {str(error)}", include_traceback=True)
-            return None
-    
-    def backup_workspace(self, backup_dir):
-        """Sao lưu toàn bộ workspace"""
-        if not os.path.exists(backup_dir):
-            os.makedirs(backup_dir)
-        
-        # Tạo tên file backup dựa trên thời gian
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.join(backup_dir, f"workspace_backup_{timestamp}.zip")
-        
-        # Tạo file zip chứa toàn bộ workspace
-        shutil.make_archive(backup_file[:-4], 'zip', self.workspace_dir)
-        
-        return backup_file
-    
-    def restore_from_backup(self, backup_file):
-        """Khôi phục workspace từ file backup"""
-        if not os.path.exists(backup_file):
-            raise FileNotFoundError(f"Không tìm thấy file backup: {backup_file}")
-        
-        # Tạo thư mục tạm để giải nén
-        temp_dir = os.path.join(os.path.dirname(backup_file), "temp_restore")
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir)
-        
-        # Giải nén file backup
-        shutil.unpack_archive(backup_file, temp_dir)
-        
-        # Xóa workspace hiện tại
-        if os.path.exists(self.workspace_dir):
-            shutil.rmtree(self.workspace_dir)
-        
-        # Di chuyển dữ liệu từ thư mục tạm sang workspace
-        shutil.move(temp_dir, self.workspace_dir)
-        
-        # Reset trạng thái hiện tại
-        self.current_patient_id = None
-        self.current_plan_id = None
-        
-        return True
-    
-    def get_plan_summary(self, patient_id=None, plan_id=None):
-        """Lấy thông tin tóm tắt về kế hoạch"""
-        if patient_id is None:
-            patient_id = self.current_patient_id
-        if plan_id is None:
-            plan_id = self.current_plan_id
-            
-        if not patient_id or not plan_id:
-            return None
-            
-        # Thử đọc từ file JSON
-        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        json_file = os.path.join(plan_dir, "plan_metadata.json")
-        if os.path.exists(json_file):
-            try:
-                with open(json_file, 'r') as f:
-                    return json.load(f)
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc plan_metadata.json: {str(error)}")
-        
-        # Thử đọc từ file DICOM
-        metadata_file = os.path.join(plan_dir, "metadata.dcm")
-        if os.path.exists(metadata_file):
-            try:
-                return self._load_dicom_data(metadata_file)
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc metadata.dcm: {str(error)}")
-        
-        return None
-    
-    def get_structure_data(self, patient_id=None, plan_id=None):
-        """
-        Lấy dữ liệu cấu trúc cho kế hoạch
-        
-        Args:
-            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
-            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
-            
-        Returns:
-            Dict: Dữ liệu cấu trúc hoặc None nếu không tìm thấy
-        """
-        if patient_id is None:
-            patient_id = self.current_patient_id
-        if plan_id is None:
-            plan_id = self.current_plan_id
-            
-        if not patient_id or not plan_id:
-            return None
-            
-        # Đường dẫn đến thư mục kế hoạch
-        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        
-        # Thử đọc từ file DICOM
-        structure_file = os.path.join(plan_dir, "structures.dcm")
-        if os.path.exists(structure_file):
-            try:
-                return self._load_dicom_data(structure_file)
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc structures.dcm: {str(error)}")
-        
-        # Thử đọc từ file JSON
-        json_file = os.path.join(plan_dir, "structures.json")
-        if os.path.exists(json_file):
-            try:
-                with open(json_file, 'r') as f:
-                    return json.load(f)
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc structures.json: {str(error)}")
-        
-        return None
-    
-    def get_dose_data(self, patient_id=None, plan_id=None):
-        """
-        Lấy dữ liệu liều cho kế hoạch
-        
-        Args:
-            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
-            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
-            
-        Returns:
-            Dict: Dữ liệu liều hoặc None nếu không tìm thấy
-        """
-        if patient_id is None:
-            patient_id = self.current_patient_id
-        if plan_id is None:
-            plan_id = self.current_plan_id
-            
-        if not patient_id or not plan_id:
-            return None
-            
-        # Đường dẫn đến thư mục kế hoạch
-        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        
-        # Thử đọc từ file DICOM
-        dose_file = os.path.join(plan_dir, "dose.dcm")
-        if os.path.exists(dose_file):
-            try:
-                return self._load_dicom_data(dose_file)
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc dose.dcm: {str(error)}")
-        
-        # Thử đọc từ file JSON
-        json_file = os.path.join(plan_dir, "dose.json")
-        if os.path.exists(json_file):
-            try:
-                with open(json_file, 'r') as f:
-                    return json.load(f)
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc dose.json: {str(error)}")
-        
-        return None
-    
-    def get_structure_list(self, patient_id=None, plan_id=None):
-        """
-        Lấy danh sách các cấu trúc trong kế hoạch
-        
-        Args:
-            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
-            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
-            
-        Returns:
-            List: Danh sách các cấu trúc hoặc danh sách rỗng nếu không tìm thấy
-        """
-        structure_data = self.get_structure_data(patient_id, plan_id)
-        if not structure_data:
-            return []
-            
-        structures = []
-        
-        # Lấy danh sách cấu trúc
-        if "structures" in structure_data:
-            for name, struct in structure_data["structures"].items():
-                structure_info = {
-                    "name": name,
-                    "type": struct.get("type", "Unknown"),
-                    "color": struct.get("color", "#FFFFFF"),
-                    "volume": struct.get("volume", 0)
-                }
-                structures.append(structure_info)
-        
-        return structures
-    
-    def has_dose_calculation(self, patient_id=None, plan_id=None):
-        """
-        Kiểm tra xem kế hoạch đã có dữ liệu liều chưa
-        
-        Args:
-            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
-            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
-            
-        Returns:
-            bool: True nếu đã có dữ liệu liều, False nếu chưa
-        """
-        dose_data = self.get_dose_data(patient_id, plan_id)
-        return dose_data is not None and (
-            "dose_matrix" in dose_data or 
-            "dose_grid" in dose_data
-        )
-    
-    def has_contours(self, patient_id=None, plan_id=None):
-        """
-        Kiểm tra xem kế hoạch đã có contour chưa
-        
-        Args:
-            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
-            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
-            
-        Returns:
-            bool: True nếu đã có contour, False nếu chưa
-        """
-        structure_data = self.get_structure_data(patient_id, plan_id)
-        if not structure_data:
-            return False
-            
-        # Kiểm tra xem có cấu trúc nào không
-        if "structures" in structure_data and structure_data["structures"]:
-            return len(structure_data["structures"]) > 0
-            
-        return False
-    
-    def get_contour_tools(self):
-        """
-        Lấy đối tượng ContourTools hiện tại
-        
-        Returns:
-            ContourTools: Đối tượng ContourTools hoặc None nếu chưa có
-        """
-        if hasattr(self, 'contour_tools'):
-            return self.contour_tools
-        return None
-    
-    def set_contour_tools(self, contour_tools):
-        """
-        Thiết lập đối tượng ContourTools
-        
-        Args:
-            contour_tools: Đối tượng ContourTools
-        """
-        self.contour_tools = contour_tools
-    
-    def save_contours(self):
-        """
-        Lưu contour vào session
-        
-        Returns:
-            bool: True nếu thành công, False nếu thất bại
-        """
-        try:
-            if not hasattr(self, 'contour_tools') or self.contour_tools is None:
-                logger.warning("Không có contour để lưu")
-                return False
-                
-            if not self.current_patient_id or not self.current_plan_id:
-                logger.warning("Chưa chọn bệnh nhân hoặc kế hoạch")
-                return False
-                
-            # Lấy dữ liệu contour
-            contours = self.contour_tools.get_all_contours()
-            
-            # Tạo cấu trúc dữ liệu
-            structure_data = {
-                "structures": {}
-            }
-            
-            # Thêm từng contour vào dữ liệu
-            for name, contour in contours.items():
-                structure_data["structures"][name] = {
-                    "contour_data": contour,
-                    "color": self.contour_tools.get_color(name),
-                    "type": self.contour_tools.get_type(name)
-                }
-            
-            # Lưu vào file
-            plan_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-            os.makedirs(plan_dir, exist_ok=True)
-            
-            # Lưu dưới dạng JSON
-            json_file = os.path.join(plan_dir, "structures.json")
-            with open(json_file, 'w') as f:
-                json.dump(structure_data, f)
-            
-            logger.info(f"Đã lưu contour vào {json_file}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Lỗi khi lưu contour: {str(e)}")
-            return False
-    
-    def get_plan_config(self, patient_id=None, plan_id=None):
-        """
-        Lấy cấu hình kế hoạch
-        
-        Args:
-            patient_id: ID của bệnh nhân (mặc định là bệnh nhân hiện tại)
-            plan_id: ID của kế hoạch (mặc định là kế hoạch hiện tại)
-            
-        Returns:
-            PlanConfig: Đối tượng PlanConfig hoặc None nếu không tìm thấy
-        """
-        if patient_id is None:
-            patient_id = self.current_patient_id
-        if plan_id is None:
-            plan_id = self.current_plan_id
-            
-        if not patient_id or not plan_id:
-            return None
-            
-        # Đường dẫn đến thư mục kế hoạch
-        plan_dir = os.path.join(self.workspace_dir, patient_id, plan_id)
-        
-        # Thử đọc từ file JSON
-        json_file = os.path.join(plan_dir, "plan_config.json")
-        if os.path.exists(json_file):
-            try:
-                with open(json_file, 'r') as f:
-                    config_data = json.load(f)
+                # Thêm thông tin cơ bản nếu chưa có
+                if not session_data:
+                    # Lấy thời gian tạo từ thời gian sửa đổi của thư mục
+                    created_time = os.path.getctime(plan_dir)
+                    created_date = datetime.datetime.fromtimestamp(created_time).isoformat()
                     
-                # Tạo đối tượng PlanConfig
-                from quangstation.planning.plan_config import PlanConfig
-                config = PlanConfig()
-                
-                # Cập nhật từ dữ liệu JSON
-                for key, value in config_data.items():
-                    setattr(config, key, value)
-                    
-                return config
-            except Exception as error:
-                logger.error(f"Lỗi khi đọc plan_config.json: {str(error)}")
-        
-        return None
-    
-    def get_current_session(self):
-        """
-        Lấy phiên làm việc hiện tại
-        
-        Returns:
-            Dict hoặc None: Dữ liệu phiên làm việc hiện tại hoặc None nếu chưa có phiên nào
-        """
-        if self.current_patient_id and self.current_plan_id:
-            # Nếu chưa load session, load từ file
-            if self.current_session is None:
-                self.load_session(self.current_patient_id, self.current_plan_id)
-            return self.current_session
-        return None
-    
-    def update_current_session(self, session_data):
-        """
-        Cập nhật phiên làm việc hiện tại và lưu vào file
-        
-        Args:
-            session_data: Dữ liệu phiên làm việc mới
-            
-        Returns:
-            bool: True nếu cập nhật thành công, False nếu thất bại
-        """
-        if self.current_patient_id is None or self.current_plan_id is None:
-            logger.error("Không có phiên làm việc hiện tại để cập nhật")
-            return False
-        
-        try:
-            # Cập nhật biến session
-            self.current_session = session_data
-            
-            # Lưu dữ liệu vào các file
-            session_dir = os.path.join(self.workspace_dir, self.current_patient_id, self.current_plan_id)
-            if not os.path.exists(session_dir):
-                os.makedirs(session_dir)
-            
-            # Lưu metadata
-            if 'plan_metadata' in session_data:
-                metadata_file = os.path.join(session_dir, 'plan_metadata.json')
-                with open(metadata_file, 'w') as f:
-                    json.dump(session_data['plan_metadata'], f, indent=2)
-            
-            # Lưu contours
-            if 'structures' in session_data:
-                # Chỉ lưu thông tin cơ bản, không lưu mask (quá lớn)
-                contours_data = {}
-                for struct_id, struct_data in session_data['structures'].items():
-                    contours_data[struct_id] = {
-                        'name': struct_data.get('name', ''),
-                        'color': struct_data.get('color', [1.0, 0.0, 0.0]),
-                        'type': struct_data.get('type', 'ORGAN'),
-                        'modified_date': struct_data.get('modified_date', datetime.datetime.now().isoformat())
+                    session_data = {
+                        "plan_id": plan_id,
+                        "patient_id": patient_id,
+                        "created_date": created_date,
+                        "plan_name": f"Kế hoạch {plan_id}"
                     }
                 
-                contours_file = os.path.join(session_dir, 'contours.json')
-                with open(contours_file, 'w') as f:
-                    json.dump(contours_data, f, indent=2)
+                # Đảm bảo có thông tin cơ bản
+                if "plan_id" not in session_data:
+                    session_data["plan_id"] = plan_id
+                if "patient_id" not in session_data:
+                    session_data["patient_id"] = patient_id
                 
-                # Lưu mask vào file riêng (dạng nén numpy)
-                for struct_id, struct_data in session_data['structures'].items():
-                    if 'mask' in struct_data:
-                        mask_file = os.path.join(session_dir, f'mask_{struct_id}.npz')
-                        np.savez_compressed(mask_file, mask=struct_data['mask'])
+                # Kiểm tra trạng thái của phiên làm việc
+                has_dose = os.path.exists(os.path.join(plan_dir, "dose.dcm"))
+                has_structures = os.path.exists(os.path.join(plan_dir, "structures.dcm")) or os.path.exists(os.path.join(plan_dir, "contours.dcm"))
+                has_plan = os.path.exists(os.path.join(plan_dir, "beam_settings.dcm"))
+                
+                # Thêm thông tin trạng thái
+                session_data["has_dose"] = has_dose
+                session_data["has_structures"] = has_structures
+                session_data["has_plan"] = has_plan
+                
+                # Thêm vào danh sách kết quả
+                sessions.append(session_data)
             
-            # Lưu dose matrix nếu có
-            if 'dose_matrix' in session_data:
-                dose_file = os.path.join(session_dir, 'dose_matrix.npz')
-                np.savez_compressed(dose_file, dose=session_data['dose_matrix'])
+            # Sắp xếp theo thời gian tạo giảm dần (mới nhất lên đầu)
+            sessions.sort(key=lambda x: x.get("created_date", ""), reverse=True)
             
-            # Lưu thông tin kế hoạch
-            if 'plans' in session_data and self.current_plan_id in session_data['plans']:
-                plan_file = os.path.join(session_dir, 'plan_data.json')
-                with open(plan_file, 'w') as f:
-                    json.dump(session_data['plans'][self.current_plan_id], f, indent=2)
+            return sessions
             
-            # Lưu thông tin beams
-            if 'beams' in session_data:
-                beams_file = os.path.join(session_dir, 'beams.json')
-                with open(beams_file, 'w') as f:
-                    json.dump(session_data['beams'], f, indent=2)
-            
-            logger.info(f"Đã cập nhật phiên làm việc: {self.current_patient_id}/{self.current_plan_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Lỗi khi cập nhật phiên làm việc: {str(e)}")
-            return False
+        except Exception as error:
+            logger.error(f"Lỗi khi lấy danh sách phiên làm việc cho bệnh nhân {patient_id}: {str(error)}")
+            return []

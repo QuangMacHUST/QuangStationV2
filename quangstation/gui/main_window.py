@@ -1,7 +1,166 @@
+{{ ... }}
+        def start_backup():
+            # Kiểm tra thư mục đích
+            if not dest_path.get():
+                messagebox.showerror("Lỗi", "Vui lòng chọn thư mục đích để sao lưu")
+                return
+            
+            # Hiển thị tiến trình
+            progress_window = tk.Toplevel(dialog)
+            progress_window.title("Đang sao lưu...")
+            progress_window.geometry("400x150")
+            progress_window.resizable(False, False)
+            progress_window.transient(dialog)
+            progress_window.grab_set()
+            
+            progress_frame = ttk.Frame(progress_window, padding=20)
+            progress_frame.pack(fill=tk.BOTH, expand=True)
+            
+            ttk.Label(progress_frame, text="Đang sao lưu dữ liệu, vui lòng đợi...").pack(pady=(0, 10))
+            
+            progress_var = tk.DoubleVar()
+            progress_bar = ttk.Progressbar(progress_frame, variable=progress_var, maximum=100)
+            progress_bar.pack(fill=tk.X, pady=10)
+            
+            status_var = tk.StringVar(value="Đang chuẩn bị sao lưu...")
+            status_label = ttk.Label(progress_frame, textvariable=status_var)
+            status_label.pack(anchor=tk.W, pady=5)
+            
+            # Đường dẫn đích
+            backup_path = dest_path.get()
+            
+            # Tạo thư mục sao lưu với timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_folder = os.path.join(backup_path, f"quangstation_backup_{timestamp}")
+            
+            # Danh sách các thư mục cần sao lưu
+            backup_items = []
+            
+            # Thêm các mục sao lưu tùy theo lựa chọn của người dùng
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            
+            if backup_patients.get():
+                backup_items.append({
+                    'source': os.path.join(data_dir, 'patients'),
+                    'dest': os.path.join(backup_folder, 'patients'),
+                    'type': 'patient'
+                })
+                
+            if backup_plans.get():
+                backup_items.append({
+                    'source': os.path.join(data_dir, 'plans'),
+                    'dest': os.path.join(backup_folder, 'plans'),
+                    'type': 'plan'
+                })
+                
+            if backup_images.get():
+                backup_items.append({
+                    'source': os.path.join(data_dir, 'images'),
+                    'dest': os.path.join(backup_folder, 'images'),
+                    'type': 'image'
+                })
+            
+            # Thông tin sao lưu
+            backup_info = {
+                'timestamp': timestamp,
+                'datetime': datetime.now().isoformat(),
+                'items': [item['type'] for item in backup_items],
+                'compressed': compress_data.get()
+            }
+            
+            def perform_backup():
+                try:
+                    # Tạo thư mục sao lưu
+                    if not os.path.exists(backup_folder):
+                        os.makedirs(backup_folder)
+                    
+                    # Sao lưu từng mục
+                    total_items = len(backup_items)
+                    for i, item in enumerate(backup_items):
+                        progress_percent = (i / total_items) * 80
+                        status_var.set(f"Đang sao lưu {item['type']}...")
+                        progress_var.set(progress_percent)
+                        
+                        if os.path.exists(item['source']):
+                            # Sao chép thư mục
+                            shutil.copytree(item['source'], item['dest'])
+                        
+                    # Lưu thông tin sao lưu
+                    with open(os.path.join(backup_folder, 'backup_info.json'), 'w') as f:
+                        json.dump(backup_info, f, indent=4)
+                    
+                    # Nén file nếu cần
+                    if compress_data.get():
+                        status_var.set("Đang nén dữ liệu...")
+                        progress_var.set(90)
+                        
+                        # Tạo file zip
+                        zip_path = f"{backup_folder}.zip"
+                        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                            for root, dirs, files in os.walk(backup_folder):
+                                for file in files:
+                                    file_path = os.path.join(root, file)
+                                    arcname = os.path.relpath(file_path, os.path.dirname(backup_folder))
+                                    zipf.write(file_path, arcname)
+                        
+                        # Xóa thư mục tạm
+                        shutil.rmtree(backup_folder)
+                        backup_folder_final = zip_path
+                    else:
+                        backup_folder_final = backup_folder
+                    
+                    # Cập nhật tiến trình và trạng thái
+                    progress_var.set(100)
+                    status_var.set("Sao lưu hoàn tất!")
+                    
+                    # Lưu vào lịch sử sao lưu
+                    backup_size = "0 KB"
+                    if os.path.exists(backup_folder_final):
+                        size_bytes = os.path.getsize(backup_folder_final) if os.path.isfile(backup_folder_final) else sum(
+                            os.path.getsize(os.path.join(dirpath, filename))
+                            for dirpath, _, filenames in os.walk(backup_folder_final)
+                            for filename in filenames
+                        )
+                        
+                        if size_bytes < 1024:
+                            backup_size = f"{size_bytes} B"
+                        elif size_bytes < 1024 * 1024:
+                            backup_size = f"{size_bytes/1024:.1f} KB"
+                        else:
+                            backup_size = f"{size_bytes/(1024*1024):.1f} MB"
+                    
+                    # Thêm vào lịch sử
+                    backup_date = datetime.now().strftime("%d/%m/%Y")
+                    backup_time = datetime.now().strftime("%H:%M")
+                    history_tree.insert("", 0, values=(backup_date, backup_time, backup_size, "Thành công"))
+                    
+                    # Hiển thị thông báo thành công
+                    messagebox.showinfo("Sao lưu hoàn tất", 
+                                      f"Đã sao lưu dữ liệu thành công tại:\n{backup_folder_final}")
+                    
+                    # Đóng cửa sổ tiến trình
+                    progress_window.destroy()
+                    dialog.destroy()
+                    
+                except Exception as e:
+                    self.logger.error(f"Lỗi sao lưu dữ liệu: {str(e)}")
+                    status_var.set(f"Lỗi: {str(e)}")
+                    messagebox.showerror("Lỗi sao lưu", f"Đã xảy ra lỗi khi sao lưu: {str(e)}")
+                    progress_window.destroy()
+            
+            # Chạy sao lưu trong thread riêng để không làm treo giao diện
+            threading_import = __import__('threading')
+            backup_thread = threading_import.Thread(target=perform_backup)
+            backup_thread.daemon = True
+            backup_thread.start()
+{{ ... }}
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
 import sys
+import shutil
+import zipfile
+import json
 from datetime import datetime
 import webbrowser
 from PIL import Image, ImageTk
