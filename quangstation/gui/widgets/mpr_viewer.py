@@ -15,7 +15,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import matplotlib.pyplot as plt
 from typing import Dict, List, Any, Optional, Tuple
 
-from quangstation.utils.logging import get_logger
+from quangstation.core.utils.logging import get_logger
 
 class MPRViewer(ttk.Frame):
     """

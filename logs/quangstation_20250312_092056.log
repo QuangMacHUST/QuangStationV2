@@ -1,0 +1,10 @@
+2025-03-12 09:20:56,533 - Launcher - INFO - ==================================================
+2025-03-12 09:20:56,533 - Launcher - INFO - Khoi dong QuangStation V2
+2025-03-12 09:20:56,533 - Launcher - INFO - Thoi gian: 2025-03-12 09:20:56
+2025-03-12 09:20:56,533 - Launcher - INFO - Duong dan: E:\hoctap\QuangStationV2
+2025-03-12 09:20:56,533 - Launcher - INFO - ==================================================
+2025-03-12 09:20:56,533 - Launcher - INFO - Da thiet lap log tai: E:\hoctap\QuangStationV2\logs\quangstation_20250312_092056.log
+2025-03-12 09:20:56,613 - Launcher - INFO - Đang khởi động QuangStation V2...
+2025-03-12 09:20:56,603 - Launcher - INFO - Đang kiểm tra các thư viện phụ thuộc...
+2025-03-12 09:20:56,734 - Launcher - ERROR - Lỗi khi khởi động: name 'get_resources_path' is not defined
+2025-03-12 09:20:58,303 - Launcher - ERROR - - pillow: THIẾU

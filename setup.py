@@ -47,16 +47,16 @@ extensions = []
 if not os.environ.get('QUANGSTATION_SKIP_CPP') and have_pybind11:
     # Module tính toán liều C++
     dose_engine_module = Extension(
-        'quangstation.dose_calculation._dose_engine',
-        sources=['quangstation/dose_calculation/dose_engine.cpp'],
+        'quangstation.clinical.dose_calculation._dose_engine',
+        sources=['quangstation/clinical/dose_calculation/dose_engine.cpp'],
         include_dirs=[pybind11_include],
     )
     extensions.append(dose_engine_module)
 
     # Module tối ưu C++
     optimizer_module = Extension(
-        'quangstation.optimization._optimizer',
-        sources=['quangstation/optimization/optimizer.cpp'],
+        'quangstation.clinical.optimization._optimizer',
+        sources=['quangstation/clinical/optimization/optimizer.cpp'],
         include_dirs=[pybind11_include],
     )
     extensions.append(optimizer_module)
@@ -88,11 +88,18 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "quangstation=quangstation.main:main",
+            "quangstation=quangstation.__main__:main",
         ],
     },
     include_package_data=True,
     package_data={
-        "quangstation": ["resources/**/*"],
+        "quangstation": [
+            "resources/**/*",
+            "core/**/*",
+            "clinical/**/*",
+            "gui/**/*",
+            "quality/**/*", 
+            "services/**/*"
+        ],
     },
 ) 

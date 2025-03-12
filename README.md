@@ -101,20 +101,6 @@ QuangStation V2 là một hệ thống lập kế hoạch xạ trị mã nguồn
   - Xuất dữ liệu phân tích dạng CSV, Excel
   - Xuất hình ảnh và đồ thị dạng PNG, JPEG, SVG
 
-### 🔄 Tính năng Nâng cao
-- **So sánh kế hoạch**
-  - So sánh trực quan nhiều kế hoạch xạ trị
-  - Phân tích sự khác biệt giữa các kế hoạch
-  - Đánh giá kết quả trước và sau tối ưu
-- **Đảm bảo chất lượng (Quality Assurance)**
-  - Tính toán Gamma Index
-  - Phân tích sự khác biệt giữa liều tính toán và đo đạc
-  - Kiểm tra tính nhất quán của kế hoạch
-- **Giao diện người dùng thân thiện**
-  - Thiết kế hiện đại với hỗ trợ giao diện sáng/tối
-  - Thanh công cụ tùy chỉnh với biểu tượng trực quan
-  - Hệ thống thông báo và trợ giúp tích hợp
-
 ## 🖥️ Yêu cầu Hệ thống
 - **Python**: 3.8 trở lên
 - **Hệ điều hành**: Windows 10+, macOS, Linux
@@ -147,74 +133,54 @@ pip install -e .
 python launcher.py
 ```
 
-## 🔧 Cấu hình
+## 📂 Cấu trúc Dự án Mới
 
-QuangStation V2 cung cấp cấu hình linh hoạt thông qua file `config.json`:
-- **Cài đặt chung**:
-  - Tùy chỉnh đường dẫn làm việc
-  - Cài đặt ngôn ngữ và múi giờ
-  - Thiết lập đơn vị đo lường
-- **Cài đặt hệ thống**:
-  - Cấu hình ghi log và mức độ chi tiết
-  - Quản lý bộ nhớ cache và tạm thời
-  - Thiết lập số luồng xử lý cho tính toán
-- **Cài đặt thuật toán**:
-  - Cấu hình thuật toán tính liều mặc định
-  - Thiết lập độ phân giải tính toán
-  - Cấu hình mô hình vật lý và tham số
-- **Giao diện người dùng**:
-  - Tùy chọn giao diện sáng/tối
-  - Cấu hình bố cục và kích thước cửa sổ
-  - Tùy chỉnh phím tắt và thanh công cụ
+QuangStation V2 đã được tái cấu trúc thành một dự án có tổ chức theo nguyên tắc phân chia trách nhiệm rõ ràng. Dưới đây là chi tiết về cấu trúc thư mục mới:
 
-File cấu hình được tạo tự động trong thư mục `~/.quangstation/config.json` khi khởi động lần đầu.
-
-## 📘 Hướng dẫn Sử dụng
-
-### Nhập dữ liệu DICOM
-1. Chọn "Nhập DICOM" từ menu
-2. Chọn thư mục chứa dữ liệu
-3. Lựa chọn loại dữ liệu
-4. Xác nhận và nhập
-
-### Lập kế hoạch Xạ trị
-1. Chọn bệnh nhân
-2. Tạo kế hoạch mới
-3. Vẽ contour hoặc sử dụng phân đoạn tự động
-4. Thiết lập chùm tia và kỹ thuật xạ trị
-5. Tính toán liều ban đầu
-6. Tối ưu hóa kế hoạch
-7. Đánh giá kế hoạch qua DVH và các chỉ số
-8. Tinh chỉnh nếu cần
-9. Duyệt và xuất báo cáo
-
-## 💡 Xử lý lỗi
-Nếu bạn gặp vấn đề khi sử dụng QuangStation, hãy tham khảo [Hướng dẫn khắc phục sự cố](docs/TROUBLESHOOTING.md) của chúng tôi. Hệ thống còn được trang bị tính năng tự chẩn đoán và gợi ý sửa lỗi thông minh.
-
-## 📂 Cấu trúc Dự án
 ```
 QuangStationV2/
-├── quangstation/              # Package Python chính
-│   ├── contouring/            # Công cụ contour
-│   ├── data_management/       # Quản lý dữ liệu
-│   ├── dose_calculation/      # Tính toán liều
+├── quangstation/              # Package chính
+│   ├── core/                  # Module cốt lõi
+│   │   ├── data_models/       # Các mô hình dữ liệu 
+│   │   ├── io/                # Đọc/ghi dữ liệu
+│   │   └── utils/             # Công cụ tiện ích
+│   │
+│   ├── clinical/              # Module lâm sàng
+│   │   ├── data_management/   # Quản lý dữ liệu bệnh nhân, kế hoạch
+│   │   ├── contouring/        # Phân đoạn và contour
+│   │   ├── planning/          # Lập kế hoạch điều trị
+│   │   │   └── techniques/    # Các kỹ thuật điều trị
+│   │   ├── dose_calculation/  # Tính toán liều lượng
+│   │   ├── optimization/      # Tối ưu hóa kế hoạch
+│   │   └── plan_evaluation/   # Đánh giá kế hoạch
+│   │
 │   ├── gui/                   # Giao diện người dùng
-│   ├── image_processing/      # Xử lý hình ảnh
-│   ├── optimization/          # Tối ưu hóa
-│   ├── plan_evaluation/       # Đánh giá kế hoạch
-│   ├── planning/              # Lập kế hoạch
-│   ├── quality_assurance/     # Đảm bảo chất lượng
-│   ├── reporting/             # Tạo báo cáo
-│   └── utils/                 # Công cụ hỗ trợ
+│   │   ├── widgets/           # Các widget tùy chỉnh
+│   │   ├── views/             # Các màn hình chính
+│   │   └── dialogs/           # Hộp thoại
+│   │
+│   ├── quality/               # Đảm bảo chất lượng & báo cáo
+│   │   ├── quality_assurance/ # Kiểm tra chất lượng
+│   │   └── reporting/         # Tạo báo cáo
+│   │
+│   ├── services/              # Dịch vụ hỗ trợ
+│   │   ├── image_processing/  # Xử lý hình ảnh
+│   │   └── integration/       # Tích hợp hệ thống
+│   │
+│   ├── __init__.py            # Khởi tạo package
+│   └── __main__.py            # Điểm vào chính
+│
 ├── resources/                 # Tài nguyên ứng dụng
 │   ├── icons/                 # Biểu tượng giao diện
 │   ├── templates/             # Mẫu báo cáo
 │   ├── models/                # Mô hình AI đã huấn luyện
 │   └── data/                  # Dữ liệu tham chiếu
+│
 ├── docs/                      # Tài liệu
 │   ├── user_manual/           # Hướng dẫn người dùng
 │   ├── developer_guide/       # Hướng dẫn phát triển
 │   └── api/                   # Tài liệu API
+│
 ├── tests/                     # Kiểm thử
 ├── scripts/                   # Script hỗ trợ
 ├── launcher.py                # Script khởi chạy ứng dụng
@@ -222,8 +188,226 @@ QuangStationV2/
 └── requirements.txt           # Phụ thuộc
 ```
 
-## 🤝 Đóng góp
-Chúng tôi rất hoan nghênh các đóng góp! Vui lòng xem [CONTRIBUTING.md](CONTRIBUTING.md) để biết thêm thông tin về cách tham gia phát triển dự án.
+### Mô tả Chi tiết các Module
+
+#### 1. core/ - Module Cốt lõi
+- **data_models/**: Định nghĩa các cấu trúc dữ liệu cơ bản
+  - `image_data.py`: Mô hình dữ liệu hình ảnh y tế (CT, MRI, PET)
+  - `structure_data.py`: Mô hình dữ liệu cấu trúc giải phẫu
+  - `plan_data.py`: Mô hình dữ liệu kế hoạch xạ trị
+  - `dose_data.py`: Mô hình dữ liệu liều xạ trị
+  - `patient_data.py`: Mô hình dữ liệu bệnh nhân
+  - `beam_data.py`: Mô hình dữ liệu chùm tia
+
+- **io/**: Xử lý nhập/xuất dữ liệu
+  - `dicom_parser.py`: Phân tích dữ liệu DICOM
+  - `dicom_import.py`: Nhập dữ liệu từ DICOM
+  - `dicom_export.py`: Xuất dữ liệu sang DICOM
+  - `dicom_export_rt.py`: Xuất dữ liệu xạ trị sang DICOM RT
+  - `dicom_constants.py`: Các hằng số DICOM
+  - `file_utils.py`: Tiện ích xử lý file
+
+- **utils/**: Các công cụ tiện ích
+  - `logging.py`: Hệ thống ghi log
+  - `config.py`: Quản lý cấu hình
+  - `external_integration.py`: Tích hợp thư viện bên ngoài
+  - `geometry.py`: Các hàm hình học không gian
+  - `data_validation.py`: Kiểm tra tính hợp lệ của dữ liệu
+  - `performance.py`: Đo lường và tối ưu hiệu suất
+
+#### 2. clinical/ - Module Lâm sàng
+- **data_management/**: Quản lý dữ liệu lâm sàng
+  - `patient_db.py`: Cơ sở dữ liệu bệnh nhân
+  - `session_management.py`: Quản lý phiên làm việc
+  - `plan_manager.py`: Quản lý kế hoạch xạ trị
+  - `import_interface.py`: Giao diện nhập dữ liệu
+
+- **contouring/**: Công cụ phân đoạn và vẽ contour
+  - `contour_tools.py`: Công cụ vẽ contour
+  - `auto_segmentation.py`: Phân đoạn tự động với AI
+  - `organ_library.py`: Thư viện cơ quan giải phẫu
+
+- **planning/**: Lập kế hoạch điều trị
+  - `plan_config.py`: Cấu hình kế hoạch
+  - `beam_management.py`: Quản lý chùm tia
+  - `mlc_manager.py`: Quản lý MLC (Multi-Leaf Collimator)
+  - `bolus_manager.py`: Quản lý bolus
+  - `techniques/`: Thư mục chứa các kỹ thuật xạ trị
+    - `base.py`: Lớp cơ sở cho các kỹ thuật
+    - `conventional.py`: 3D-CRT
+    - `imrt.py`: IMRT (Intensity Modulated Radiation Therapy)
+    - `vmat.py`: VMAT (Volumetric Modulated Arc Therapy)
+    - `stereotactic.py`: SRS/SBRT (Stereotactic)
+    - `proton_therapy.py`: Proton Therapy
+    - `adaptive_rt.py`: Adaptive Radiation Therapy
+    - `fif.py`: Field-in-Field technique
+
+- **dose_calculation/**: Tính toán liều lượng
+  - `dose_engine_wrapper.py`: Wrapper cho các thuật toán tính liều
+  - `advanced_algorithms.py`: Các thuật toán tính liều nâng cao
+  - `monte_carlo.py`: Thuật toán Monte Carlo
+  - `dose_engine.cpp`: Module C++ tính liều hiệu suất cao
+
+- **optimization/**: Tối ưu hóa kế hoạch
+  - `goal_optimizer.py`: Tối ưu hóa dựa trên mục tiêu
+  - `plan_optimizer.py`: Tối ưu hóa kế hoạch
+  - `optimizer_wrapper.py`: Wrapper cho các thuật toán tối ưu
+  - `kbp_optimizer.py`: Tối ưu hóa dựa trên kiến thức (KBP)
+  - `optimizer.cpp`: Module C++ tối ưu hóa hiệu suất cao
+
+- **plan_evaluation/**: Đánh giá kế hoạch
+  - `dvh.py`: Tính toán Dose Volume Histogram
+  - `plan_metrics.py`: Các chỉ số đánh giá kế hoạch
+  - `biological_effects.py`: Mô hình hiệu ứng sinh học
+  - `biological_metrics.py`: Chỉ số đánh giá sinh học
+  - `plan_comparison.py`: So sánh kế hoạch
+  - `plan_qa.py`: QA (Quality Assurance) kế hoạch
+
+#### 3. gui/ - Giao diện người dùng
+- **widgets/**: Các widget tùy chỉnh
+  - `mpr_viewer.py`: Viewer hình ảnh đa mặt phẳng
+  - `dvh_viewer.py`: Viewer Dose Volume Histogram
+  - `viewer_3d.py`: Viewer 3D
+
+- **views/**: Các màn hình chính
+  - `main_view.py`: Màn hình chính
+  - `patient_view.py`: Màn hình quản lý bệnh nhân
+  - `plan_view.py`: Màn hình lập kế hoạch
+  - `contour_view.py`: Màn hình contour
+  - `dose_view.py`: Màn hình hiển thị liều
+  - `evaluation_view.py`: Màn hình đánh giá kế hoạch
+
+- **dialogs/**: Hộp thoại
+  - `import_dialog.py`: Hộp thoại nhập dữ liệu
+  - `export_dialog.py`: Hộp thoại xuất dữ liệu
+  - `kbp_trainer_dialog.py`: Hộp thoại huấn luyện KBP
+  - `goal_optimizer_dialog.py`: Hộp thoại tối ưu mục tiêu
+
+- `splash_screen.py`: Màn hình chào đón
+- `struct_panel.py`: Panel quản lý cấu trúc
+- `mlc_animation.py`: Hiển thị chuyển động MLC
+- `main_window.py`: Cửa sổ chính ứng dụng
+- `patient_manager.py`: Quản lý bệnh nhân
+- `plan_design.py`: Thiết kế kế hoạch (cần tách thành các file nhỏ hơn)
+
+#### 4. quality/ - Đảm bảo chất lượng & báo cáo
+- **quality_assurance/**: Kiểm tra chất lượng
+  - `qa_tools.py`: Công cụ QA
+  - `advanced_qa.py`: Công cụ QA nâng cao
+
+- **reporting/**: Tạo báo cáo
+  - `report_gen.py`: Tạo báo cáo cơ bản
+  - `pdf_report.py`: Tạo báo cáo PDF
+  - `qa_report.py`: Báo cáo QA
+  - `comprehensive_report.py`: Báo cáo toàn diện
+  - `enhanced_report.py`: Báo cáo nâng cao
+
+#### 5. services/ - Dịch vụ hỗ trợ
+- **image_processing/**: Xử lý hình ảnh
+  - `image_loader.py`: Đọc và xử lý hình ảnh
+  - `segmentation.py`: Thuật toán phân đoạn hình ảnh
+
+- **integration/**: Tích hợp hệ thống
+  - `integration.py`: Tích hợp với các hệ thống bên ngoài
+
+## 🔄 Hướng dẫn Triển khai Cấu trúc Mới
+
+Để triển khai cấu trúc thư mục mới, bạn cần thực hiện các bước sau:
+
+### 1. Tạo cấu trúc thư mục mới
+
+```bash
+# Tạo thư mục chính
+mkdir -p quangstation/{core,clinical,gui,quality,services}
+
+# Tạo các thư mục con trong core
+mkdir -p quangstation/core/{data_models,io,utils}
+
+# Tạo các thư mục con trong clinical
+mkdir -p quangstation/clinical/{data_management,contouring,planning/techniques,dose_calculation,optimization,plan_evaluation}
+
+# Tạo các thư mục con trong gui
+mkdir -p quangstation/gui/{widgets,views,dialogs}
+
+# Tạo các thư mục con trong quality
+mkdir -p quangstation/quality/{quality_assurance,reporting}
+
+# Tạo các thư mục con trong services
+mkdir -p quangstation/services/{image_processing,integration}
+```
+
+### 2. Di chuyển các file vào thư mục mới
+
+Ví dụ di chuyển các file mô hình dữ liệu:
+
+```bash
+# Di chuyển các file data_models
+cp quangstation/data_models/*.py quangstation/core/data_models/
+
+# Di chuyển các file io
+cp quangstation/io/*.py quangstation/core/io/
+
+# Di chuyển các file utils
+cp quangstation/utils/*.py quangstation/core/utils/
+
+# Tương tự cho các module khác...
+```
+
+### 3. Cập nhật các import trong mỗi file
+
+Sau khi di chuyển các file, bạn cần cập nhật tất cả các import trong các file để phản ánh cấu trúc thư mục mới. Ví dụ:
+
+- Thay đổi từ `from quangstation.data_models import image_data` thành `from quangstation.core.data_models import image_data`
+- Thay đổi từ `from quangstation.io import dicom_parser` thành `from quangstation.core.io import dicom_parser`
+- v.v.
+
+Thao tác này có thể thực hiện thủ công hoặc sử dụng script để tự động thay thế.
+
+### 4. Cập nhật file setup.py
+
+Cập nhật file setup.py để phản ánh cấu trúc thư mục mới:
+
+```python
+from setuptools import setup, find_packages
+
+setup(
+    name="quangstation",
+    version="2.0.0",
+    packages=find_packages(),
+    # ...
+)
+```
+
+### 5. Kiểm tra và sửa lỗi
+
+Sau khi triển khai cấu trúc mới, chạy các kiểm tra để đảm bảo mọi thứ hoạt động bình thường:
+
+```bash
+# Kiểm tra cài đặt
+pip install -e .
+
+# Chạy ứng dụng
+python launcher.py
+```
+
+## 🛠️ Tái cấu trúc Mã Nguồn
+
+Một số file trong dự án hiện tại có kích thước rất lớn và nên được tách thành các file nhỏ hơn:
+
+### File plan_design.py (4636 dòng)
+File này nên được tách thành nhiều file nhỏ hơn, mỗi file đại diện cho một chức năng cụ thể:
+- `gui/views/plan_design_view.py`: Cấu trúc chính của màn hình
+- `gui/views/beam_setup_view.py`: Thiết lập chùm tia
+- `gui/views/dose_view.py`: Hiển thị liều
+- `gui/views/structure_view.py`: Quản lý cấu trúc
+- `gui/views/optimization_view.py`: Giao diện tối ưu hóa
+
+### File __main__.py (2992 dòng)
+File này nên được tách thành các module khác nhau theo chức năng:
+- `core/app.py`: Khởi tạo ứng dụng
+- `core/session.py`: Quản lý phiên làm việc
+- `gui/main_application.py`: Điểm vào giao diện
+- `services/app_service.py`: Dịch vụ ứng dụng
 
 ## 📞 Liên hệ
 - **Tác giả**: Mạc Đăng Quang
@@ -241,64 +425,4 @@ Dự án được phân phối dưới Giấy phép MIT. Xem [LICENSE](LICENSE) 
 
 ## 🌟 Hỗ trợ
 Nếu bạn thấy dự án hữu ích, hãy cho chúng tôi một sao ⭐ trên GitHub!
-
-## 🔄 Cập nhật gần đây
-- Triển khai tính toán TERMA (Total Energy Released per unit MAss) trong thuật toán Convolution Superposition
-- Cải tiến tiền xử lý hình ảnh cho phân đoạn tự động với AI
-- Triển khai phương thức tạo kế hoạch cơ bản cho các kỹ thuật xạ trị
-- Cải thiện tính toán liều với thuật toán nâng cao
-- Hỗ trợ mô-đun C++ cho tính toán liều nhanh
-- Hoàn thiện giao diện người dùng với xử lý sự kiện đầy đủ
-- Thêm tính năng hiển thị MLC trong Beam's Eye View
-- Triển khai tính năng hiển thị mục tiêu (target) trong BEV
-- Thêm biểu tượng và cải thiện trải nghiệm người dùng
-- Tối ưu hóa dựa trên kiến thức (KBP) với mô hình học máy
-- Cải tiến tính toán Monte Carlo cho độ chính xác cao
-- Thêm tính năng báo cáo chi tiết với thông tin bệnh nhân và kế hoạch
-- Triển khai và cải thiện công cụ đánh giá kế hoạch
-
-## 📱 Triển khai tiếp theo
-- Cải thiện giao diện người dùng với thiết kế đáp ứng
-- Tích hợp hệ thống đám mây để lưu trữ và tính toán từ xa
-- Phát triển phiên bản web cho truy cập từ mọi nơi
-- Hỗ trợ đa ngôn ngữ toàn diện
-- Tích hợp sâu hơn với hệ thống PACS/HIS
-- Mở rộng hỗ trợ cho các kỹ thuật xạ trị mới nhất
-
-## 📊 Dữ liệu chuẩn cần thiết
-Để hệ thống hoạt động tối ưu, cần các dữ liệu chuẩn sau:
-
-### 1. Dữ liệu huấn luyện cho KBP
-- Bộ dữ liệu kế hoạch xạ trị đã được phê duyệt (tối thiểu 50 kế hoạch cho mỗi vị trí điều trị)
-- Dữ liệu DVH của các cơ quan nguy cấp (OAR) và thể tích điều trị (PTV)
-- Thông tin về các ràng buộc liều đã sử dụng trong các kế hoạch chất lượng cao
-
-### 2. Dữ liệu vật lý cho tính toán liều
-- Dữ liệu đặc tính chùm tia (beam data) cho các máy gia tốc
-- Dữ liệu đo đạc phantom cho kiểm định thuật toán
-- Dữ liệu hiệu chỉnh không đồng nhất (heterogeneity correction)
-- Dữ liệu đo đạc MLC (Multi-Leaf Collimator)
-
-### 3. Dữ liệu CT và cấu trúc
-- Bộ dữ liệu CT chuẩn với các cấu trúc đã được vẽ
-- Bộ dữ liệu atlas cho phân đoạn tự động
-- Dữ liệu chuyển đổi HU sang mật độ electron và thông số vật liệu
-
-### 4. Dữ liệu đánh giá kế hoạch
-- Các ràng buộc liều chuẩn theo QUANTEC, RTOG và các hướng dẫn lâm sàng mới nhất
-- Dữ liệu tham chiếu cho các chỉ số đánh giá kế hoạch (CI, HI, GI, v.v.)
-- Dữ liệu tham chiếu cho các mô hình hiệu quả sinh học (TCP, NTCP)
-
-Các dữ liệu này có thể được thu thập từ:
-1. Cơ sở dữ liệu nội bộ của bệnh viện
-2. Cơ sở dữ liệu công khai như TCIA (The Cancer Imaging Archive)
-3. Dữ liệu từ các thử nghiệm lâm sàng
-4. Dữ liệu đo đạc commissioning của máy gia tốc
-
-## 🔬 Kiểm định và đảm bảo chất lượng
-Hệ thống cần được kiểm định theo các tiêu chuẩn:
-- AAPM TG-53: Đảm bảo chất lượng hệ thống lập kế hoạch xạ trị
-- AAPM TG-119: Kiểm định IMRT
-- IAEA TRS-430: Commissioning và QA hệ thống lập kế hoạch xạ trị
-- MPPG 5.a: Commissioning hệ thống lập kế hoạch xạ trị
 

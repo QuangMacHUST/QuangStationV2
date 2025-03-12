@@ -1,0 +1,157 @@
+{
+  "app_name": "QuangStation V2",
+  "app_subtitle": "Hệ thống Lập kế hoạch Xạ trị Mã nguồn Mở",
+  "main_menu": {
+    "file": "Tệp",
+    "edit": "Chỉnh sửa",
+    "view": "Xem",
+    "patient": "Bệnh nhân",
+    "plan": "Kế hoạch",
+    "tools": "Công cụ",
+    "help": "Trợ giúp"
+  },
+  "file_menu": {
+    "open": "Mở",
+    "save": "Lưu",
+    "save_as": "Lưu thành",
+    "import": "Nhập",
+    "export": "Xuất",
+    "exit": "Thoát"
+  },
+  "patient_menu": {
+    "new_patient": "Bệnh nhân mới",
+    "open_patient": "Mở bệnh nhân",
+    "edit_patient": "Sửa thông tin bệnh nhân",
+    "delete_patient": "Xóa bệnh nhân"
+  },
+  "plan_menu": {
+    "new_plan": "Kế hoạch mới",
+    "open_plan": "Mở kế hoạch",
+    "save_plan": "Lưu kế hoạch",
+    "delete_plan": "Xóa kế hoạch",
+    "calculate_dose": "Tính toán liều",
+    "optimize_plan": "Tối ưu kế hoạch",
+    "evaluate_plan": "Đánh giá kế hoạch"
+  },
+  "tools_menu": {
+    "settings": "Cài đặt",
+    "language": "Ngôn ngữ",
+    "preferences": "Tùy chọn",
+    "plugins": "Plugins"
+  },
+  "help_menu": {
+    "documentation": "Tài liệu",
+    "about": "Thông tin",
+    "check_updates": "Kiểm tra cập nhật"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Hủy",
+    "apply": "Áp dụng",
+    "yes": "Có",
+    "no": "Không",
+    "save": "Lưu",
+    "load": "Tải",
+    "delete": "Xóa",
+    "warning": "Cảnh báo",
+    "error": "Lỗi",
+    "success": "Thành công",
+    "loading": "Đang tải",
+    "processing": "Đang xử lý"
+  },
+  "patient": {
+    "id": "Mã",
+    "name": "Họ tên",
+    "dob": "Ngày sinh",
+    "gender": "Giới tính",
+    "phone": "Điện thoại",
+    "email": "Email",
+    "address": "Địa chỉ",
+    "diagnosis": "Chẩn đoán",
+    "physician": "Bác sĩ"
+  },
+  "plan": {
+    "name": "Tên kế hoạch",
+    "type": "Loại kế hoạch",
+    "technique": "Kỹ thuật",
+    "created": "Ngày tạo",
+    "modified": "Ngày sửa",
+    "description": "Mô tả",
+    "prescription": "Đơn thuốc",
+    "total_dose": "Tổng liều",
+    "fractions": "Số phiên",
+    "dose_per_fraction": "Liều mỗi phiên"
+  },
+  "contours": {
+    "name": "Tên",
+    "type": "Loại",
+    "color": "Màu sắc",
+    "volume": "Thể tích",
+    "draw": "Vẽ",
+    "edit": "Sửa",
+    "delete": "Xóa",
+    "auto_segment": "Phân đoạn tự động",
+    "visibility": "Hiển thị",
+    "target": "Vùng đích",
+    "oar": "Cơ quan nguy cấp",
+    "other": "Khác"
+  },
+  "beams": {
+    "name": "Tên",
+    "energy": "Năng lượng",
+    "modality": "Phương thức",
+    "gantry_angle": "Góc gantry",
+    "collimator_angle": "Góc collimator",
+    "couch_angle": "Góc bàn",
+    "weight": "Trọng số",
+    "isocenter": "Tâm đẳng tâm",
+    "ssd": "SSD",
+    "field_size": "Kích thước trường",
+    "mu": "Monitor Units"
+  },
+  "dose_calc": {
+    "algorithm": "Thuật toán",
+    "resolution": "Độ phân giải",
+    "heterogeneity": "Hiệu chỉnh không đồng nhất",
+    "calculate": "Tính toán",
+    "processing": "Đang xử lý",
+    "completed": "Hoàn thành",
+    "failed": "Thất bại"
+  },
+  "evaluation": {
+    "dvh": "DVH",
+    "metrics": "Chỉ số",
+    "conformity": "Chỉ số đồng dạng",
+    "homogeneity": "Chỉ số đồng nhất",
+    "gradient": "Chỉ số gradient",
+    "coverage": "Độ phủ",
+    "cold_spots": "Điểm lạnh",
+    "hot_spots": "Điểm nóng"
+  },
+  "settings": {
+    "general": "Chung",
+    "display": "Hiển thị",
+    "calculation": "Tính toán",
+    "advanced": "Nâng cao",
+    "data_path": "Đường dẫn dữ liệu",
+    "temp_path": "Đường dẫn tệp tạm",
+    "default_language": "Ngôn ngữ mặc định",
+    "auto_save": "Tự động lưu",
+    "logging_level": "Mức độ ghi log"
+  },
+  "messages": {
+    "save_success": "Đã lưu thành công",
+    "save_error": "Lỗi khi lưu tệp",
+    "load_success": "Đã tải thành công",
+    "load_error": "Lỗi khi tải tệp",
+    "delete_confirm": "Bạn có chắc muốn xóa không?",
+    "delete_success": "Đã xóa thành công",
+    "delete_error": "Lỗi khi xóa",
+    "calc_start": "Bắt đầu tính toán liều",
+    "calc_finished": "Tính toán liều đã hoàn thành",
+    "calc_error": "Lỗi khi tính toán liều",
+    "opt_start": "Bắt đầu tối ưu kế hoạch",
+    "opt_finished": "Tối ưu kế hoạch đã hoàn thành",
+    "opt_error": "Lỗi khi tối ưu kế hoạch"
+  }
+}

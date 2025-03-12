@@ -13,10 +13,18 @@ import sys
 import argparse
 import importlib
 import logging
-import time
 import tkinter as tk
+from tkinter import messagebox
 from threading import Thread
 from datetime import datetime
+import traceback
+
+# Set up UTF-8 encoding for console output
+if sys.platform == 'win32':
+    # Force UTF-8 encoding on Windows
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
 
 # Thiết lập logging cơ bản
 logging.basicConfig(
@@ -151,12 +159,12 @@ def setup_logging(args):
     
     # Ghi thông tin phiên
     logger.info("=" * 50)
-    logger.info("Khởi động QuangStation V2")
-    logger.info(f"Thời gian: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"Đường dẫn: {os.path.dirname(os.path.abspath(__file__))}")
+    logger.info("Khoi dong QuangStation V2")
+    logger.info(f"Thoi gian: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Duong dan: {os.path.dirname(os.path.abspath(__file__))}")
     logger.info("=" * 50)
     
-    logger.info(f"Đã thiết lập log tại: {log_file}")
+    logger.info(f"Da thiet lap log tai: {log_file}")
 
 def parse_arguments():
     """
@@ -192,7 +200,24 @@ def run_checks_thread(args):
     if not args.skip_checks:
         check_dependencies()
         check_system_config()
+
+def get_resources_path(subdir=None):
+    """
+    Get the path to the resources directory
     
+    Args:
+        subdir: Optional subdirectory within resources
+        
+    Returns:
+        str: Absolute path to the resources directory or subdirectory
+    """
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    resources_path = os.path.join(base_path, 'resources')
+    
+    if subdir:
+        return os.path.join(resources_path, subdir)
+    return resources_path
+
 def run_application(root, args):
     """
     Khởi chạy ứng dụng chính
@@ -204,11 +229,17 @@ def run_application(root, args):
     try:
         logger.info("Đang khởi động QuangStation V2...")
         
+        # Add the project root to Python path
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        
         # Nạp module chính
         import quangstation
         
         # Hiện thông tin phiên bản
-        quangstation.show_version()
+        if hasattr(quangstation, 'show_version'):
+            quangstation.show_version()
+        else:
+            logger.info("QuangStation V2 - Version 2.0.0")
         
         # Thiết lập ngôn ngữ từ tham số dòng lệnh
         if hasattr(quangstation, 'set_language'):
@@ -224,72 +255,72 @@ def run_application(root, args):
         
         # Khởi chạy ứng dụng
         logger.info("Đang khởi chạy giao diện người dùng...")
-        quangstation.run_application()
+        # Set the root window to be visible
+        root.deiconify()
+        
+        if hasattr(quangstation, 'run_application'):
+            quangstation.run_application(root)
+        else:
+            # Fallback to directly importing and running the main app
+            from quangstation.__main__ import MainApp
+            MainApp(root)
+            root.mainloop()
         
     except Exception as error:
         logger.error(f"Lỗi khi khởi động: {str(error)}")
         if args.debug:
-            import traceback
             traceback.print_exc()
+        messagebox.showerror("Lỗi khởi động", 
+                             f"Không thể khởi động QuangStation V2:\n{str(error)}\n\nVui lòng kiểm tra file log để biết thêm chi tiết.")
 
 def main():
     """
     Hàm chính để khởi chạy ứng dụng
     """
-    # Thêm thư mục gốc vào đường dẫn Python
-    root_dir = os.path.dirname(os.path.abspath(__file__))
-    sys.path.insert(0, root_dir)
-    
-    # Phân tích tham số dòng lệnh
-    args = parse_arguments()
-    
-    # Thiết lập logging
-    setup_logging(args)
-    
-    # Hiển thị phiên bản và thoát nếu được yêu cầu
-    if args.version:
-        try:
-            import quangstation
-            quangstation.show_version()
-        except:
-            logger.info("QuangStation V2 - Phiên bản 2.0.0")
-        return
-    
-    # Bắt đầu đo thời gian khởi động
-    start_time = time.time()
-    
-    # Hiển thị banner
-    print("=" * 80)
-    print("                    QuangStation V2 - Lập kế hoạch Xạ trị")
-    print("                       Mã nguồn mở - Phát triển tại Việt Nam")
-    print("=" * 80)
-    
-    # Khởi tạo cửa sổ Tkinter ẩn
-    root = tk.Tk()
-    root.withdraw()  # Ẩn cửa sổ gốc
-    
-    # Khởi chạy kiểm tra trong thread riêng
-    check_thread = Thread(target=run_checks_thread, args=(args,))
-    check_thread.daemon = True
-    check_thread.start()
-    
-    # Sử dụng splash screen hoặc khởi chạy trực tiếp
-    if not args.no_splash:
-        try:
-            from quangstation.gui.splash_screen import show_splash
-            splash = show_splash(root, lambda: run_application(root, args), 3000)
-        except Exception as e:
-            logger.error(f"Không thể hiển thị splash screen: {str(e)}")
-            run_application(root, args)
-    else:
+    try:
+        # Phân tích tham số dòng lệnh
+        args = parse_arguments()
+
+        # Hiển thị phiên bản nếu được yêu cầu
+        if args.version:
+            print("QuangStation V2 - Version 2.0.0")
+            print("Author: Mac Dang Quang")
+            print("License: MIT")
+            return 0
+
+        # Thiết lập logging
+        setup_logging(args)
+
+        # Hiển thị ASCII art nếu không tắt splash
+        if not args.no_splash:
+            print("=" * 80)
+            print("               ____                             _____ _        _   _             ")
+            print("              / __ \\                           / ____| |      | | (_)            ")
+            print("             | |  | |_   _  __ _ _ __   __ _  | (___ | |_ __ _| |_ _  ___  _ __  ")
+            print("             | |  | | | | |/ _` | '_ \\ / _` |  \\___ \\| __/ _` | __| |/ _ \\| '_ \\ ")
+            print("             | |__| | |_| | (_| | | | | (_| |  ____) | || (_| | |_| | (_) | | | |")
+            print("              \\___\\_\\\\__,_|\\__,_|_| |_|\\__, | |_____/ \\__\\__,_|\\__|_|\\___/|_| |_|")
+            print("                                        __/ |                                    ")
+            print("                                       |___/                                     ")
+            print("=" * 80)
+            print("                    QuangStation V2 - Lap ke hoach Xa tri")
+            print("=" * 80)
+
+        # Tạo cửa sổ gốc
+        root = tk.Tk()
+        root.withdraw()  # Ẩn cửa sổ chính cho đến khi kiểm tra xong
+
+        # Chạy các kiểm tra trong luồng riêng
+        checks_thread = Thread(target=run_checks_thread, args=(args,))
+        checks_thread.daemon = True
+        checks_thread.start()
+
+        # Chạy ứng dụng chính
         run_application(root, args)
-    
-    # Vòng lặp chính của ứng dụng
-    root.mainloop()
-    
-    # Hiển thị thời gian khởi động
-    elapsed_time = time.time() - start_time
-    logger.info(f"Thời gian hoạt động: {elapsed_time:.2f} giây")
+    except Exception as e:
+        logger.error(f"Lỗi khi khởi động: {str(e)}")
+        if args.debug:
+            traceback.print_exc()
 
 if __name__ == "__main__":
-    main() 
+    main()

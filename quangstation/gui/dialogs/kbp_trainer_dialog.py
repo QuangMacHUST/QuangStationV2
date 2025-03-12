@@ -15,9 +15,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Dict, List, Tuple, Optional, Any, Union, Callable
 
-from quangstation.utils.logging import get_logger
-from quangstation.utils.config import config, get_config
-from quangstation.optimization.kbp_optimizer import KnowledgeBasedPlanningOptimizer
+from quangstation.core.utils.logging import get_logger
+from quangstation.core.utils.config import get_config
+from quangstation.clinical.optimization.kbp_optimizer import KnowledgeBasedPlanningOptimizer
 
 logger = get_logger(__name__)
 
@@ -35,8 +35,8 @@ class KBPTrainerDialog:
         """
         self.parent = parent
         self.logger = get_logger("KBPTrainer")
+        self.config = get_config()
         self.optimizer = KnowledgeBasedPlanningOptimizer()
-        self.config = config
         
         # Trạng thái
         self.training_data = None  # Dữ liệu huấn luyện

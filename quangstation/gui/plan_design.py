@@ -13,11 +13,11 @@ import json
 import threading
 from datetime import datetime
 
-from quangstation.utils.logging import get_logger
-from quangstation.utils.config import config, get_config
-from quangstation.planning import create_technique
-from quangstation.dose_calculation.dose_engine_wrapper import DoseCalculator
-from quangstation.plan_evaluation.dvh import DVHCalculator, DVHPlotter
+from quangstation.core.utils.logging import get_logger
+from quangstation.core.utils.config import get_config
+from quangstation.clinical.planning import create_technique
+from quangstation.clinical.dose_calculation.dose_engine_wrapper import DoseCalculator
+from quangstation.clinical.plan_evaluation.dvh import DVHCalculator, DVHPlotter
 
 logger = get_logger(__name__)
 
@@ -957,7 +957,8 @@ class PlanDesignWindow:
                         
                     except Exception as e:
                         self.logger.error(f"Lỗi khi tính toán liều: {str(e)}")
-                        self.window.after(0, lambda: self._handle_dose_calculation_error(str(e), progress_window))
+                        error_message = str(e)
+                        self.window.after(0, lambda: self._handle_dose_calculation_error(error_message, progress_window))
                 
                 # Khởi chạy luồng
                 import threading
@@ -1806,7 +1807,8 @@ class PlanDesignWindow:
                             
                         except Exception as e:
                             logger.error(f"Lỗi khi xuất kế hoạch: {str(e)}")
-                            export_dialog.after(100, lambda: show_error(str(e)))
+                            error_message = str(e)
+                            export_dialog.after(100, lambda: show_error(error_message))
                     
                     def show_results(export_info):
                         result_message = f"Đã xuất thành công kế hoạch xạ trị sang thư mục:\n{export_dir}\n\n"
@@ -4041,7 +4043,8 @@ class PlanDesignWindow:
                             # Cập nhật UI trong luồng chính
                             qa_window.after(100, lambda: update_kbp_results(qa_results, report_path, visualization_path))
                         except Exception as e:
-                            qa_window.after(100, lambda: handle_qa_error(str(e)))
+                            error_message = str(e)
+                            qa_window.after(100, lambda: handle_qa_error(error_message))
                         finally:
                             qa_window.after(100, lambda: progress_window.destroy())
                     
@@ -4480,7 +4483,8 @@ class PlanDesignWindow:
                         
                     except Exception as e:
                         self.logger.error(f"Lỗi khi thực hiện tối ưu hóa KBP: {str(e)}")
-                        self.window.after(0, lambda: self._handle_kbp_error(str(e), progress_window))
+                        error_message = str(e)
+                        self.window.after(0, lambda: self._handle_kbp_error(error_message, progress_window))
                 
                 # Khởi chạy luồng
                 import threading

@@ -14,8 +14,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import time
 from typing import Dict, List, Tuple, Optional, Any, Callable
 
-from quangstation.optimization.goal_optimizer import OptimizationGoal, GoalBasedOptimizer
-from quangstation.utils.logging import get_logger
+from quangstation.clinical.optimization.goal_optimizer import OptimizationGoal, GoalBasedOptimizer
+from quangstation.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

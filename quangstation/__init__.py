@@ -21,10 +21,13 @@ Phiên bản: 2.0.0
 """
 
 import os
-import sys
 import importlib
 import json
 from datetime import datetime
+import logging
+
+# Import Resource Utils
+from quangstation.core.utils.resource_utils import get_resources_path as _get_resources_path
 
 # Biến phiên bản
 __version__ = "2.0.0"
@@ -59,7 +62,7 @@ def setup_logging(log_level=None, log_to_file=True):
         log_level: Mức độ log (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_to_file: Có ghi log vào file hay không
     """
-    from quangstation.utils.logging import setup_logging, get_logger, setup_exception_logging
+    from quangstation.core.utils.logging import setup_logging, get_logger, setup_exception_logging
     
     # Thiết lập log level từ cấu hình nếu không được cung cấp
     if log_level is None:
@@ -380,51 +383,59 @@ def check_dependencies(show_warnings=True):
     Returns:
         tuple: (is_complete, missing_packages)
     """
-    required_packages = [
-        "numpy",
-        "matplotlib",
-        "pydicom",
-        "scipy",
-        "vtk",
-        "opencv-python",
-        "SimpleITK", 
-        "pandas",
-        "pillow",
-        "reportlab",
-        "docx",
-        "torch"
-    ]
+    logger = logging.getLogger(__name__)
+    
+    required_packages = {
+        "numpy": "1.19.0",
+        "matplotlib": "3.3.0",
+        "pydicom": "2.1.0",
+        "scikit-image": "0.17.0",
+        "scikit-learn": "0.23.0",
+        "scipy": "1.5.0",
+        "SimpleITK": "2.0.0",
+        "vtk": "9.0.0",
+        "pandas": "1.1.0",
+        "openpyxl": "3.0.0",
+        "reportlab": "3.5.0",
+        "PyPDF2": "1.26.0",
+        "PIL": "8.0.0",  # Pillow
+    }
+    
+    optional_packages = {
+        "torch": "1.7.0",
+        "tensorflow": "2.4.0",
+        "keras": "2.4.0",
+        "cupy": "8.0.0",
+        "opencv-python": "4.5.0",
+    }
     
     missing_packages = []
     
-    for package in required_packages:
-        # Đổi opencv-python thành opencv, SimpleITK thành sitk để kiểm tra
-        if package == "opencv-python":
-            pkg_name = "cv2"
-        elif package == "SimpleITK":
-            pkg_name = "sitk"
-        elif package == "docx":
-            pkg_name = "docx"
-        else:
-            pkg_name = package.split('-')[0]  # Loại bỏ các hậu tố nếu có
-        
+    # Kiểm tra các thư viện bắt buộc
+    for package, min_version in required_packages.items():
         try:
-            importlib.import_module(pkg_name)
+            # Sử dụng importlib để kiểm tra thư viện
+            # thay vì import trực tiếp để tránh lỗi
+            pkg = importlib.import_module(package)
+            # Một số thư viện có thể không có phiên bản hoặc tên khác
+            if hasattr(pkg, "__version__"):
+                if pkg.__version__ < min_version:
+                    missing_packages.append(f"{package} (>={min_version})")
+                    if show_warnings:
+                        logger.warning("Phiên bản thư viện %s (%s) thấp hơn yêu cầu (%s)", 
+                                      package, pkg.__version__, min_version)
         except ImportError:
-            missing_packages.append(package)
+            missing_packages.append(f"{package} (>={min_version})")
+            if show_warnings:
+                logger.warning("Không tìm thấy thư viện bắt buộc: %s", package)
     
-    # Kiểm tra tkinter riêng vì là module tích hợp
-    try:
-        import tkinter
-    except ImportError:
-        missing_packages.append("tkinter (built-in)")
-    
-    # Báo cáo các package thiếu
-    if missing_packages and show_warnings:
-        if _logger:
-            _logger.warning(f"Các thư viện sau chưa được cài đặt: {', '.join(missing_packages)}")
-        print(f"Cảnh báo: Một số thư viện cần thiết chưa được cài đặt: {', '.join(missing_packages)}")
-        print("Hãy cài đặt các thư viện thiếu bằng lệnh: pip install -r requirements.txt")
+    # Kiểm tra các thư viện tùy chọn nhưng chỉ hiển thị thông báo
+    for package, min_version in optional_packages.items():
+        try:
+            importlib.import_module(package)
+        except ImportError:
+            if show_warnings:
+                logger.info("Thư viện tùy chọn không được cài đặt: %s", package)
     
     return (len(missing_packages) == 0, missing_packages)
 
@@ -543,21 +554,7 @@ def get_resources_path():
     Returns:
         str: Đường dẫn đến thư mục resources
     """
-    import os
-    
-    # Thư mục resources nằm trong thư mục quangstation
-    resources_dir = os.path.join(os.path.dirname(__file__), "resources")
-    
-    # Tạo thư mục nếu chưa tồn tại
-    if not os.path.exists(resources_dir):
-        os.makedirs(resources_dir)
-        
-        # Tạo thư mục con cho ngôn ngữ
-        lang_dir = os.path.join(resources_dir, "lang")
-        if not os.path.exists(lang_dir):
-            os.makedirs(lang_dir)
-            
-    return resources_dir
+    return _get_resources_path()
 
 # Hàm hiển thị thông tin phiên bản
 def show_version():
@@ -703,50 +700,58 @@ def _lazy_import():
     global get_logger, get_config, GlobalConfig
     
     # Các import tối thiểu
-    from quangstation.utils.logging import get_logger
-    from quangstation.utils.config import get_config, GlobalConfig
+    from quangstation.core.utils.logging import get_logger
+    from quangstation.core.utils.config import get_config, GlobalConfig
     
     # Import đầy đủ khi cần
     try:
         # Quản lý dữ liệu
-        from quangstation.data_management.patient_db import PatientDatabase
-        from quangstation.data_management.dicom_parser import DICOMParser
-        from quangstation.data_management.session_management import SessionManager
+        from quangstation.clinical.data_management.patient_db import PatientDatabase
+        from quangstation.core.io.dicom_parser import DICOMParser
+        from quangstation.clinical.data_management.session_management import SessionManager
 
         # Xử lý hình ảnh
-        from quangstation.image_processing.image_loader import ImageLoader
-        from quangstation.image_processing.segmentation import Segmentation
+        from quangstation.services.image_processing.image_loader import ImageLoader
+        from quangstation.services.image_processing.segmentation import Segmentation
 
         # Phân đoạn cấu trúc
-        from quangstation.contouring.contour_tools import ContourTools
+        from quangstation.clinical.contouring.contour_tools import ContourTools
 
         # Lập kế hoạch
-        from quangstation.planning.plan_config import PlanConfig
-        from quangstation.planning.beam_management import BeamManager
-        from quangstation.planning.techniques import create_technique
+        from quangstation.clinical.planning.plan_config import PlanConfig
+        from quangstation.clinical.planning.beam_management import BeamManager
+        from quangstation.clinical.planning.techniques import create_technique
 
         # Tính liều
-        from quangstation.dose_calculation.dose_engine_wrapper import DoseCalculator
+        from quangstation.clinical.dose_calculation.dose_engine_wrapper import DoseCalculator
 
         # Đánh giá kế hoạch
-        from quangstation.plan_evaluation.dvh import DVHCalculator, DVHPlotter
-        from quangstation.plan_evaluation.biological_metrics import BiologicalCalculator as BiologicalMetrics
+        from quangstation.clinical.plan_evaluation.dvh import DVHCalculator, DVHPlotter
+        from quangstation.clinical.plan_evaluation.biological_metrics import BiologicalCalculator as BiologicalMetrics
 
         # Tối ưu hóa
-        from quangstation.optimization.optimizer_wrapper import PlanOptimizer
+        from quangstation.clinical.optimization.optimizer_wrapper import PlanOptimizer
 
         # Đảm bảo chất lượng
-        from quangstation.quality_assurance.qa_tools import PlanQA as QAToolkit
+        from quangstation.quality.quality_assurance.qa_tools import PlanQA as QAToolkit
 
         # Báo cáo
-        from quangstation.reporting.report_gen import TreatmentReport as ReportGenerator
+        from quangstation.quality.reporting.report_gen import TreatmentReport as ReportGenerator
 
         # Workflow tích hợp
-        from quangstation.integration import RTWorkflow, IntegrationManager, create_workflow, load_workflow
+        from quangstation.services.intergration.integration import RTWorkflow, IntegrationManager, create_workflow, load_workflow
     except ImportError as e:
         if _logger:
             _logger.warning(f"Không thể import một số module: {str(e)}")
 
 # Chỉ import khi cần
-if sys.argv[0].endswith("launcher.py") or __name__ != "__main__":
-    _lazy_import()
+if __name__ != "__main__":
+    try:
+        # Kiểm tra nếu tkinter khả dụng
+        import importlib.util
+        if importlib.util.find_spec("tkinter"):
+            # Nếu có, import các module GUI cụ thể thay vì import *
+            from quangstation.gui import main_window, splash_screen
+    except ImportError as ex:
+        logger = logging.getLogger(__name__)
+        logger.warning("Không thể import các module GUI: %s", str(ex))

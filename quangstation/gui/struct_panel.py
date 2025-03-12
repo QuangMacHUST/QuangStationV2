@@ -10,9 +10,9 @@ from tkinter import ttk, colorchooser, messagebox
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any, Callable
 
-from quangstation.contouring.organ_library import get_organ_library, OrganProperties
-from quangstation.contouring.contour_tools import ContourTools
-from quangstation.utils.logging import get_logger
+from quangstation.clinical.contouring.organ_library import get_organ_library, OrganProperties
+from quangstation.clinical.contouring.contour_tools import ContourTools
+from quangstation.core.utils.logging import get_logger
 
 logger = get_logger("StructPanel")
 

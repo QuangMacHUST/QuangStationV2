@@ -4,8 +4,8 @@ from typing import Dict, Any, List, Callable, Optional
 import datetime
 import uuid
 
-from quangstation.data_management.patient_db import PatientDatabase, Patient
-from quangstation.utils.logging_config import get_logger
+from quangstation.clinical.data_management.patient_db import PatientDatabase, Patient
+from quangstation.core.utils.logging import get_logger
 
 """
 Module quản lý giao diện bệnh nhân trong QuangStation V2

@@ -5,9 +5,10 @@ import sys
 from datetime import datetime
 import webbrowser
 from PIL import Image, ImageTk
-from quangstation.utils.logging import get_logger
-from quangstation.utils.config import config, get_config
+from quangstation.core.utils.logging import get_logger
+from quangstation.core.utils.config import get_config
 import time
+from quangstation.gui.views.import_view import ImportView
 """
 Module này tạo giao diện chính cho QuangStation V2
 """
@@ -59,7 +60,7 @@ class MainWindow:
         self.center_window()
         self.setup_events()
         
-        # Cập nhật thời gian
+        # Cập nhật thởi gian
         self.update_time()
         
         # Dữ liệu ứng dụng
@@ -146,7 +147,10 @@ class MainWindow:
         # Custom styles
         style.configure('TLabel', font=('Helvetica', self.font_size))
         style.configure('TButton', font=('Helvetica', self.font_size), padding=5)
-        style.configure('Heading.TLabel', font=('Helvetica', 14, 'bold'))
+        style.configure('Heading.TLabel', 
+                      font=('Helvetica', 14, 'bold'), 
+                      foreground="#0066CC",
+                      background="#f0f0f0")
         style.configure('Title.TLabel', font=('Helvetica', 20, 'bold'))
         style.configure('Sidebar.TFrame', background='#2c3e50')
         style.configure('Sidebar.TButton', background='#2c3e50', foreground='white', borderwidth=0)
@@ -166,7 +170,7 @@ class MainWindow:
         self.root.geometry('{}x{}+{}+{}'.format(width, height, x, y))
         
     def update_time(self):
-        """Cập nhật thời gian hiển thị"""
+        """Cập nhật thởi gian hiển thị"""
         current_time = time.strftime("%H:%M:%S - %d/%m/%Y")
         self.time_var.set(current_time)
         
@@ -266,7 +270,7 @@ class MainWindow:
         # Menu Tools
         tools_menu = tk.Menu(menubar, tearoff=0)
         tools_menu.add_command(label="Kiểm tra chất lượng kế hoạch", command=self.check_plan_qa)
-        tools_menu.add_command(label="Cài đặt", command=self.show_settings)
+        tools_menu.add_command(label="Sao lưu dữ liệu", command=self.backup_data, accelerator="Ctrl+B")
         tools_menu.add_separator()
         tools_menu.add_command(label="Tạo báo cáo", command=self.create_report)
         menubar.add_cascade(label="Công cụ", menu=tools_menu)
@@ -801,11 +805,39 @@ class MainWindow:
         
     def import_dicom(self):
         """Mở công cụ nhập/xuất DICOM"""
-        messagebox.showinfo("Thông báo", "Chức năng đang được phát triển")
+        # Tạo cửa sổ dialog để hiển thị giao diện nhập DICOM
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Nhập dữ liệu DICOM - QuangStation V2")
+        dialog.geometry("800x600")
+        dialog.minsize(800, 600)
         
-    def backup_data(self):
-        """Mở công cụ sao lưu dữ liệu"""
-        messagebox.showinfo("Thông báo", "Chức năng đang được phát triển")
+        # Thiết lập icon nếu có
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                   'resources', 'icons', 'app_icon.ico')
+            if os.path.exists(icon_path):
+                dialog.iconbitmap(icon_path)
+        except Exception as e:
+            self.logger.warning(f"Không thể tải biểu tượng cho cửa sổ nhập DICOM: {str(e)}")
+        
+        # Callback khi nhập hoàn tất
+        def on_import_complete(result):
+            if result:
+                self.logger.info("Đã nhập dữ liệu DICOM thành công")
+                # Cập nhật danh sách bệnh nhân nếu cần
+                # TODO: Cập nhật danh sách bệnh nhân từ kết quả nhập
+                
+                # Đóng cửa sổ nhập DICOM
+                dialog.destroy()
+        
+        # Tạo và hiển thị giao diện nhập DICOM
+        import_view = ImportView(dialog, on_import_complete=on_import_complete)
+        import_view.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Thiết lập focus và đợi cửa sổ đóng
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self.root.wait_window(dialog)
 
     def show_dvh(self):
         """Hiển thị biểu đồ DVH"""
@@ -840,6 +872,157 @@ class MainWindow:
     def create_report(self):
         """Tạo báo cáo kế hoạch xạ trị"""
         messagebox.showinfo("Thông báo", "Chức năng đang được phát triển")
+
+    def backup_data(self):
+        """Mở công cụ sao lưu dữ liệu"""
+        # Tạo cửa sổ dialog cho sao lưu dữ liệu
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Sao lưu dữ liệu - QuangStation V2")
+        dialog.geometry("600x400")
+        dialog.minsize(600, 400)
+        
+        # Thiết lập icon nếu có
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                   'resources', 'icons', 'app_icon.ico')
+            if os.path.exists(icon_path):
+                dialog.iconbitmap(icon_path)
+        except Exception as e:
+            self.logger.warning(f"Không thể tải biểu tượng cho cửa sổ sao lưu: {str(e)}")
+        
+        # Tạo giao diện
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Tiêu đề
+        title_label = ttk.Label(main_frame, text="Sao lưu dữ liệu bệnh nhân và kế hoạch", 
+                              style="Heading.TLabel")
+        title_label.pack(pady=(0, 10))
+        
+        # Tạo tab control
+        tab_control = ttk.Notebook(main_frame)
+        tab_control.pack(fill=tk.BOTH, expand=True)
+        
+        # Tab 1: Sao lưu thủ công
+        tab1 = ttk.Frame(tab_control, padding=10)
+        tab_control.add(tab1, text="Sao lưu thủ công")
+        
+        # Chọn thư mục đích
+        dest_frame = ttk.LabelFrame(tab1, text="Thư mục đích", padding=10)
+        dest_frame.pack(fill=tk.X, pady=5)
+        
+        dest_path = tk.StringVar()
+        dest_entry = ttk.Entry(dest_frame, textvariable=dest_path, width=50)
+        dest_entry.pack(side=tk.LEFT, padx=(0, 5), fill=tk.X, expand=True)
+        
+        def browse_dest():
+            folder = filedialog.askdirectory(title="Chọn thư mục lưu trữ dữ liệu")
+            if folder:
+                dest_path.set(folder)
+        
+        browse_button = ttk.Button(dest_frame, text="Duyệt...", command=browse_dest)
+        browse_button.pack(side=tk.RIGHT)
+        
+        # Tùy chọn sao lưu
+        options_frame = ttk.LabelFrame(tab1, text="Tùy chọn sao lưu", padding=10)
+        options_frame.pack(fill=tk.X, pady=10)
+        
+        backup_patients = tk.BooleanVar(value=True)
+        patient_check = ttk.Checkbutton(options_frame, text="Sao lưu dữ liệu bệnh nhân", 
+                                      variable=backup_patients)
+        patient_check.pack(anchor=tk.W, pady=2)
+        
+        backup_plans = tk.BooleanVar(value=True)
+        plan_check = ttk.Checkbutton(options_frame, text="Sao lưu kế hoạch xạ trị", 
+                                   variable=backup_plans)
+        plan_check.pack(anchor=tk.W, pady=2)
+        
+        backup_images = tk.BooleanVar(value=True)
+        image_check = ttk.Checkbutton(options_frame, text="Sao lưu dữ liệu hình ảnh", 
+                                    variable=backup_images)
+        image_check.pack(anchor=tk.W, pady=2)
+        
+        compress_data = tk.BooleanVar(value=True)
+        compress_check = ttk.Checkbutton(options_frame, text="Nén dữ liệu (giảm dung lượng)", 
+                                       variable=compress_data)
+        compress_check.pack(anchor=tk.W, pady=2)
+        
+        # Tab 2: Lịch sử sao lưu tự động
+        tab2 = ttk.Frame(tab_control, padding=10)
+        tab_control.add(tab2, text="Sao lưu tự động")
+        
+        auto_frame = ttk.LabelFrame(tab2, text="Thiết lập sao lưu tự động", padding=10)
+        auto_frame.pack(fill=tk.X, pady=5)
+        
+        enable_auto = tk.BooleanVar(value=False)
+        auto_check = ttk.Checkbutton(auto_frame, text="Bật sao lưu tự động", 
+                                   variable=enable_auto)
+        auto_check.pack(anchor=tk.W, pady=2)
+        
+        interval_frame = ttk.Frame(auto_frame)
+        interval_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(interval_frame, text="Tần suất sao lưu:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        interval_options = ["Hàng ngày", "Hàng tuần", "Hàng tháng"]
+        interval = tk.StringVar(value=interval_options[0])
+        interval_combo = ttk.Combobox(interval_frame, textvariable=interval, 
+                                    values=interval_options, state="readonly", width=15)
+        interval_combo.pack(side=tk.LEFT)
+        
+        # Khung hiển thị lịch sử sao lưu
+        history_frame = ttk.LabelFrame(tab2, text="Lịch sử sao lưu", padding=10)
+        history_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        columns = ("date", "time", "size", "status")
+        history_tree = ttk.Treeview(history_frame, columns=columns, show="headings", height=5)
+        
+        history_tree.heading("date", text="Ngày")
+        history_tree.heading("time", text="Thời gian")
+        history_tree.heading("size", text="Kích thước")
+        history_tree.heading("status", text="Trạng thái")
+        
+        history_tree.column("date", width=100)
+        history_tree.column("time", width=80)
+        history_tree.column("size", width=80)
+        history_tree.column("status", width=100)
+        
+        # Thêm dummy data cho ví dụ
+        history_tree.insert("", "end", values=("12/03/2025", "08:30", "25.4 MB", "Thành công"))
+        history_tree.insert("", "end", values=("05/03/2025", "09:15", "24.8 MB", "Thành công"))
+        
+        history_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(history_frame, orient=tk.VERTICAL, command=history_tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        history_tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Buttons cho cả hai tab
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=10)
+        
+        def start_backup():
+            # Kiểm tra thư mục đích
+            if not dest_path.get():
+                messagebox.showerror("Lỗi", "Vui lòng chọn thư mục đích để sao lưu")
+                return
+            
+            messagebox.showinfo("Thông báo", "Đã bắt đầu quá trình sao lưu dữ liệu")
+            # TODO: Thực hiện sao lưu dữ liệu thực tế
+            
+            # Đóng dialog
+            dialog.destroy()
+        
+        backup_button = ttk.Button(button_frame, text="Bắt đầu sao lưu", command=start_backup)
+        backup_button.pack(side=tk.RIGHT, padx=5)
+        
+        cancel_button = ttk.Button(button_frame, text="Hủy", command=dialog.destroy)
+        cancel_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Thiết lập focus và đợi cửa sổ đóng
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self.root.wait_window(dialog)
 
 if __name__ == "__main__":
     root = tk.Tk()

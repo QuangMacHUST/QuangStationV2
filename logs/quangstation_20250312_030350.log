@@ -1,0 +1,10 @@
+2025-03-12 03:03:50,782 - Launcher - INFO - ==================================================
+2025-03-12 03:03:50,782 - Launcher - INFO - Khoi dong QuangStation V2
+2025-03-12 03:03:50,782 - Launcher - INFO - Thoi gian: 2025-03-12 03:03:50
+2025-03-12 03:03:50,782 - Launcher - INFO - Duong dan: E:\hoctap\QuangStationV2
+2025-03-12 03:03:50,782 - Launcher - INFO - ==================================================
+2025-03-12 03:03:50,782 - Launcher - INFO - Da thiet lap log tai: E:\hoctap\QuangStationV2\logs\quangstation_20250312_030350.log
+2025-03-12 03:03:50,844 - Launcher - INFO - Đang kiểm tra các thư viện phụ thuộc...
+2025-03-12 03:03:50,845 - Launcher - INFO - Đang khởi động QuangStation V2...
+2025-03-12 03:03:50,856 - Launcher - ERROR - Lỗi khi khởi động: name 'get_resources_path' is not defined
+2025-03-12 03:03:50,857 - Launcher - ERROR - Lỗi khi khởi động: module 'tkinter' has no attribute 'messagebox'

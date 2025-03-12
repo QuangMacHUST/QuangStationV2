@@ -13,7 +13,7 @@ from vtk.util import numpy_support
 from vtk.tk.vtkTkRenderWindowInteractor import vtkTkRenderWindowInteractor
 from typing import Dict, List, Tuple, Optional, Any, Callable
 
-from quangstation.utils.logging import get_logger
+from quangstation.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

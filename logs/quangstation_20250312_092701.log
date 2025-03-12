@@ -1,0 +1,12 @@
+2025-03-12 09:27:01,907 - Launcher - INFO - ==================================================
+2025-03-12 09:27:01,907 - Launcher - INFO - Khoi dong QuangStation V2
+2025-03-12 09:27:01,911 - Launcher - INFO - Thoi gian: 2025-03-12 09:27:01
+2025-03-12 09:27:01,911 - Launcher - INFO - Duong dan: E:\hoctap\QuangStationV2
+2025-03-12 09:27:01,911 - Launcher - INFO - ==================================================
+2025-03-12 09:27:01,911 - Launcher - INFO - Da thiet lap log tai: E:\hoctap\QuangStationV2\logs\quangstation_20250312_092701.log
+2025-03-12 09:27:01,993 - Launcher - INFO - Đang kiểm tra các thư viện phụ thuộc...
+2025-03-12 09:27:01,993 - Launcher - INFO - Đang khởi động QuangStation V2...
+2025-03-12 09:27:02,104 - Launcher - ERROR - Lỗi khi khởi động: cannot import name 'setup_logging' from 'quangstation.core.utils.logging' (E:\hoctap\QuangStationV2\quangstation\core\utils\logging.py)
+2025-03-12 09:27:02,998 - Launcher - ERROR - - pillow: THIẾU
+2025-03-12 09:27:04,640 - Launcher - ERROR - - reportlab: THIẾU
+2025-03-12 09:27:04,650 - Launcher - ERROR - - docx: THIẾU

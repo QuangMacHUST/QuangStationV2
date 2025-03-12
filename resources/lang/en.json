@@ -1,0 +1,157 @@
+{
+  "app_name": "QuangStation V2",
+  "app_subtitle": "Open Source Radiotherapy Treatment Planning System",
+  "main_menu": {
+    "file": "File",
+    "edit": "Edit",
+    "view": "View",
+    "patient": "Patient",
+    "plan": "Plan",
+    "tools": "Tools",
+    "help": "Help"
+  },
+  "file_menu": {
+    "open": "Open",
+    "save": "Save",
+    "save_as": "Save As",
+    "import": "Import",
+    "export": "Export",
+    "exit": "Exit"
+  },
+  "patient_menu": {
+    "new_patient": "New Patient",
+    "open_patient": "Open Patient",
+    "edit_patient": "Edit Patient",
+    "delete_patient": "Delete Patient"
+  },
+  "plan_menu": {
+    "new_plan": "New Plan",
+    "open_plan": "Open Plan",
+    "save_plan": "Save Plan",
+    "delete_plan": "Delete Plan",
+    "calculate_dose": "Calculate Dose",
+    "optimize_plan": "Optimize Plan",
+    "evaluate_plan": "Evaluate Plan"
+  },
+  "tools_menu": {
+    "settings": "Settings",
+    "language": "Language",
+    "preferences": "Preferences",
+    "plugins": "Plugins"
+  },
+  "help_menu": {
+    "documentation": "Documentation",
+    "about": "About",
+    "check_updates": "Check Updates"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "yes": "Yes",
+    "no": "No",
+    "save": "Save",
+    "load": "Load",
+    "delete": "Delete",
+    "warning": "Warning",
+    "error": "Error",
+    "success": "Success",
+    "loading": "Loading",
+    "processing": "Processing"
+  },
+  "patient": {
+    "id": "ID",
+    "name": "Name",
+    "dob": "Date of Birth",
+    "gender": "Gender",
+    "phone": "Phone",
+    "email": "Email",
+    "address": "Address",
+    "diagnosis": "Diagnosis",
+    "physician": "Physician"
+  },
+  "plan": {
+    "name": "Plan Name",
+    "type": "Plan Type",
+    "technique": "Technique",
+    "created": "Created Date",
+    "modified": "Modified Date",
+    "description": "Description",
+    "prescription": "Prescription",
+    "total_dose": "Total Dose",
+    "fractions": "Fractions",
+    "dose_per_fraction": "Dose per Fraction"
+  },
+  "contours": {
+    "name": "Name",
+    "type": "Type",
+    "color": "Color",
+    "volume": "Volume",
+    "draw": "Draw",
+    "edit": "Edit",
+    "delete": "Delete",
+    "auto_segment": "Auto Segment",
+    "visibility": "Visibility",
+    "target": "Target",
+    "oar": "OAR",
+    "other": "Other"
+  },
+  "beams": {
+    "name": "Name",
+    "energy": "Energy",
+    "modality": "Modality",
+    "gantry_angle": "Gantry Angle",
+    "collimator_angle": "Collimator Angle",
+    "couch_angle": "Couch Angle",
+    "weight": "Weight",
+    "isocenter": "Isocenter",
+    "ssd": "SSD",
+    "field_size": "Field Size",
+    "mu": "Monitor Units"
+  },
+  "dose_calc": {
+    "algorithm": "Algorithm",
+    "resolution": "Resolution",
+    "heterogeneity": "Heterogeneity Correction",
+    "calculate": "Calculate",
+    "processing": "Processing",
+    "completed": "Completed",
+    "failed": "Failed"
+  },
+  "evaluation": {
+    "dvh": "DVH",
+    "metrics": "Metrics",
+    "conformity": "Conformity Index",
+    "homogeneity": "Homogeneity Index",
+    "gradient": "Gradient Index",
+    "coverage": "Coverage",
+    "cold_spots": "Cold Spots",
+    "hot_spots": "Hot Spots"
+  },
+  "settings": {
+    "general": "General",
+    "display": "Display",
+    "calculation": "Calculation",
+    "advanced": "Advanced",
+    "data_path": "Data Path",
+    "temp_path": "Temporary Files Path",
+    "default_language": "Default Language",
+    "auto_save": "Auto Save",
+    "logging_level": "Logging Level"
+  },
+  "messages": {
+    "save_success": "Successfully saved",
+    "save_error": "Error saving file",
+    "load_success": "Successfully loaded",
+    "load_error": "Error loading file",
+    "delete_confirm": "Are you sure you want to delete?",
+    "delete_success": "Successfully deleted",
+    "delete_error": "Error deleting",
+    "calc_start": "Starting dose calculation",
+    "calc_finished": "Dose calculation completed",
+    "calc_error": "Error during dose calculation",
+    "opt_start": "Starting plan optimization",
+    "opt_finished": "Plan optimization completed",
+    "opt_error": "Error during plan optimization"
+  }
+}
